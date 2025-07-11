@@ -3,6 +3,17 @@ This script is a baseline for comparing different image classification models
 at three different image compression levels, in comparison to the original.
 It has a set number of augmentation transforms and does NOT combine them.
 This does NOT experiment on JPEG compression levels
+
+
+Purpose: Specialized for learning rate experiments with image classification models.
+Features:
+- Focuses on learning rate sweeps for a single model (currently DINOv2).
+- Uses command-line argument parsing for hyperparameters.
+- Applies a set number of augmentation transforms (does not combine them).
+- Does not experiment with JPEG compression levels.
+- Logs results for each learning rate and saves them to a JSON file.
+- More flexible for hyperparameter tuning and ablation studies.
+
 '''
 
 # Environment Setup
