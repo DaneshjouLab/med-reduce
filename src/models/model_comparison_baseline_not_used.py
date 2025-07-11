@@ -41,14 +41,6 @@ from datasets import load_dataset, ClassLabel
 # Weights & Biases
 import wandb
 
-# Metrics
-from sklearn.metrics import (
-    accuracy_score,
-    confusion_matrix,
-    f1_score,
-    roc_auc_score,
-)
-
 # Model Profiling & Vision Backbones
 import timm
 from thop import profile
@@ -60,7 +52,7 @@ from utils.transforms import (
     GaussianBlurTransform,
     ColorQuantizationTransform,
 )
-from utils.util_classes import (
+from utils.utils_classes import (
     ISICDataset,
     SimCLRForClassification,
     LossLoggerCallback,

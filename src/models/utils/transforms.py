@@ -7,39 +7,118 @@ import random
 from PIL import Image
 from torchvision import transforms
 
+
 class JPEGCompressionTransform:
     def __init__(self, quality=75):
+        """
+        Apply JPEG compression to an image.
+
+        Args:
+            quality (int): Compression quality (1-100, higher is better quality).
+        """
         self.quality = quality
 
     def __call__(self, img):
+        """
+        Apply JPEG compression to the input image.
+
+        Args:
+            img (PIL.Image or Tensor): Input image.
+
+        Returns:
+            PIL.Image: Compressed image.
+        """
         if not isinstance(img, Image.Image):
             img = transforms.ToPILImage()(img)
+
+        # Store original size
+        original_size = img.size
+
+        # Apply JPEG compression
         buffer = io.BytesIO()
         img.save(buffer, format="JPEG", quality=self.quality)
         buffer.seek(0)
-        return Image.open(buffer)
+        img = Image.open(buffer)
+
+        # Ensure size is maintained
+        if img.size != original_size:
+            img = img.resize(original_size, Image.LANCZOS)
+
+        return img
+
 
 class GaussianBlurTransform:
     def __init__(self, p=1):
+        """
+        Apply Gaussian blur to an image with a given probability.
+
+        Args:
+            p (float): Probability of applying the blur (0 to 1).
+        """
         self.p = p
 
     def __call__(self, img):
+        """
+        Apply Gaussian blur to the input image.
+
+        Args:
+            img (PIL.Image or Tensor): Input image.
+
+        Returns:
+            PIL.Image: Blurred image.
+        """
         if not isinstance(img, Image.Image):
             img = transforms.ToPILImage()(img)
+
+        # Store original size
+        original_size = img.size
+
+        # Apply Gaussian blur with probability p
         if random.random() < self.p:
             kernel_size = random.choice([3, 5, 7])
             sigma = random.uniform(0.1, 2.0)
             img = transforms.GaussianBlur(kernel_size=kernel_size, sigma=sigma)(img)
+
+        # Ensure size is maintained
+        if img.size != original_size:
+            img = img.resize(original_size, Image.LANCZOS)
+
         return img
+
 
 class ColorQuantizationTransform:
     def __init__(self, p=1):
+        """
+        Apply color quantization to an image with a given probability.
+
+        Args:
+            p (float): Probability of applying the quantization (0 to 1).
+        """
         self.p = p
 
     def __call__(self, img):
+        """
+        Apply color quantization to the input image.
+
+        Args:
+            img (PIL.Image or Tensor): Input image.
+
+        Returns:
+            PIL.Image: Quantized image.
+        """
         if not isinstance(img, Image.Image):
             img = transforms.ToPILImage()(img)
+
+        # Store original size
+        original_size = img.size
+
+        # Apply color quantization with probability p
         if random.random() < self.p:
             num_colors = random.randint(16, 64)
             img = img.quantize(colors=num_colors, method=Image.Quantize.MAXCOVERAGE).convert("RGB")
-        return img 
+
+        # Ensure size is maintained
+        if img.size != original_size:
+            img = img.resize(original_size, Image.LANCZOS)
+
+        return img

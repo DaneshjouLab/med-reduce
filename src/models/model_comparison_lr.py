@@ -64,7 +64,7 @@ from utils.transforms_test import (
     GaussianBlurTransform,
     ColorQuantizationTransform,
 )
-from utils.util_classes_test import (
+from utils.util_classes import (
     ISICDataset,
     SimCLRForClassification,
     LossLoggerCallback,
