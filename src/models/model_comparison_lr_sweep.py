@@ -229,7 +229,7 @@ def create_preprocessors(model_config, config):
 
     return preprocessors
 
-def train_for_learning_rate(
+def train_for_learning_rate(    # pylint: disable=too-many-locals
     learning_rate, model_config, train_dataset, val_dataset, config
 ):
     """
