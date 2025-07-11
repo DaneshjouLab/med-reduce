@@ -1,3 +1,9 @@
+# This source file is part of the Daneshjou Lab projects
+#
+# SPDX-FileCopyrightText: 2025 Stanford University and the project authors (see AUTHORS.md)
+#
+# SPDX-License-Identifier: MIT
+
 """
 Utility classes for model training and data handling.
 """
@@ -6,54 +12,55 @@ import os
 import json
 import numpy as np
 import torch
-import torch.nn as nn
-from PIL import Image
+from torch import nn
 from torch.utils.data import Dataset
+from PIL import Image
 from torchvision import transforms
 from transformers import TrainerCallback
 
 from .constants import HF_MODELS, NUM_FILTERED_CLASSES, SSL_MODEL
 from .transforms import JPEGCompressionTransform
 
+# Compatibility for LANCZOS resampling
+try:
+    LANCZOS = Image.Resampling.LANCZOS
+except AttributeError:
+    LANCZOS = Image.LANCZOS # pylint: disable=no-member
+
 
 class ISICDataset(Dataset):
-    def __init__(
-        self,
-        dataset,
-        preprocessor=None,
-        resolution=224,
-        transform=None,
-        model_type="vit",
-        jpeg_quality=None,
-    ):
+    """
+    Dataset class for handling ISIC image data with optional transformations.
+    """
+    def __init__(self, dataset, config=None):
         """
-        Dataset class for handling ISIC image data.
-
         Args:
             dataset: The dataset to load.
-            preprocessor: Preprocessing function for Hugging Face models.
-            resolution: Target image resolution.
-            transform: Additional transformations to apply.
-            model_type: Type of model (e.g., "vit", "ssl").
-            jpeg_quality: JPEG compression quality (if applicable).
+            config (dict, optional): Configuration dictionary with keys:
+                - preprocessor
+                - resolution
+                - transform
+                - model_type
+                - jpeg_quality
         """
         self.dataset = dataset
-        self.preprocessor = preprocessor
-        self.resolution = resolution
-        self.transform = transform
-        self.model_type = model_type
-        self.jpeg_quality = jpeg_quality
+        config = config or {}
+        self.preprocessor = config.get("preprocessor", None)
+        self.resolution = config.get("resolution", 224)
+        self.transform = config.get("transform", None)
+        self.model_type = config.get("model_type", "vit")
+        self.jpeg_quality = config.get("jpeg_quality", None)
 
         # Base preprocessing pipeline for resizing and tensor conversion
         self.base_preprocessor = transforms.Compose([
-            transforms.Resize((resolution, resolution), Image.LANCZOS),
+            transforms.Resize((self.resolution, self.resolution), LANCZOS),
             transforms.ToTensor(),
         ])
 
         # Preprocessor for SSL models
-        if model_type == SSL_MODEL:
+        if self.model_type == SSL_MODEL:
             self.preprocessor = transforms.Compose([
-                transforms.Resize((resolution, resolution), Image.LANCZOS),
+                transforms.Resize((self.resolution, self.resolution), LANCZOS),
                 transforms.ToTensor(),
                 transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
             ])
@@ -79,7 +86,7 @@ class ISICDataset(Dataset):
         label = item["label"]
 
         # Always resize to target resolution first
-        image = image.resize((self.resolution, self.resolution), Image.LANCZOS)
+        image = image.resize((self.resolution, self.resolution), LANCZOS)
 
         # Apply additional transformations if provided
         if self.transform:
@@ -106,6 +113,9 @@ class ISICDataset(Dataset):
 
 
 class SimCLRForClassification(nn.Module):
+    """
+    SimCLR-based classification model.
+    """
     def __init__(self, backbone, num_classes=NUM_FILTERED_CLASSES):
         """
         SimCLR-based classification model.
@@ -170,6 +180,6 @@ class LossLoggerCallback(TrainerCallback):
         """
         if logs is None:
             return
-        with open(self.log_file, "a") as f:
+        with open(self.log_file, "a", encoding="utf-8") as f:
             json.dump({"step": state.global_step, **logs}, f)
             f.write("\n")

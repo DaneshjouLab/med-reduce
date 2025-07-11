@@ -1,3 +1,9 @@
+# This source file is part of the Daneshjou Lab projects
+#
+# SPDX-FileCopyrightText: 2025 Stanford University and the project authors (see AUTHORS.md)
+#
+# SPDX-License-Identifier: MIT
+
 """
 Image transformation utilities for data augmentation and degradation.
 """
@@ -7,8 +13,17 @@ import random
 from PIL import Image
 from torchvision import transforms
 
+# Compatibility for LANCZOS resampling
+try:
+    LANCZOS = Image.Resampling.LANCZOS
+except AttributeError:
+    LANCZOS = Image.LANCZOS # pylint: disable=no-member
+
 
 class JPEGCompressionTransform:
+    """
+    Apply JPEG compression to an image to simulate lossy compression artifacts.
+    """
     def __init__(self, quality=75):
         """
         Apply JPEG compression to an image.
@@ -42,12 +57,20 @@ class JPEGCompressionTransform:
 
         # Ensure size is maintained
         if img.size != original_size:
-            img = img.resize(original_size, Image.LANCZOS)
+            img = img.resize(original_size, LANCZOS)
 
         return img
 
+    def get_quality(self):
+        """
+        Return the JPEG compression quality setting.
+        """
+        return self.quality
+
 
 class GaussianBlurTransform:
+    """Apply Gaussian blur to an image with a given probability.
+    """
     def __init__(self, p=1):
         """
         Apply Gaussian blur to an image with a given probability.
@@ -81,16 +104,23 @@ class GaussianBlurTransform:
 
         # Ensure size is maintained
         if img.size != original_size:
-            img = img.resize(original_size, Image.LANCZOS)
+            img = img.resize(original_size, LANCZOS)
 
         return img
 
+    def get_probability(self):
+        """
+        Return the probability of applying Gaussian blur.
+        """
+        return self.p
+
 
 class ColorQuantizationTransform:
+    """
+    Apply color quantization to an image with a given probability.
+    """
     def __init__(self, p=1):
         """
-        Apply color quantization to an image with a given probability.
-
         Args:
             p (float): Probability of applying the quantization (0 to 1).
         """
@@ -119,6 +149,12 @@ class ColorQuantizationTransform:
 
         # Ensure size is maintained
         if img.size != original_size:
-            img = img.resize(original_size, Image.LANCZOS)
+            img = img.resize(original_size, LANCZOS)
 
         return img
+
+    def get_probability(self):
+        """
+        Return the probability of applying color quantization.
+        """
+        return self.p

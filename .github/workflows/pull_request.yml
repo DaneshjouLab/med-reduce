@@ -1,0 +1,37 @@
+#
+# This source file is part of the Daneshjou Lab projects
+#
+# SPDX-FileCopyrightText: 2025 Stanford University and the project authors (see CONTRIBUTORS.md)
+#
+# SPDX-License-Identifier: MIT
+#
+
+name: Pull Request
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  reuse_action:
+    name: REUSE Compliance Check
+    uses: DaneshjouLab/.github/.github/workflows/reuse.yml@main
+  markdown_link_check:
+    name: Markdown Link Check
+    uses: DaneshjouLab/.github/.github/workflows/markdown-link-check.yml@main
+  yamllint:
+    name: YAML Lint Check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v2
+
+      - name: Set up Python
+        uses: actions/setup-python@v2
+
+      - name: Install yamllint
+        run: pip install yamllint
+
+      - name: Run yamllint with custom config
+        run: yamllint -c .yamllint .github/workflows/*.yml

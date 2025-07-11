@@ -1,3 +1,13 @@
+# This source file is part of the Daneshjou Lab projects
+#
+# SPDX-FileCopyrightText: 2025 Stanford University and the project authors (see AUTHORS.md)
+#
+# SPDX-License-Identifier: MIT
+
+"""Utility methods for model training and evaluation.
+This module provides functions for computing evaluation metrics, managing GPU memory,
+freezing model backbones, and handling environment paths."""
+
 import os
 import json
 import numpy as np
@@ -18,11 +28,14 @@ def env_path(key, default):
 
 
 def compute_metrics(eval_pred, model_name):
+    """
+    Compute evaluation metrics from model predictions.
+    """
     logits, labels = eval_pred
     predictions = np.argmax(logits, axis=-1)
     acc = accuracy_score(labels, predictions)
     f1 = f1_score(labels, predictions, average="weighted")
-    
+
     # For binary classification, use the probability of the positive class
     probs = torch.softmax(torch.tensor(logits), dim=1).numpy()
     # Use the probability of class 1 (positive class) for ROC AUC
@@ -44,24 +57,32 @@ def compute_metrics(eval_pred, model_name):
 
     unique, counts = np.unique(predictions, return_counts=True)
     class_breakdown = {str(k): int(v) for k, v in zip(unique, counts)}
-    with open(os.path.join(plot_dir, "class_breakdown.json"), "w") as f:
+    with open(os.path.join(plot_dir, "class_breakdown.json"), "w", encoding="utf-8") as f:
         json.dump(class_breakdown, f)
 
     return {"accuracy": acc, "f1": f1, "auc": auc}
 
 
 def get_gpu_memory(device_id=0):
+    """
+    Get the used GPU memory in MB for a specific device.
+    """
     if not GPU_AVAILABLE:
         return -1
     try:
         handle = pynvml.nvmlDeviceGetHandleByIndex(device_id)
         mem_info = pynvml.nvmlDeviceGetMemoryInfo(handle)
         return mem_info.used / 1024**2
-    except:
+    except pynvml.NVMLError:
         return -1
-    
+    except Exception:   # pylint: disable=broad-exception-caught
+        return -1
+
 
 def freeze_backbone(model, model_type):
+    """
+    Freeze the backbone of the model based on its type.
+    """
     if model_type in HF_MODELS:
         for name, param in model.named_parameters():
             if "classifier" not in name:

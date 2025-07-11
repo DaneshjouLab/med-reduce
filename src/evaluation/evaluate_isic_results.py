@@ -1,3 +1,9 @@
+# This source file is part of the Daneshjou Lab projects
+#
+# SPDX-FileCopyrightText: 2025 Stanford University and the project authors (see AUTHORS.md)
+#
+# SPDX-License-Identifier: MIT
+
 """
 Evaluates results from ISIC 2019 fine-tuning and linear probing experiments.
 Conducts paired t-tests to assess statistical significance across resolutions
@@ -59,20 +65,19 @@ def paired_t_tests(metrics, models, qualities, modes):
     metric_names = ["accuracy", "f1", "auc"]
 
     def run_if_valid(k1, k2, label):
-        if (
-            k1 in metrics and k2 in metrics and
-            len(metrics[k1]) == len(metrics[k2]) > 1
-        ):
+        if k1 in metrics and k2 in metrics and len(metrics[k1]) == len(metrics[k2]) > 1:
             for metric in metric_names:
                 try:
                     v1 = [r[metric] for r in metrics[k1]]
                     v2 = [r[metric] for r in metrics[k2]]
                     stat, p = ttest_rel(v1, v2)
-                    t_test_results.append({
-                        "comparison": label.format(metric=metric),
-                        "statistic": stat,
-                        "p_value": p,
-                    })
+                    t_test_results.append(
+                        {
+                            "comparison": label.format(metric=metric),
+                            "statistic": stat,
+                            "p_value": p,
+                        }
+                    )
                 except Exception as e:
                     print(f"Error in t-test for {label.format(metric=metric)}: {e}")
 
@@ -87,7 +92,7 @@ def paired_t_tests(metrics, models, qualities, modes):
             run_if_valid(
                 (model, q1, mode),
                 (model, q2, mode),
-                f"{model}_{mode}" + "_{{metric}}_jpeg{q1}_vs_jpeg{q2}"
+                f"{model}_{mode}" + "_{{metric}}_jpeg{q1}_vs_jpeg{q2}",
             )
 
     # 2. Across models: same quality & mode
@@ -96,7 +101,7 @@ def paired_t_tests(metrics, models, qualities, modes):
             run_if_valid(
                 (m1, quality, mode),
                 (m2, quality, mode),
-                f"{m1}_vs_{m2}_{mode}" + "_{{metric}}_jpeg{quality}"
+                f"{m1}_vs_{m2}_{mode}" + "_{{metric}}_jpeg{quality}",
             )
 
     # 3. Finetune vs. Linear Probe: same model & quality
@@ -104,7 +109,7 @@ def paired_t_tests(metrics, models, qualities, modes):
         run_if_valid(
             (model, quality, "finetune"),
             (model, quality, "linear_probe"),
-            f"{model}_finetune_vs_linear_probe" + "_{{metric}}_jpeg{quality}"
+            f"{model}_finetune_vs_linear_probe" + "_{{metric}}_jpeg{quality}",
         )
 
     return t_test_results
@@ -115,7 +120,7 @@ def summarize_performance(metrics):
     Summarizes performance metrics (mean, std) across models, qualities, and modes.
     """
     summary = []
-    for (model, quality, mode), runs in metrics.items():
+    for (model, _, mode), runs in metrics.items():
         if not runs:
             continue
 
