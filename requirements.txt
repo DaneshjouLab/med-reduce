@@ -63,7 +63,7 @@ sniffio
 soupsieve
 stack-data
 thop
-threadpoolctladpoolctl
+threadpoolctl
 timm
 torch
 torchvisionvision
