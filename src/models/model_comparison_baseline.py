@@ -39,13 +39,15 @@ from datasets import load_dataset
 import wandb
 import timm
 
-from utils.constants import SSL_MODEL, SIMCLR_BACKBONE, FILTERED_CLASSES, NUM_FILTERED_CLASSES
-from utils.transforms import (
+from src.models.utils.constants import (
+    SSL_MODEL, SIMCLR_BACKBONE, FILTERED_CLASSES, NUM_FILTERED_CLASSES
+)
+from src.models.utils.transforms import (
     JPEGCompressionTransform, GaussianBlurTransform,
 )
-from utils.util_classes import SimCLRForClassification, LossLoggerCallback
-from utils.util_methods import get_gpu_memory, GPU_AVAILABLE, freeze_backbone
-from transforms import ColorQuantizationTransform
+from src.models.utils.utils_classes import SimCLRForClassification, LossLoggerCallback
+from src.models.utils.utils_methods import get_gpu_memory, GPU_AVAILABLE, freeze_backbone
+from src.models.utils.transforms import ColorQuantizationTransform
 
 # Compatibility for LANCZOS resampling
 try:
@@ -285,9 +287,10 @@ def train_model(
 
 
 def get_trainer_callbacks(name):
+    """Get callbacks for the Trainer."""
     return [
         LossLoggerCallback(
-            log_dir=env_path("LOG_DIR", "./logs"),
+            log_dir=os.environ.get("LOG_DIR", "./logs"),
             phase="finetune",
             model_name=name,
         ),

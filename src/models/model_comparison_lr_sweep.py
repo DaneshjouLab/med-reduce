@@ -56,7 +56,6 @@ import wandb
 
 # Model Profiling & Vision Backbones
 import timm
-from thop import profile
 
 
 # Local Application Imports
@@ -78,7 +77,10 @@ from src.models.utils.utils_methods import (
     compute_metrics,
     get_gpu_memory,
     freeze_backbone,
-    GPU_AVAILABLE
+    GPU_AVAILABLE,
+    get_flops,
+    check_disk_space,
+    save_model_and_preprocessor,
 )
 
 # Set memory optimization
@@ -244,11 +246,11 @@ def train_for_learning_rate(    # pylint: disable=too-many-locals
     )
 
     train_ds = get_transformed_datasets(train_dataset, preprocessors, config, typ)
-    val_ds = ISICDataset(
+    val_ds = ISICDataset( # pylint: disable=too-many-function-args
         val_dataset,
         preprocessors[typ],
         config["resolution"],
-        model_type=typ,
+        typ,
     )
 
     model = get_model(typ, model_id, config)
@@ -352,7 +354,7 @@ def get_model(typ, model_id, config):
             image_size=config["resolution"]
         )
     if typ == SSL_MODEL:
-        backbone = timm.create_model(
+        backbone = timm.create_model( # pylint: disable=too-many-function-args
             SIMCLR_BACKBONE,
             pretrained=True,
             num_classes=0
@@ -379,7 +381,13 @@ def get_transformed_datasets(train_dataset, preprocessors, config, typ):
     def make_subset(indices_subset, transform=None):
         subset = Subset(train_dataset, indices_subset)
         transform_compose = transforms.Compose([transform]) if transform else None
-        return ISICDataset(subset, preprocessors[typ], config["resolution"], transform_compose, typ)
+        return ISICDataset( # pylint: disable=too-many-function-args
+            subset,
+            preprocessors[typ],
+            config["resolution"],
+            transform_compose,
+            typ
+            )
 
     datasets = []
     used_indices = set()
@@ -394,53 +402,6 @@ def get_transformed_datasets(train_dataset, preprocessors, config, typ):
         datasets.append(make_subset(remaining))
 
     return ConcatDataset(datasets)
-
-
-def get_flops(model, resolution):
-    """
-    Profile FLOPs for the given model and resolution.
-    Returns FLOPs in giga units, or -1 if profiling fails.
-    """
-    try:
-        dummy_input = torch.randn(1, 3, resolution, resolution).to(next(model.parameters()).device)
-        flops, _ = profile(model, inputs=(dummy_input,))
-        return flops / 1e9
-    except Exception as e:  # pylint: disable=broad-exception-caught
-        print(f"FLOP profiling failed: {e}")
-        return -1
-
-def check_disk_space(min_gb=1):
-    """
-    Checks if there is at least min_gb GB of free disk space.
-    Raises RuntimeError if not enough space.
-    """
-    total, used, free = shutil.disk_usage("/")
-    print(
-        f"Disk space: Total={total // (2**30)} GB, "
-        f"Used={used // (2**30)} GB, "
-        f"Free={free // (2**30)} GB"
-    )
-    if free < min_gb * (2**30):
-        raise RuntimeError(f"Not enough disk space. Please free up at least {min_gb}GB.")
-
-def save_model_and_preprocessor(model, preprocessors, typ, name, learning_rate):
-    """
-    Saves the trained model and preprocessor to disk.
-    """
-    model_dir = os.path.join(env_path("MODEL_DIR", "."), f"{name}_lr_{learning_rate}")
-    os.makedirs(model_dir, exist_ok=True)
-    if typ in HF_MODELS:
-        model.save_pretrained(model_dir)
-        preprocessors[typ].save_pretrained(model_dir)
-    elif typ == SSL_MODEL:
-        torch.save(model.state_dict(), os.path.join(model_dir, "pytorch_model.bin"))
-        with open(os.path.join(model_dir, "config.json"), "w", encoding="utf-8") as f:
-            json.dump({
-                "model_type": SSL_MODEL,
-                "backbone": "resnet50",
-                "num_classes": NUM_FILTERED_CLASSES,
-            }, f)
-    return model_dir
 
 def log_wandb_artifact(model_dir, name, learning_rate):
     """

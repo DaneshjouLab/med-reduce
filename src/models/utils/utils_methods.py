@@ -9,8 +9,10 @@ This module provides functions for computing evaluation metrics, managing GPU me
 freezing model backbones, and handling environment paths."""
 
 import os
+import shutil
 import json
 import numpy as np
+from thop import profile
 import torch
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -94,3 +96,70 @@ def freeze_backbone(model, model_type):
             param.requires_grad = True
     else:
         raise ValueError(f"Unsupported model_type: {model_type}")
+
+def get_flops(model, resolution):
+    """
+    Profile FLOPs for the given model and resolution.
+
+    Args:
+        model: The model to profile.
+        resolution (int): Input image resolution.
+
+    Returns:
+        float: FLOPs in giga units, or -1 if profiling fails.
+    """
+    try:
+        dummy_input = torch.randn(1, 3, resolution, resolution).to(next(model.parameters()).device)
+        flops, _ = profile(model, inputs=(dummy_input,))
+        return flops / 1e9
+    except Exception as e:  # pylint: disable=broad-exception-caught
+        print(f"FLOP profiling failed: {e}")
+        return -1
+
+def check_disk_space(min_gb=1):
+    """
+    Checks if there is at least min_gb GB of free disk space.
+
+    Args:
+        min_gb (int): Minimum required free disk space in GB.
+
+    Raises:
+        RuntimeError: If not enough disk space is available.
+    """
+    total, used, free = shutil.disk_usage("/")
+    print(
+        f"Disk space: Total={total // (2**30)} GB, "
+        f"Used={used // (2**30)} GB, "
+        f"Free={free // (2**30)} GB"
+    )
+    if free < min_gb * (2**30):
+        raise RuntimeError(f"Not enough disk space. Please free up at least {min_gb}GB.")
+
+def save_model_and_preprocessor(model, preprocessors, typ, name, learning_rate):
+    """
+    Saves the trained model and preprocessor to disk.
+
+    Args:
+        model: The trained model.
+        preprocessors (dict): Preprocessors for each model type.
+        typ (str): Model type.
+        name (str): Model name.
+        learning_rate (float): Learning rate used for training.
+
+    Returns:
+        str: Path to the saved model directory.
+    """
+    model_dir = os.path.join(env_path("MODEL_DIR", "."), f"{name}_lr_{learning_rate}")
+    os.makedirs(model_dir, exist_ok=True)
+    if typ in HF_MODELS:
+        model.save_pretrained(model_dir)
+        preprocessors[typ].save_pretrained(model_dir)
+    elif typ == "simclr":
+        torch.save(model.state_dict(), os.path.join(model_dir, "pytorch_model.bin"))
+        with open(os.path.join(model_dir, "config.json"), "w", encoding="utf-8") as f:
+            json.dump({
+                "model_type": "simclr",
+                "backbone": "resnet50",
+                "num_classes": model.classifier.out_features,
+            }, f)
+    return model_dir

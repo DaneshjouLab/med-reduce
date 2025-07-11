@@ -69,6 +69,7 @@ torch
 torchvision
 tqdm
 traitlets
+transformers
 triton
 typing-inspect
 typing_extensions

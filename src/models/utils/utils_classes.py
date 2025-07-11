@@ -112,7 +112,7 @@ class ISICDataset(Dataset):
         return {"pixel_values": pixel_values, "labels": label}
 
 
-class SimCLRForClassification(nn.Module):
+class SimCLRForClassification(nn.Module): # pylint: disable=too-few-public-methods
     """
     SimCLR-based classification model.
     """
@@ -149,7 +149,7 @@ class SimCLRForClassification(nn.Module):
         )
 
 
-class LossLoggerCallback(TrainerCallback):
+class LossLoggerCallback(TrainerCallback): # pylint: disable=too-few-public-methods
     """
     Logs each training step's loss and other metrics to a structured JSON Lines file.
     """
@@ -168,7 +168,7 @@ class LossLoggerCallback(TrainerCallback):
             log_dir, f"{model_name}_{phase}_log.jsonl"
         )
 
-    def on_log(self, args, state, control, logs=None, **kwargs):
+    def on_log(self, _args, state, _control, logs=None, **_kwargs):
         """
         Log metrics to a JSON Lines file.
 
