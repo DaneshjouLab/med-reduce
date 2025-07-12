@@ -22,11 +22,8 @@ Features:
 
 # Environment Setup
 import os
-import io
-import numpy as np
+import argparse
 from PIL import Image
-from torch.utils.data import Dataset
-from torchvision import transforms
 from transformers import (
     AutoImageProcessor,
     AutoModelForImageClassification,
@@ -39,15 +36,19 @@ from datasets import load_dataset
 import wandb
 import timm
 
-from src.models.utils.constants import (
+
+from src.compressed_perception.models.training.constants import (
     SSL_MODEL, SIMCLR_BACKBONE, FILTERED_CLASSES, NUM_FILTERED_CLASSES
 )
-from src.models.utils.transforms import (
-    JPEGCompressionTransform, GaussianBlurTransform,
+from src.compressed_perception.models.training.utils_classes import SimCLRForClassification
+from src.compressed_perception.models.training.utils_methods import get_gpu_memory, GPU_AVAILABLE, freeze_backbone
+from src.compressed_perception.modules.data_preparation.preparation import (
+    filter_and_cast_dataset,
+    balance_dataset,
+    split_dataset,
+    get_default_transforms,
+    prepare_datasets,
 )
-from src.models.utils.utils_classes import SimCLRForClassification, LossLoggerCallback
-from src.models.utils.utils_methods import get_gpu_memory, GPU_AVAILABLE, freeze_backbone
-from src.models.utils.transforms import ColorQuantizationTransform
 
 # Compatibility for LANCZOS resampling
 try:
@@ -63,31 +64,6 @@ try:
 except ImportError:
     GPU_AVAILABLE = False
     print("pynvml not installed, GPU memory monitoring disabled.")
-
-class WandbCallback:
-    """Callback for logging to Weights & Biases."""
-    def __init__(self, model_name, phase):
-        self.model_name = model_name
-        self.phase = phase
-        self.best_accuracy = 0.0
-
-    def on_log(self, _args, _state, _control, logs=None, **_kwargs):
-        """
-        Log metrics to Weights & Biases."""
-        if logs is not None:
-            logs["model"] = self.model_name
-            logs["phase"] = self.phase
-            if GPU_AVAILABLE:
-                logs["gpu_memory_mb"] = get_gpu_memory()
-            wandb.log(logs)
-
-    def on_evaluate(self, _args, _state, _control, metrics=None, **_kwargs):
-        """Log evaluation metrics to Weights & Biases."""
-        if metrics is not None:
-            if "eval_accuracy" in metrics:
-                self.best_accuracy = max(self.best_accuracy, metrics["eval_accuracy"])
-                metrics["best_accuracy"] = self.best_accuracy
-            wandb.log(metrics)
 
 
 def initialize_model_and_preprocessor(model_info, resolution):
@@ -146,76 +122,6 @@ def initialize_model_and_preprocessor(model_info, resolution):
         raise ValueError(f"Unsupported model type: {typ}")
 
     return model, preprocessor
-
-
-def balance_dataset(dataset, num_train_images, filtered_classes):
-    """
-    Balance the dataset by sampling equal images per class.
-    """
-    print("Balancing dataset...")
-    class_counts = {label: 0 for label in filtered_classes}
-    for label in dataset["label"]:
-        class_counts[str(label)] += 1
-
-    min_class_size = min(class_counts.values())
-    images_per_class = min(num_train_images // len(filtered_classes), min_class_size)
-
-    np.random.seed(42)
-    balanced_indices = []
-    for label in filtered_classes:
-        class_indices = [i for i, l in enumerate(dataset["label"]) if str(l) == label]
-        sampled_indices = np.random.choice(class_indices, images_per_class, replace=False)
-        balanced_indices.extend(sampled_indices)
-
-    np.random.shuffle(balanced_indices)
-    return dataset.select(balanced_indices)
-
-
-def prepare_datasets(dataset, _preprocessor, resolution, apply_transforms=False):
-    """
-    Prepare train and validation datasets.
-    """
-    train_size = int(0.8 * len(dataset))
-    val_size = len(dataset) - train_size
-    train_dataset = dataset.select(range(train_size))
-    val_dataset = dataset.select(range(train_size, train_size + val_size))
-
-    transform = transforms.Compose([
-        transforms.Resize((resolution, resolution)),
-        transforms.ToTensor(),
-        transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
-    ])
-
-    if apply_transforms:
-        transform = transforms.Compose([
-            transform,
-            JPEGCompressionTransform(quality=75),
-            GaussianBlurTransform(p=0.5),
-            ColorQuantizationTransform(p=0.5),
-        ])
-
-    class TorchDataset(Dataset):
-        """
-        Custom dataset class for Hugging Face datasets.
-        """
-        def __init__(self, hf_dataset, transform):
-            self.hf_dataset = hf_dataset
-            self.transform = transform
-
-        def __len__(self):
-            return len(self.hf_dataset)
-
-        def __getitem__(self, idx):
-            item = self.hf_dataset[idx]
-            image = Image.open(io.BytesIO(item["image"])).convert("RGB")
-            if self.transform:
-                image = self.transform(image)
-            label = int(item["label"])
-            return {"pixel_values": image, "labels": label}
-
-    train_ds = TorchDataset(train_dataset, transform)
-    val_ds = TorchDataset(val_dataset, transform)
-    return train_ds, val_ds
 
 
 def train_model(
@@ -286,19 +192,8 @@ def train_model(
     return eval_results
 
 
-def get_trainer_callbacks(name):
-    """Get callbacks for the Trainer."""
-    return [
-        LossLoggerCallback(
-            log_dir=os.environ.get("LOG_DIR", "./logs"),
-            phase="finetune",
-            model_name=name,
-        ),
-        WandbCallback(name, "finetune"),
-    ]
 
-
-def main(config=None):
+def main(config=None, dataset=None):
     """
     Main pipeline for model comparison.
     """
@@ -317,27 +212,43 @@ def main(config=None):
     wandb_config = config.copy()
     wandb_config["weight_decay"] = 0.01
 
+    MODEL_CONFIG_KEYS = {
+        "name": "name",
+        "model_id": "model_id",
+        "type": "type",
+        "config": "config",
+    }
+
     models = [
-        {"name": "vit", "model_id": "google/vit-base-patch16-224", "type": "vit", "config": {
-            "image_size": config["resolution"],
-            "num_labels": NUM_FILTERED_CLASSES,
-            "ignore_mismatched_sizes": True
-        }},
+        {
+            MODEL_CONFIG_KEYS["name"]: "vit",
+            MODEL_CONFIG_KEYS["model_id"]: "google/vit-base-patch16-224",
+            MODEL_CONFIG_KEYS["type"]: "vit",
+            MODEL_CONFIG_KEYS["config"]: {
+                "image_size": config["resolution"],
+                "num_labels": NUM_FILTERED_CLASSES,
+                "ignore_mismatched_sizes": True
+            }
+        },
     ]
 
-    dataset = load_dataset(
-        "MKZuziak/ISIC_2019_224",
-        cache_dir=os.environ["HF_DATASETS_CACHE"],
-        split="train",
-    )
+    if dataset is None:
+        raise ValueError("Dataset must be provided via `dataset` argument or CLI.")
 
+    # Use preparation.py functions for filtering, balancing, and splitting
+    dataset = filter_and_cast_dataset(dataset, FILTERED_CLASSES, NUM_FILTERED_CLASSES)
     dataset = balance_dataset(dataset, config["num_train_images"], FILTERED_CLASSES)
+    splits = split_dataset(dataset, test_size=0.2, stratify_by_column="label", seed=42)
+
+    # Get transforms
+    transform = get_default_transforms(config["resolution"], apply_transforms=True)
+
+    # Prepare PyTorch datasets
+    train_ds, val_ds = prepare_datasets(splits["train"], transform, split_ratio=1.0)
+    val_ds, _ = prepare_datasets(splits["test"], transform, split_ratio=1.0)
 
     for model_info in models:
-        model, preprocessor = initialize_model_and_preprocessor(model_info, config["resolution"])
-        train_ds, val_ds = prepare_datasets(
-            dataset, preprocessor, config["resolution"], apply_transforms=True
-        )
+        model, _preprocessor = initialize_model_and_preprocessor(model_info, config["resolution"])
 
         train_config = {
             "model_name": model_info["name"],
@@ -355,17 +266,51 @@ def main(config=None):
         )
         print(f"Results for {model_info['name']}: {results}")
 
+        METRIC_KEYS = {
+            "learning_rate": "learning_rate",
+            "model_name": "model_name",
+            "model_type": "model_type",
+            "peak_memory_mb": "peak_memory_mb",
+            "flops_giga": "flops_giga",
+            "train_time_seconds": "train_time_seconds",
+            "eval_time_seconds": "eval_time_seconds",
+            "eval_metrics": "eval_metrics",
+        }
+
         metrics = {
-            "learning_rate": config["learning_rate"],
-            "model_name": model_info["name"],
-            "model_type": model_info["type"],
-            "peak_memory_mb": get_gpu_memory(),
-            "flops_giga": None,  # Placeholder for FLOPs, calculate if needed
-            "train_time_seconds": None,  # Placeholder for training time, calculate if needed
-            "eval_time_seconds": None,  # Placeholder for evaluation time, calculate if needed
-            "eval_metrics": results,
+            METRIC_KEYS["learning_rate"]: config["learning_rate"],
+            METRIC_KEYS["model_name"]: model_info[MODEL_CONFIG_KEYS["name"]],
+            METRIC_KEYS["model_type"]: model_info[MODEL_CONFIG_KEYS["type"]],
+            METRIC_KEYS["peak_memory_mb"]: get_gpu_memory(),
+            METRIC_KEYS["flops_giga"]: None,
+            METRIC_KEYS["train_time_seconds"]: None,
+            METRIC_KEYS["eval_time_seconds"]: None,
+            METRIC_KEYS["eval_metrics"]: results,
         }
         wandb.log({"metrics": metrics})
 
+
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description="Baseline model comparison for image classification.")
+    parser.add_argument(
+        "--path_to_dataset",
+        type=str,
+        default=None,
+        help="Path to local dataset directory. If not provided, loads from Hugging Face.",
+    )
+    args = parser.parse_args()
+
+    dataset = None
+    if args.path_to_dataset:
+        dataset = load_dataset("imagefolder", data_dir=args.path_to_dataset, split="train")
+    else:
+        try:
+            dataset = load_dataset(
+                "MKZuziak/ISIC_2019_224",
+                cache_dir=os.environ["HF_DATASETS_CACHE"],
+                split="train",
+            )
+        except Exception as e:
+            raise ValueError("No dataset provided and Hugging Face dataset failed to load.") from e
+
+    main(dataset=dataset)

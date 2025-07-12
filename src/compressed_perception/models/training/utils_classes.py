@@ -18,8 +18,8 @@ from PIL import Image
 from torchvision import transforms
 from transformers import TrainerCallback
 
-from .constants import HF_MODELS, NUM_FILTERED_CLASSES, SSL_MODEL
-from .transforms import JPEGCompressionTransform
+from src.compressed_perception.models.training.constants import HF_MODELS, NUM_FILTERED_CLASSES, SSL_MODEL
+from src.compressed_perception.modules.data_transformation.image_transformation import JPEGCompressionTransform
 
 # Compatibility for LANCZOS resampling
 try:
@@ -28,6 +28,56 @@ except AttributeError:
     LANCZOS = Image.LANCZOS # pylint: disable=no-member
 
 
+from transformers import TrainerCallback
+
+class WandbCallback(TrainerCallback):
+    """
+    Custom callback for logging metrics and evaluation results to Weights & Biases.
+    Tracks best accuracy and GPU memory usage if available.
+    """
+    MODEL_KEY = "model"
+    PHASE_KEY = "phase"
+    BEST_ACCURACY_KEY = "best_accuracy"
+    EVAL_ACCURACY_KEY = "eval_accuracy"
+    GPU_MEMORY_KEY = "gpu_memory_mb"
+
+    def __init__(self, model_name, phase):
+        self.model_name = model_name
+        self.phase = phase
+        self.best_accuracy = 0.0
+
+    def on_log(self, _args, _state, _control, logs=None, **_kwargs):
+        if logs is not None:
+            logs[self.MODEL_KEY] = self.model_name
+            logs[self.PHASE_KEY] = self.phase
+            try:
+                from src.compressed_perception.models.training.utils_methods import GPU_AVAILABLE, get_gpu_memory
+                if GPU_AVAILABLE:
+                    logs[self.GPU_MEMORY_KEY] = get_gpu_memory()
+            except ImportError:
+                pass
+            import wandb
+            wandb.log(logs)
+
+    def on_evaluate(self, _args, _state, _control, metrics=None, **_kwargs):
+        if metrics is not None:
+            if self.EVAL_ACCURACY_KEY in metrics:
+                self.best_accuracy = max(self.best_accuracy, metrics[self.EVAL_ACCURACY_KEY])
+                metrics[self.BEST_ACCURACY_KEY] = self.best_accuracy
+            import wandb
+            wandb.log(metrics)
+
+def get_trainer_callbacks(name):
+    """Get callbacks for the Trainer."""
+    return [
+        LossLoggerCallback(
+            log_dir=os.environ.get("LOG_DIR", "./logs"),
+            phase="finetune",
+            model_name=name,
+        ),
+        WandbCallback(name, "finetune"),
+    ]
+           
 class ISICDataset(Dataset):
     """
     Dataset class for handling ISIC image data with optional transformations.

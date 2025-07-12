@@ -44,12 +44,11 @@ from transformers import (
     AutoImageProcessor,
     AutoModelForImageClassification,
     Trainer,
-    TrainerCallback,
     TrainingArguments,
     ViTFeatureExtractor,
     ViTForImageClassification,
 )
-from datasets import load_dataset, ClassLabel
+from datasets import load_dataset
 
 # Weights & Biases
 import wandb
@@ -59,22 +58,25 @@ import timm
 
 
 # Local Application Imports
-from src.models.utils.constants import (
+from src.compressed_perception.models.training.constants import (
     HF_MODELS, SSL_MODEL, SIMCLR_BACKBONE, FILTERED_CLASSES, NUM_FILTERED_CLASSES
 )
-from src.models.utils.transforms import (
+from src.compressed_perception.modules.data_transformation.image_transformation import (
     JPEGCompressionTransform,
     GaussianBlurTransform,
     ColorQuantizationTransform,
 )
-from src.models.utils.utils_classes import (
+from src.compressed_perception.models.training.utils_classes import (
     ISICDataset,
     SimCLRForClassification,
-    LossLoggerCallback
+    WandbCallback,
+    LossLoggerCallback,
+    get_trainer_callbacks
 )
-from src.models.utils.utils_methods import (
+from src.compressed_perception.models.training.utils_methods import (
     env_path,
     compute_metrics,
+    cleanup_model_dirs,
     get_gpu_memory,
     freeze_backbone,
     GPU_AVAILABLE,
@@ -83,6 +85,9 @@ from src.models.utils.utils_methods import (
     save_model_and_preprocessor,
 )
 
+from src.compressed_perception.modules import (
+    filter_and_cast_dataset, balance_dataset, split_dataset, get_default_transforms, prepare_datasets
+)
 # Set memory optimization
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
@@ -95,104 +100,6 @@ os.environ["HF_DATASETS_CACHE"] = os.getenv(
 )
 os.environ["HF_HOME"] = os.getenv("HF_HOME", "~/.cache/huggingface")
 
-class WandbCallback(TrainerCallback):
-    """
-    Custom callback for logging metrics and evaluation results to Weights & Biases.
-    Tracks best accuracy and GPU memory usage if available.
-    """
-    def __init__(self, model_name, phase):
-        """
-        Args:
-            model_name (str): Name of the model.
-            phase (str): Training phase (e.g., 'finetune').
-        """
-        self.model_name = model_name
-        self.phase = phase
-        self.best_accuracy = 0.0
-
-    def on_log(self, _args, _state, _control, logs=None, **_kwargs):
-        """
-        Log metrics to Weights & Biases.
-
-        Args:
-            _args: Trainer arguments (unused).
-            _state: Trainer state (unused).
-            _control: Trainer control (unused).
-            logs (dict): Metrics to log.
-            **_kwargs: Additional keyword arguments (unused).
-        """
-        if logs is not None:
-            logs["model"] = self.model_name
-            logs["phase"] = self.phase
-            if GPU_AVAILABLE:
-                logs["gpu_memory_mb"] = get_gpu_memory()
-            wandb.log(logs)
-
-    def on_evaluate(self, _args, _state, _control, metrics=None, **_kwargs):
-        """
-        Log evaluation metrics to Weights & Biases.
-
-        Args:
-            _args: Trainer arguments (unused).
-            _state: Trainer state (unused).
-            _control: Trainer control (unused).
-            metrics (dict): Evaluation metrics.
-            **_kwargs: Additional keyword arguments (unused).
-        """
-        if metrics is not None:
-            if "eval_accuracy" in metrics:
-                self.best_accuracy = max(self.best_accuracy, metrics["eval_accuracy"])
-                metrics["best_accuracy"] = self.best_accuracy
-            wandb.log(metrics)
-
-def prepare_balanced_datasets(dataset, config):
-    """
-    Filter, balance, and split the dataset into train and validation sets.
-    """
-    # Get indices of images with desired labels
-    filtered_indices = [
-        i for i, label in enumerate(dataset["label"])
-        if str(label) in FILTERED_CLASSES  # Convert to string for comparison
-    ]
-
-    # Select only those indices
-    dataset = dataset.select(filtered_indices)
-    print(f"Number of images after filtering for classes {FILTERED_CLASSES}: {len(dataset)}")
-    dataset = dataset.cast_column("label", ClassLabel(num_classes=NUM_FILTERED_CLASSES))
-
-    # Get class counts and balance dataset - optimized version
-    print("Balancing dataset...")
-    # Get counts for each class
-    class_counts = {label: 0 for label in FILTERED_CLASSES}
-    for label in dataset["label"]:
-        class_counts[str(label)] += 1  # Convert to string for dictionary key
-
-    print(f"Class counts: {class_counts}")  # Debug print to verify counts
-
-    # Calculate how many images to use per class
-    min_class_size = min(class_counts.values())
-    images_per_class = min(config["num_train_images"] // 2, min_class_size)
-
-    # Sample indices for each class
-    np.random.seed(42)
-    balanced_indices = []
-    for label in FILTERED_CLASSES:
-        class_indices = [i for i, l in enumerate(dataset["label"]) if str(l) == label]
-        print(f"Found {len(class_indices)} images for class {label}")  # Debug print
-        sampled_indices = np.random.choice(class_indices, images_per_class, replace=False)
-        balanced_indices.extend(sampled_indices)
-
-    np.random.shuffle(balanced_indices)
-    balanced_dataset = dataset.select(balanced_indices)
-
-    # Split into train and validation
-    full_dataset = balanced_dataset.train_test_split(
-        test_size=0.2, stratify_by_column="label", seed=42
-    )
-
-    train_dataset, val_dataset = full_dataset["train"], full_dataset["test"]
-
-    return train_dataset, val_dataset
 
 def create_preprocessors(model_config, config):
     """
@@ -443,34 +350,6 @@ def get_training_args(name, learning_rate, config):
         save_only_model=True,
     )
 
-def cleanup_model_dirs(name, learning_rate):
-    """
-    Removes and recreates model/log directories for the current run.
-    """
-    model_dirs = [
-        os.path.join(env_path("TRAIN_OUTPUT_DIR", "."), f"{name}_lr_{learning_rate}"),
-        os.path.join(env_path("MODEL_DIR", "."), f"{name}_lr_{learning_rate}"),
-        os.path.join(env_path("LOG_DIR", "."), f"{name}_lr_{learning_rate}"),
-    ]
-    for dir_path in model_dirs:
-        if os.path.exists(dir_path):
-            print(f"Cleaning up directory: {dir_path}")
-            shutil.rmtree(dir_path)
-        os.makedirs(dir_path, exist_ok=True)
-
-def get_trainer_callbacks(name):
-    """
-    Returns a list of Trainer callbacks for logging and monitoring.
-    """
-    return [
-        LossLoggerCallback(
-            log_dir=env_path("LOG_DIR", "./logs"),
-            phase="finetune",
-            model_name=name,
-        ),
-        WandbCallback(name, "finetune"),
-    ]
-
 def main(config=None):
     """
     Main function for running learning rate sweep experiments on image classification models.
@@ -509,7 +388,12 @@ def main(config=None):
         split="train",
     )
 
-    train_dataset, val_dataset = prepare_balanced_datasets(dataset, config)
+    filtered_dataset = filter_and_cast_dataset(dataset, FILTERED_CLASSES, NUM_FILTERED_CLASSES)
+    balanced_dataset = balance_dataset(filtered_dataset, config["num_train_images"], FILTERED_CLASSES)
+    splits = split_dataset(balanced_dataset)
+    transform = get_default_transforms(resolution=224, apply_transforms=True)
+    train_dataset, val_dataset = prepare_datasets(splits["train"], transform)
+
     preprocessors = create_preprocessors(model_config, config)
     config["preprocessors"] = preprocessors
 

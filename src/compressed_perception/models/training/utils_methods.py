@@ -18,7 +18,9 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.metrics import accuracy_score, f1_score, roc_auc_score, confusion_matrix
 import pynvml
-from .constants import HF_MODELS
+
+# Local imports
+from src.compressed_perception.models.training.constants import HF_MODELS
 
 # Constants
 GPU_AVAILABLE = torch.cuda.is_available()
@@ -64,6 +66,20 @@ def compute_metrics(eval_pred, model_name):
 
     return {"accuracy": acc, "f1": f1, "auc": auc}
 
+def cleanup_model_dirs(name, learning_rate):
+    """
+    Removes and recreates model/log directories for the current run.
+    """
+    model_dirs = [
+        os.path.join(env_path("TRAIN_OUTPUT_DIR", "."), f"{name}_lr_{learning_rate}"),
+        os.path.join(env_path("MODEL_DIR", "."), f"{name}_lr_{learning_rate}"),
+        os.path.join(env_path("LOG_DIR", "."), f"{name}_lr_{learning_rate}"),
+    ]
+    for dir_path in model_dirs:
+        if os.path.exists(dir_path):
+            print(f"Cleaning up directory: {dir_path}")
+            shutil.rmtree(dir_path)
+        os.makedirs(dir_path, exist_ok=True)
 
 def get_gpu_memory(device_id=0):
     """
@@ -79,7 +95,6 @@ def get_gpu_memory(device_id=0):
         return -1
     except Exception:   # pylint: disable=broad-exception-caught
         return -1
-
 
 def freeze_backbone(model, model_type):
     """
@@ -110,7 +125,7 @@ def get_flops(model, resolution):
     """
     try:
         dummy_input = torch.randn(1, 3, resolution, resolution).to(next(model.parameters()).device)
-        flops, _ = profile(model, inputs=(dummy_input,))
+        flops, _, _ = profile(model, inputs=(dummy_input,))
         return flops / 1e9
     except Exception as e:  # pylint: disable=broad-exception-caught
         print(f"FLOP profiling failed: {e}")
