@@ -4,6 +4,7 @@
 #
 # SPDX-License-Identifier: MIT
 
+# pylint: disable=invalid-name
 """
 This script is a baseline for comparing different image classification models
 at three different image compression levels, in comparison to the original.
@@ -41,7 +42,9 @@ from src.compressed_perception.models.training.constants import (
     SSL_MODEL, SIMCLR_BACKBONE, FILTERED_CLASSES, NUM_FILTERED_CLASSES
 )
 from src.compressed_perception.models.training.utils_classes import SimCLRForClassification
-from src.compressed_perception.models.training.utils_methods import get_gpu_memory, GPU_AVAILABLE, freeze_backbone
+from src.compressed_perception.models.training.utils_methods import (
+    get_gpu_memory, GPU_AVAILABLE, freeze_backbone
+)
 from src.compressed_perception.modules.data_preparation.preparation import (
     filter_and_cast_dataset,
     balance_dataset,
@@ -209,9 +212,25 @@ def main(config=None, dataset=None):
             "gpu_available": GPU_AVAILABLE,
         }
 
-    wandb_config = config.copy()
-    wandb_config["weight_decay"] = 0.01
+    # Add weight_decay to config instead of creating a separate wandb_config
+    config["weight_decay"] = 0.01
 
+    # Define all model configurations
+    models = get_model_configs(config["resolution"])
+
+    if dataset is None:  # Changed from 'data' to 'dataset'
+        raise ValueError("Dataset must be provided via `dataset` argument or CLI.")
+
+    # Process dataset and create training/validation splits
+    train_ds, val_ds = process_dataset(dataset, config)  # Changed from 'data' to 'dataset'
+
+    # Train and evaluate each model
+    for model_info in models:
+        train_and_evaluate_model(model_info, train_ds, val_ds, config)
+
+
+def get_model_configs(resolution):
+    """Return the model configurations for the baseline comparison."""
     MODEL_CONFIG_KEYS = {
         "name": "name",
         "model_id": "model_id",
@@ -219,23 +238,22 @@ def main(config=None, dataset=None):
         "config": "config",
     }
 
-    models = [
+    return [
         {
             MODEL_CONFIG_KEYS["name"]: "vit",
             MODEL_CONFIG_KEYS["model_id"]: "google/vit-base-patch16-224",
             MODEL_CONFIG_KEYS["type"]: "vit",
             MODEL_CONFIG_KEYS["config"]: {
-                "image_size": config["resolution"],
+                "image_size": resolution,
                 "num_labels": NUM_FILTERED_CLASSES,
                 "ignore_mismatched_sizes": True
             }
         },
     ]
 
-    if dataset is None:
-        raise ValueError("Dataset must be provided via `dataset` argument or CLI.")
 
-    # Use preparation.py functions for filtering, balancing, and splitting
+def process_dataset(dataset, config):
+    """Process the dataset and create training/validation splits."""
     dataset = filter_and_cast_dataset(dataset, FILTERED_CLASSES, NUM_FILTERED_CLASSES)
     dataset = balance_dataset(dataset, config["num_train_images"], FILTERED_CLASSES)
     splits = split_dataset(dataset, test_size=0.2, stratify_by_column="label", seed=42)
@@ -244,54 +262,59 @@ def main(config=None, dataset=None):
     transform = get_default_transforms(config["resolution"], apply_transforms=True)
 
     # Prepare PyTorch datasets
-    train_ds, val_ds = prepare_datasets(splits["train"], transform, split_ratio=1.0)
+    train_ds, _ = prepare_datasets(splits["train"], transform, split_ratio=1.0)
     val_ds, _ = prepare_datasets(splits["test"], transform, split_ratio=1.0)
 
-    for model_info in models:
-        model, _preprocessor = initialize_model_and_preprocessor(model_info, config["resolution"])
+    return train_ds, val_ds
 
-        train_config = {
-            "model_name": model_info["name"],
-            "model_type": model_info["type"],
-            "resolution": config["resolution"],
-            "batch_size": config["batch_size"],
-            "num_epochs": config["num_epochs"],
-            "learning_rate": config["learning_rate"],
-            "eval_steps": config["eval_steps"],
-            "wandb_config": wandb_config,
-        }
 
-        results = train_model(
-            model, train_ds, val_ds, train_config
-        )
-        print(f"Results for {model_info['name']}: {results}")
+def train_and_evaluate_model(model_info, train_ds, val_ds, config):
+    """Train and evaluate a single model, then log results."""
+    model, _preprocessor = initialize_model_and_preprocessor(model_info, config["resolution"])
 
-        METRIC_KEYS = {
-            "learning_rate": "learning_rate",
-            "model_name": "model_name",
-            "model_type": "model_type",
-            "peak_memory_mb": "peak_memory_mb",
-            "flops_giga": "flops_giga",
-            "train_time_seconds": "train_time_seconds",
-            "eval_time_seconds": "eval_time_seconds",
-            "eval_metrics": "eval_metrics",
-        }
+    train_config = {
+        "model_name": model_info["name"],
+        "model_type": model_info["type"],
+        "resolution": config["resolution"],
+        "batch_size": config["batch_size"],
+        "num_epochs": config["num_epochs"],
+        "learning_rate": config["learning_rate"],
+        "eval_steps": config["eval_steps"],
+        "wandb_config": config,  # Pass the entire config for wandb
+    }
 
-        metrics = {
-            METRIC_KEYS["learning_rate"]: config["learning_rate"],
-            METRIC_KEYS["model_name"]: model_info[MODEL_CONFIG_KEYS["name"]],
-            METRIC_KEYS["model_type"]: model_info[MODEL_CONFIG_KEYS["type"]],
-            METRIC_KEYS["peak_memory_mb"]: get_gpu_memory(),
-            METRIC_KEYS["flops_giga"]: None,
-            METRIC_KEYS["train_time_seconds"]: None,
-            METRIC_KEYS["eval_time_seconds"]: None,
-            METRIC_KEYS["eval_metrics"]: results,
-        }
-        wandb.log({"metrics": metrics})
+    results = train_model(model, train_ds, val_ds, train_config)
+    print(f"Results for {model_info['name']}: {results}")
+
+    # Define metric keys and log results to wandb
+    METRIC_KEYS = {
+        "learning_rate": "learning_rate",
+        "model_name": "model_name",
+        "model_type": "model_type",
+        "peak_memory_mb": "peak_memory_mb",
+        "flops_giga": "flops_giga",
+        "train_time_seconds": "train_time_seconds",
+        "eval_time_seconds": "eval_time_seconds",
+        "eval_metrics": "eval_metrics",
+    }
+
+    metrics = {
+        METRIC_KEYS["learning_rate"]: config["learning_rate"],
+        METRIC_KEYS["model_name"]: model_info["name"],
+        METRIC_KEYS["model_type"]: model_info["type"],
+        METRIC_KEYS["peak_memory_mb"]: get_gpu_memory(),
+        METRIC_KEYS["flops_giga"]: None,
+        METRIC_KEYS["train_time_seconds"]: None,
+        METRIC_KEYS["eval_time_seconds"]: None,
+        METRIC_KEYS["eval_metrics"]: results,
+    }
+    wandb.log({"metrics": metrics})
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Baseline model comparison for image classification.")
+    parser = argparse.ArgumentParser(
+        description="Baseline model comparison for image classification."
+        )
     parser.add_argument(
         "--path_to_dataset",
         type=str,
@@ -300,7 +323,7 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    dataset = None
+    dataset = None  # Changed from 'data' to 'dataset'
     if args.path_to_dataset:
         dataset = load_dataset("imagefolder", data_dir=args.path_to_dataset, split="train")
     else:

@@ -4,6 +4,8 @@
 #
 # SPDX-License-Identifier: MIT
 
+# pylint: skip-file
+
 """
 This script is a baseline for comparing different image classification models
 at three different image compression levels, in comparison to the original.
