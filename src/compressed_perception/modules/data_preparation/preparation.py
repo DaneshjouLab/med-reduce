@@ -4,12 +4,25 @@
 #
 # SPDX-License-Identifier: MIT
 
+"""
+Utility functions for dataset preparation.
+"""
+# Standard library imports
+import io
+
+# Thrid-party imports
 import numpy as np
 from PIL import Image
 from torch.utils.data import Dataset
 from torchvision import transforms
-import io
 from datasets import ClassLabel
+
+# Local imports
+from src.compressed_perception.modules.data_transformation.image_transformation import (
+            JPEGCompressionTransform,
+            GaussianBlurTransform,
+            ColorQuantizationTransform
+        )
 
 def filter_and_cast_dataset(dataset, filtered_classes, num_classes):
     """
@@ -48,7 +61,11 @@ def split_dataset(dataset, test_size=0.2, stratify_by_column="label", seed=42):
     """
     Split dataset into train and validation sets.
     """
-    return dataset.train_test_split(test_size=test_size, stratify_by_column=stratify_by_column, seed=seed)
+    return dataset.train_test_split(
+        test_size=test_size,
+        stratify_by_column=stratify_by_column,
+        seed=seed
+        )
 
 def get_default_transforms(resolution, apply_transforms=False):
     """
@@ -61,11 +78,6 @@ def get_default_transforms(resolution, apply_transforms=False):
     ]
 
     if apply_transforms:
-        from src.compressed_perception.modules.data_transformation.image_transformation import (
-            JPEGCompressionTransform,
-            GaussianBlurTransform,
-            ColorQuantizationTransform
-        )
         transform_list.extend([
             JPEGCompressionTransform(quality=75),
             GaussianBlurTransform(p=0.5),

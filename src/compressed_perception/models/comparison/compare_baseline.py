@@ -323,12 +323,12 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    dataset = None  # Changed from 'data' to 'dataset'
+    loaded_dataset = None
     if args.path_to_dataset:
-        dataset = load_dataset("imagefolder", data_dir=args.path_to_dataset, split="train")
+        loaded_dataset = load_dataset("imagefolder", data_dir=args.path_to_dataset, split="train")
     else:
         try:
-            dataset = load_dataset(
+            loaded_dataset = load_dataset(
                 "MKZuziak/ISIC_2019_224",
                 cache_dir=os.environ["HF_DATASETS_CACHE"],
                 split="train",
@@ -336,4 +336,4 @@ if __name__ == "__main__":
         except Exception as e:
             raise ValueError("No dataset provided and Hugging Face dataset failed to load.") from e
 
-    main(dataset=dataset)
+    main(dataset=loaded_dataset)

@@ -17,9 +17,18 @@ from torch.utils.data import Dataset
 from PIL import Image
 from torchvision import transforms
 from transformers import TrainerCallback
+import wandb
 
-from src.compressed_perception.models.training.constants import HF_MODELS, NUM_FILTERED_CLASSES, SSL_MODEL
-from src.compressed_perception.modules.data_transformation.image_transformation import JPEGCompressionTransform
+# Local imports
+from src.compressed_perception.models.training.constants import (
+    HF_MODELS, NUM_FILTERED_CLASSES, SSL_MODEL
+)
+from src.compressed_perception.models.training.utils_methods import (
+                    GPU_AVAILABLE, get_gpu_memory
+                )
+from src.compressed_perception.modules.data_transformation.image_transformation import (
+    JPEGCompressionTransform
+)
 
 # Compatibility for LANCZOS resampling
 try:
@@ -27,8 +36,6 @@ try:
 except AttributeError:
     LANCZOS = Image.LANCZOS # pylint: disable=no-member
 
-
-from transformers import TrainerCallback
 
 class WandbCallback(TrainerCallback):
     """
@@ -51,12 +58,10 @@ class WandbCallback(TrainerCallback):
             logs[self.MODEL_KEY] = self.model_name
             logs[self.PHASE_KEY] = self.phase
             try:
-                from src.compressed_perception.models.training.utils_methods import GPU_AVAILABLE, get_gpu_memory
                 if GPU_AVAILABLE:
                     logs[self.GPU_MEMORY_KEY] = get_gpu_memory()
             except ImportError:
                 pass
-            import wandb
             wandb.log(logs)
 
     def on_evaluate(self, _args, _state, _control, metrics=None, **_kwargs):
@@ -64,7 +69,6 @@ class WandbCallback(TrainerCallback):
             if self.EVAL_ACCURACY_KEY in metrics:
                 self.best_accuracy = max(self.best_accuracy, metrics[self.EVAL_ACCURACY_KEY])
                 metrics[self.BEST_ACCURACY_KEY] = self.best_accuracy
-            import wandb
             wandb.log(metrics)
 
 def get_trainer_callbacks(name):
@@ -77,7 +81,7 @@ def get_trainer_callbacks(name):
         ),
         WandbCallback(name, "finetune"),
     ]
-           
+
 class ISICDataset(Dataset):
     """
     Dataset class for handling ISIC image data with optional transformations.
