@@ -171,7 +171,7 @@ def train_model(
         weight_decay=0.01,
         logging_dir=f"./logs/{config['model_name']}",
         logging_steps=1,
-        evaluation_strategy="steps",
+        eval_strategy="steps",
         eval_steps=config['eval_steps'],
         save_strategy="steps",
         save_steps=config['eval_steps'],
