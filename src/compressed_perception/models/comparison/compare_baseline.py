@@ -218,11 +218,11 @@ def main(config=None, dataset=None):
     # Define all model configurations
     models = get_model_configs(config["resolution"])
 
-    if dataset is None:  # Changed from 'data' to 'dataset'
+    if dataset is None:
         raise ValueError("Dataset must be provided via `dataset` argument or CLI.")
 
     # Process dataset and create training/validation splits
-    train_ds, val_ds = process_dataset(dataset, config)  # Changed from 'data' to 'dataset'
+    train_ds, val_ds = process_dataset(dataset, config)
 
     # Train and evaluate each model
     for model_info in models:

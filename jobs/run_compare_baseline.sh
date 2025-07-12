@@ -35,4 +35,4 @@ fi
 export WANDB_API_KEY="7ab80eeb87ef06298c6bca1258208b1739ad32fe"
 
 # Running the script
-python src/models/comparison/compare_baseline.py --resolution 224 --batch_size 256 --num_train_images 25000 --num_epochs 10 --eval_steps 10
+python -m src.compressed_perception.models.comparison.compare_baseline --resolution 224 --batch_size 256 --num_train_images 25000 --num_epochs 10 --eval_steps 10
