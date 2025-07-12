@@ -7,8 +7,7 @@ rules:
     allowed-values: ["false", "true", "on", "off"]
   document-start:
     level: warning 
+    present: false
   line-length:
     max: 180
     level: warning
-  document-start:
-    present: false

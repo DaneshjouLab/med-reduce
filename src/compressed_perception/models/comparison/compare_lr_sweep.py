@@ -156,10 +156,10 @@ def train_for_learning_rate(    # pylint: disable=too-many-locals
 
     train_ds = get_transformed_datasets(train_dataset, preprocessors, config, typ)
     val_ds = ISICDataset( # pylint: disable=too-many-function-args
-        val_dataset,
-        preprocessors[typ],
-        config["resolution"],
-        typ,
+        dataset=val_dataset,
+        transform=None,
+        resolution=config["resolution"],
+        model_type=typ,
     )
 
     model = get_model(typ, model_id, config)
