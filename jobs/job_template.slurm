@@ -41,8 +41,14 @@ export LOG_DIR=$PROJECT_ROOT/logs
 export MODEL_DIR=$PROJECT_ROOT/models
 export PLOT_DIR=$PROJECT_ROOT/plots
 
+export WANDB_API_KEY="{{WANDB_API_KEY}}"
+
 # Run training script
 cd "$CODE_DIR"
 echo "Starting training at $(date)"
-python model_comparison_2.py
+python src/train.py \
+    --batch_size 256 \
+    --num_epochs 5 \
+    --resolution 224 \
+    --learning_rate 0.0001
 echo "Training complete at $(date)"
