@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-CONFIG_FILE="config.yaml"
+CONFIG_FILE="../configs/config.yaml"
 TEMPLATE_FILE="job_template.slurm"
 JOB_FILE="job_generated.slurm"
 

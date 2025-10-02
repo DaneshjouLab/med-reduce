@@ -30,11 +30,13 @@ CS231N/
 ├── configs/
 │   ├── config.yaml                 # SLURM job configuration
 │   └── example_config.yaml 
+|
 ├── jobs/              
 │   ├── submit_from_config.sh       # SLURM job template
 │   └── submit_from_config.sh       # Job submission script
 │
 ├── src/                            # Main source code
+│   ├── __init__.py  
 │   ├── config.py                   # Configuration and constants
 │   ├── utils.py                    # Environment, GPU, I/O utilities
 │   ├── models.py                   # Model architectures and helpers

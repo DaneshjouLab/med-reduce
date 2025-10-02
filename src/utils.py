@@ -20,8 +20,8 @@ def env_path(key: str, default: str) -> str:
 def setup_environment():
     """Setup cache paths and environment variables."""
     os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
-    os.environ["TRANSFORMERS_CACHE"] = os.getenv(
-        "TRANSFORMERS_CACHE", "~/.cache/huggingface/transformers"
+    os.environ["HF_HOME"] = os.getenv(
+        "HF_HOME", "~/.cache/huggingface/transformers"
     )
     os.environ["HF_DATASETS_CACHE"] = os.getenv(
         "HF_DATASETS_CACHE", "~/.cache/huggingface/datasets"

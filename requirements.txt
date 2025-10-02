@@ -10,7 +10,6 @@ colorama
 comm
 contourpy
 cycler
-datasets
 debugpy
 decorator
 distro
@@ -21,6 +20,7 @@ fonttools
 h11
 httpcore
 httpx
+huggingface_hub
 idna
 importlib_metadata
 ipykernel
