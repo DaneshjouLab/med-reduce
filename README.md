@@ -7,7 +7,7 @@ This project explores how compressed and degraded dermatology images (from the I
 ## Project Goals
 
 - Evaluate model robustness to multiple image degradations (JPEG compression, Gaussian blur, color quantization)
-- Compare pretrained models: ViT, DINOv2, and SimCLR
+- Compare pretrained models: ViT, DINOv2
 - Benchmark fine-tuning vs. linear probing strategies
 - Analyze computational efficiency (FLOPs, GPU memory) vs. classification performance
 

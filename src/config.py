@@ -4,8 +4,6 @@ from typing import List, Dict, Any
 
 # Model constants
 HF_MODELS = ["vit", "dinov2"]
-SSL_MODEL = "simclr"
-SIMCLR_BACKBONE = "resnet50"
 
 # Dataset constants
 NUM_CLASSES = 8
@@ -61,14 +59,6 @@ MODEL_REGISTRY = [
         "config": {
             "num_labels": NUM_FILTERED_CLASSES,
             "ignore_mismatched_sizes": True
-        }
-    },
-    {
-        "name": "simclr",
-        "model_id": "resnet50",
-        "type": "simclr",
-        "config": {
-            "num_classes": NUM_FILTERED_CLASSES
         }
     },
 ]

@@ -6,7 +6,7 @@ from torch.utils.data import Dataset, DataLoader, ConcatDataset, Subset
 from torchvision import transforms
 from typing import Optional, List, Dict, Any, Union
 
-from src.config import HF_MODELS, SSL_MODEL, IMAGE_NORMALIZATION, DEFAULT_IMAGE_SIZE
+from src.config import HF_MODELS, IMAGE_NORMALIZATION, DEFAULT_IMAGE_SIZE
 from src.transforms import JPEGCompressionTransform
 
 class ISICDataset(Dataset):
@@ -34,18 +34,7 @@ class ISICDataset(Dataset):
             transforms.ToTensor(),
         ])
         
-        # Setup model-specific preprocessing
-        if model_type == SSL_MODEL:
-            self.model_preprocessor = transforms.Compose([
-                transforms.Resize((resolution, resolution), Image.LANCZOS),
-                transforms.ToTensor(),
-                transforms.Normalize(
-                    mean=IMAGE_NORMALIZATION["mean"],
-                    std=IMAGE_NORMALIZATION["std"]
-                )
-            ])
-        else:
-            self.model_preprocessor = None
+        self.model_preprocessor = None
     
     def __len__(self) -> int:
         return len(self.dataset)
@@ -84,9 +73,6 @@ class ISICDataset(Dataset):
                 self.preprocessor.size = self.resolution
             encoding = self.preprocessor(images=image, return_tensors="pt")
             pixel_values = encoding["pixel_values"].squeeze(0)
-        elif self.model_type == SSL_MODEL:
-            # For SSL models
-            pixel_values = self.model_preprocessor(image)
         else:
             raise ValueError(f"Unsupported model_type: {self.model_type}")
         

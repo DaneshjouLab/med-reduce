@@ -3,7 +3,6 @@ import json
 import torch
 import torch.nn as nn
 from typing import Optional, Dict, Any
-import timm
 from transformers import (
     ViTForImageClassification,
     AutoModelForImageClassification,
@@ -12,39 +11,7 @@ from transformers import (
 )
 from PIL import Image
 
-from src.config import HF_MODELS, SSL_MODEL, SIMCLR_BACKBONE, NUM_FILTERED_CLASSES
-
-class SimCLRForClassification(nn.Module):
-    """SimCLR model adapted for classification tasks."""
-    
-    def __init__(self, backbone: nn.Module, num_classes: int = NUM_FILTERED_CLASSES):
-        super().__init__()
-        self.backbone = backbone
-        
-        # Determine feature dimension
-        if hasattr(backbone, 'fc'):
-            feature_dim = backbone.fc.in_features
-        else:
-            feature_dim = 2048  # Default for ResNet50
-            
-        self.classifier = nn.Linear(feature_dim, num_classes)
-    
-    def forward(
-        self,
-        pixel_values: torch.Tensor,
-        labels: Optional[torch.Tensor] = None
-    ) -> Dict[str, torch.Tensor]:
-        """Forward pass."""
-        features = self.backbone(pixel_values)
-        logits = self.classifier(features)
-        
-        outputs = {"logits": logits}
-        
-        if labels is not None:
-            loss = nn.CrossEntropyLoss()(logits, labels)
-            outputs["loss"] = loss
-            
-        return outputs
+from src.config import HF_MODELS, NUM_FILTERED_CLASSES
 
 def create_model(model_info: Dict[str, Any], resolution: int = 224):
     """
@@ -75,13 +42,6 @@ def create_model(model_info: Dict[str, Any], resolution: int = 224):
             ignore_mismatched_sizes=config.get("ignore_mismatched_sizes", True),
             image_size=resolution,
         )
-    elif model_type == SSL_MODEL:
-        backbone = timm.create_model(
-            SIMCLR_BACKBONE,
-            pretrained=True,
-            num_classes=0  # Remove classification head
-        )
-        return SimCLRForClassification(backbone, config["num_classes"])
     else:
         raise ValueError(f"Unknown model type: {model_type}")
 
@@ -94,7 +54,7 @@ def create_preprocessor(model_info: Dict[str, Any], resolution: int = 224):
         resolution: Input image resolution
         
     Returns:
-        Preprocessor instance or None for SSL models
+        Preprocessor instance
     """
     model_type = model_info["type"]
     model_id = model_info["model_id"]
@@ -119,8 +79,6 @@ def create_preprocessor(model_info: Dict[str, Any], resolution: int = 224):
             image_mean=[0.485, 0.456, 0.406],
             image_std=[0.229, 0.224, 0.225]
         )
-    elif model_type == SSL_MODEL:
-        return None  # SSL models use custom preprocessing
     else:
         raise ValueError(f"Unknown model type: {model_type}")
 
@@ -130,19 +88,12 @@ def freeze_backbone(model: nn.Module, model_type: str):
     
     Args:
         model: The model to freeze
-        model_type: Type of model ('vit', 'dinov2', 'simclr')
+        model_type: Type of model ('vit', 'dinov2')
     """
     if model_type in HF_MODELS:
         for name, param in model.named_parameters():
             if "classifier" not in name and "head" not in name:
                 param.requires_grad = False
-    elif model_type == SSL_MODEL:
-        if hasattr(model, 'backbone'):
-            for param in model.backbone.parameters():
-                param.requires_grad = False
-        if hasattr(model, 'classifier'):
-            for param in model.classifier.parameters():
-                param.requires_grad = True
     else:
         raise ValueError(f"Unsupported model_type: {model_type}")
 
@@ -165,14 +116,3 @@ def save_model(model: nn.Module, model_info: Dict[str, Any], save_dir: str, prep
         model.save_pretrained(save_dir)
         if preprocessor:
             preprocessor.save_pretrained(save_dir)
-    elif model_type == SSL_MODEL:
-        torch.save(
-            model.state_dict(),
-            os.path.join(save_dir, "pytorch_model.bin")
-        )
-        with open(os.path.join(save_dir, "config.json"), "w") as f:
-            json.dump({
-                "model_type": SSL_MODEL,
-                "backbone": SIMCLR_BACKBONE,
-                "num_classes": NUM_FILTERED_CLASSES,
-            }, f)

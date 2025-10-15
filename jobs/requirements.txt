@@ -1,0 +1,52 @@
+# === Core Utilities ===
+beautifulsoup4
+biopython
+colorama
+dotenv
+loguru
+matplotlib
+numpy
+pandas
+pillow
+python-dateutil
+requests
+scipy
+seaborn
+setuptools
+tqdm
+wandb
+
+# === Jupyter / Debug Tools (optional for interactive use) ===
+ipykernel
+ipython
+jupyter_client
+jupyter_core
+matplotlib-inline
+nest_asyncio
+debugpy
+psutil
+
+# === ML / Deep Learning ===
+torch           # will pull in torch + CUDA bindings if available
+torchvision
+triton
+thop
+scikit-learn
+
+# === Hugging Face Ecosystem ===
+transformers
+datasets
+huggingface_hub
+accelerate
+pyarrow
+
+# === Typing / Pydantic Utilities ===
+pydantic
+typing_extensions
+typing-inspection
+
+# === Miscellaneous Utilities ===
+packaging
+joblib
+platformdirs
+traitlets

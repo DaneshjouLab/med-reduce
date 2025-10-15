@@ -11,7 +11,7 @@ from typing import Dict, Any
 
 from src.config import (
     TrainingConfig, MODEL_REGISTRY, FILTERED_CLASSES, 
-    NUM_FILTERED_CLASSES, HF_MODELS, SSL_MODEL
+    NUM_FILTERED_CLASSES, HF_MODELS
 )
 from src.utils import (
     setup_environment, env_path, get_gpu_memory, 
@@ -20,7 +20,7 @@ from src.utils import (
 from src.models import (
     create_model, create_preprocessor, freeze_backbone, save_model
 )
-from src.datasets import (
+from src.data_utils import (
     ISICDataset, create_transformed_datasets, balance_dataset
 )
 from src.transforms import (
@@ -269,8 +269,6 @@ def train_model(
     # Log model to wandb
     if model_type in HF_MODELS:
         wandb.watch(model, log="all", log_freq=100)
-    elif model_type == SSL_MODEL:
-        wandb.watch(model.backbone, log="all", log_freq=100)
     
     # Train
     start_time = time.time()
@@ -353,6 +351,9 @@ def main(config: TrainingConfig):
     )
     print(f"Initial dataset size: {len(dataset)} images")
     
+    # Slice dataset for debug purposes
+    dataset = dataset[:50]
+
     # Filter for desired classes
     filtered_indices = [
         i for i, label in enumerate(dataset["label"])

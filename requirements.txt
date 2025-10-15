@@ -10,6 +10,7 @@ colorama
 comm
 contourpy
 cycler
+datasets
 debugpy
 decorator
 distro
@@ -62,7 +63,6 @@ six
 sniffio
 soupsieve
 stack-data
-timm
 thop
 threadpoolctl
 tornado
