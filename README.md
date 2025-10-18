@@ -27,8 +27,8 @@ This project explores how compressed and degraded dermatology images (from the I
 ## Project Structure
 
 ```
-CS231N/
-├── configs/                         
+reduced-perception/
+├── configs/
 │   └── example_config.yaml          # Configs for job submissions
 │
 ├── scripts/                         # Lightweight utility or shell scripts
@@ -57,7 +57,7 @@ CS231N/
 ├── requirements.txt
 ├── .gitignore
 ├── .github
-└── README.md   
+└── README.md
 ```
 
 ## Quick Start
