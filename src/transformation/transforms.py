@@ -4,41 +4,50 @@ from typing import Optional
 import numpy as np
 from PIL import Image, ImageFilter
 
-class ResolutionReductionTransform:  # pylint: disable=too-few-public-methods
-    """Reduce spatial resolution of images."""
+from typing import Optional, Tuple
+import numpy as np
+from PIL import Image
 
-    def __init__(self, reduction_factor: Optional[float] = None):
-        """
-        Args:
-            reduction_factor: Factor to reduce resolution by (0.1-1.0).
-                            For example, 0.5 reduces to half resolution.
-                            If None, random factor is used.
-        """
+from typing import Optional, Tuple
+import numpy as np
+from PIL import Image
+
+class ResolutionReductionTransform:
+    """Reduce image resolution by factor or target resolution."""
+
+    def __init__(
+        self,
+        reduction_factor: Optional[float] = None,
+        target_resolution: Optional[Tuple[int, int]] = None,
+        restore_original_size: bool = False,
+    ):
         self.reduction_factor = reduction_factor
+        self.target_resolution = target_resolution
+        self.restore_original_size = restore_original_size
 
     def __call__(self, img: Image.Image) -> Image.Image:
-        """Apply resolution reduction."""
-        if self.reduction_factor is None:
-            # Random reduction factor between 0.2 and 0.8
-            reduction_factor = np.random.uniform(0.2, 0.8)
+        ow, oh = img.size
+
+        if self.target_resolution is not None:
+            nw, nh = self.target_resolution
         else:
-            reduction_factor = self.reduction_factor
+            factor = (
+                np.random.uniform(0.2, 0.8)
+                if self.reduction_factor is None
+                else self.reduction_factor
+            )
+            factor = max(0.1, min(1.0, factor))
+            nw, nh = max(1, int(ow * factor)), max(1, int(oh * factor))
 
-        # Clamp reduction factor to valid range
-        reduction_factor = max(0.1, min(1.0, reduction_factor))
+        # Downsample
+        reduced = img.resize((nw, nh), Image.Resampling.LANCZOS)
 
-        # Calculate new size
-        original_width, original_height = img.size
-        new_width = int(original_width * reduction_factor)
-        new_height = int(original_height * reduction_factor)
+        # Either return the reduced image as-is, or restore to original size
+        if self.restore_original_size:
+            return reduced.resize((ow, oh), Image.Resampling.LANCZOS)
+        return reduced
 
-        # Ensure minimum size of 1x1
-        new_width = max(1, new_width)
-        new_height = max(1, new_height)
 
-        # Downsample and then upsample back to original size
-        downsampled = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
-        return downsampled.resize((original_width, original_height), Image.Resampling.LANCZOS)
 
 class JPEGCompressionTransform:  # pylint: disable=too-few-public-methods
     """Apply JPEG compression to images."""

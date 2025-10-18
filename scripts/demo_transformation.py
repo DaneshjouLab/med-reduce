@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-# pylint: disable=broad-exception-caught
+# pylint: disable=broad-exception-caught,wrong-import-position,import-error
 
 """
-Demo script to apply ResolutionReductionTransform to ISIC dataset images and save results.
+Apply ResolutionReductionTransform to a few ISIC images and save:
+- original_<idx>.png
+- resolution_reduced_<idx>.png  (reduced-size, not upsampled)
 """
 
 import sys
 from pathlib import Path
-from PIL import Image
+from typing import Iterable, Optional
 
 # Add src to Python path for imports
 current_dir = Path(__file__).parent
@@ -19,81 +21,89 @@ from datasets import load_dataset
 from src.data.isic_loader import ISICBaseDataset
 from src.transformation.transforms import ResolutionReductionTransform
 
-def main():
+
+def load_isic_dataset() -> Optional[ISICBaseDataset]:
+    """Load ISIC dataset from HuggingFace."""
     print("🔄 Loading ISIC dataset from HuggingFace...")
     try:
         hf_dataset = load_dataset("MKZuziak/ISIC_2019_224", split="train")
-        isic_dataset = ISICBaseDataset(hf_dataset)
-        print(f"✅ Loaded {len(isic_dataset)} samples")
+        ds = ISICBaseDataset(hf_dataset)
+        print(f"✅ Loaded {len(ds)} samples")
+        return ds
     except Exception as e:
         print(f"❌ Failed to load dataset: {e}")
         print("Make sure you have 'datasets' installed: pip install datasets")
-        return
+        return None
 
-    # Create output directory
-    output_dir = Path("outputs")
-    output_dir.mkdir(exist_ok=True)
+
+def process_images(
+    dataset: ISICBaseDataset,
+    indices: Iterable[int],
+    transform: ResolutionReductionTransform,
+    output_dir: Path,
+    save_prefix: str = "resolution_reduced",
+) -> int:
+    """
+    For each index: save original and one reduced image using `transform`.
+    Assumes transform returns the reduced-size image (no upsample).
+    """
+    output_dir.mkdir(parents=True, exist_ok=True)
     print(f"📁 Output directory: {output_dir.absolute()}")
 
-    print("\nApplying ResolutionReductionTransform to first 5 images...")
-
-    # Create the transform
-    resolution_transform = ResolutionReductionTransform()  # Random reduction factor
-
-    # Process first 5 images
-    num_images = min(5, len(isic_dataset))
-
-    for i in range(num_images):
-        print(f"\nProcessing image {i+1}/{num_images}...")
-
+    processed = 0
+    for idx in indices:
         try:
-            # Get the original image
-            sample = isic_dataset[i]
-            original_image = sample["image"]
-            label = sample["label"]
+            sample = dataset[idx]
+            original = sample["image"]
+            label = sample.get("label", None)
+            print(f"\n🖼️  Image {idx} | Original size: {original.size} | Label: {label}")
 
-            print(f"Original size: {original_image.size}, Label: {label}")
+            # Save original
+            orig_path = output_dir / f"original_{idx}.png"
+            original.save(orig_path)
+            print(f"  💾 Saved original → {orig_path.name}")
 
-            # Save original image
-            original_path = output_dir / f"original_{i}.png"
-            original_image.save(original_path)
-            print(f"  💾 Saved original: {original_path}")
+            # Save reduced (actual transformed size)
+            reduced = transform(original)
+            out_path = output_dir / f"{save_prefix}_{idx}.png"
+            reduced.save(out_path)
+            print(f"  🔧 Reduced to: {reduced.size}")
+            print(f"  💾 Saved reduced → {out_path.name}")
 
-            # Apply resolution reduction transform
-            transformed_image = resolution_transform(original_image)
-            print(f"  🔄 Transformed size: {transformed_image.size}")
-
-            # Save transformed image
-            transformed_path = output_dir / f"resolution_reduced_{i}.png"
-            transformed_image.save(transformed_path)
-            print(f"  💾 Saved transformed: {transformed_path}")
+            processed += 1
 
         except Exception as e:
-            print(f"  ❌ Error processing image {i}: {e}")
-            continue
+            print(f"  ❌ Error at index {idx}: {e}")
 
-    print(f"\n✅ All images saved to: {output_dir.absolute()}")
+    return processed
 
-    # Show what reduction factors were used (they're random)
-    print("\nTesting with fixed reduction factors...")
-    for factor in [0.25, 0.5, 0.75]:
-        print(f"\nTesting reduction factor: {factor}")
-        try:
-            fixed_transform = ResolutionReductionTransform(reduction_factor=factor)
 
-            # Use first image for this demo
-            sample = isic_dataset[0]
-            original_image = sample["image"]
+def main():
+    ds = load_isic_dataset()
+    if ds is None:
+        return
 
-            transformed = fixed_transform(original_image)
-            output_path = output_dir / f"fixed_reduction_{factor}_{0}.png"
-            transformed.save(output_path)
-            print(f"  💾 Saved: {output_path}")
+    output_dir = Path("outputs")
+    num_images = min(5, len(ds))
+    indices = range(num_images)
 
-        except Exception as e:
-            print(f"  ❌ Error with factor {factor}: {e}")
+    # Use target size and DO NOT upsample back in the transform
+    # Ensure your class has restore_original_size=False (default) as we discussed.
+    resolution_transform = ResolutionReductionTransform(
+        target_resolution=(54, 54),
+        restore_original_size=False
+    )
 
-    print(f"\n🎉 Demo completed! Check {output_dir.absolute()} for results.")
+    print("\n▶️ Saving originals and reduced versions for first 5 images...")
+    n = process_images(
+        dataset=ds,
+        indices=indices,
+        transform=resolution_transform,
+        output_dir=output_dir,
+        save_prefix="resolution_reduced",
+    )
+    print(f"\n✅ Done. Saved {n} reduced images. Check: {output_dir.absolute()}")
+
 
 if __name__ == "__main__":
     main()
