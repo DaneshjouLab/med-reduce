@@ -9,7 +9,6 @@ SPDX-License-Identifier: MIT
 
 This project explores how compressed and degraded dermatology images (from the ISIC 2019 dataset) affect classification performance using pretrained vision models. It compares fine-tuning vs. linear probing across multiple JPEG quality levels.
 
-![System architecture diagram](<./media/CS231N Poster.png>)
 
 ## Project Goals
 
