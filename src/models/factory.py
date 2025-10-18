@@ -1,0 +1,191 @@
+# src/models/factory.py
+# -*- coding: utf-8 -*-
+"""Unified model factory: HF vision models (ViT/DINOv2), optional timm,
+   plus matching preprocessors and helpers (freeze_backbone, save_model)."""
+
+from typing import Dict, Any
+
+import os
+import torch.nn as nn
+from PIL import Image
+
+# --- Hugging Face ---
+from transformers import (
+    ViTForImageClassification,
+    AutoModelForImageClassification,
+    ViTFeatureExtractor,
+    AutoImageProcessor,
+)
+
+# --- Optional timm ---
+try:
+    import timm  # type: ignore
+    _TIMM_AVAILABLE = True
+except Exception:
+    _TIMM_AVAILABLE = False
+
+# --- Project constants (small change from your code: avoid importing configs directly) ---
+try:
+    from src.utils.constants import HF_MODELS  # e.g., {"vit", "dinov2"}
+except Exception:
+    # Fallback if constants not present yet
+    HF_MODELS = {"vit", "dinov2"}
+
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
+
+def create_model(model_info: Dict[str, Any], resolution: int = 224):
+    """
+    Factory function to create models based on type.
+
+    Args:
+        model_info: {"type": "vit"|"dinov2"|("timm"), "model_id": str, "config": {...}}
+        resolution: input image resolution
+
+    Returns:
+        nn.Module
+    """
+    model_type = model_info["type"]
+    model_id = model_info["model_id"]
+    config = model_info.get("config", {})
+
+    # --- HuggingFace ViT ---
+    if model_type == "vit":
+        return ViTForImageClassification.from_pretrained(
+            model_id,
+            num_labels=config["num_labels"],
+            ignore_mismatched_sizes=config.get("ignore_mismatched_sizes", True),
+            image_size=resolution,
+        )
+
+    # --- HuggingFace DINOv2 (AutoModel) ---
+    elif model_type == "dinov2":
+        return AutoModelForImageClassification.from_pretrained(
+            model_id,
+            num_labels=config["num_labels"],
+            ignore_mismatched_sizes=config.get("ignore_mismatched_sizes", True),
+            image_size=resolution,
+        )
+
+    # --- Optional timm branch (kept minimal, no breaking changes) ---
+    elif model_type == "timm":
+        if not _TIMM_AVAILABLE:
+            raise RuntimeError("timm is not installed but model_type='timm' was requested.")
+        num_classes = int(config.get("num_labels", 1000))
+        pretrained = bool(config.get("pretrained", True))
+        # If you need image_size-specific config, many timm models accept it via `img_size`
+        return timm.create_model(model_id, pretrained=pretrained, num_classes=num_classes)
+
+    else:
+        raise ValueError(f"Unknown model type: {model_type}")
+
+
+def create_preprocessor(model_info: Dict[str, Any], resolution: int = 224):
+    """
+    Create appropriate preprocessor for model type.
+
+    Args:
+        model_info: Dictionary with model configuration
+        resolution: Input image resolution
+
+    Returns:
+        HF preprocessor (FeatureExtractor/ImageProcessor) or None (for timm)
+    """
+    model_type = model_info["type"]
+    model_id = model_info["model_id"]
+
+    if model_type == "vit":
+        return ViTFeatureExtractor.from_pretrained(
+            model_id,
+            size=resolution,
+            do_resize=True,
+            resample=Image.LANCZOS,
+            do_normalize=True,
+            image_mean=[0.485, 0.456, 0.406],
+            image_std=[0.229, 0.224, 0.225],
+        )
+
+    elif model_type == "dinov2":
+        return AutoImageProcessor.from_pretrained(
+            model_id,
+            size=resolution,
+            do_resize=True,
+            resample=Image.LANCZOS,
+            do_normalize=True,
+            image_mean=[0.485, 0.456, 0.406],
+            image_std=[0.229, 0.224, 0.225],
+        )
+
+    elif model_type == "timm":
+        # timm uses torchvision transforms; return None and build transforms in your datamodule
+        return None
+
+    else:
+        raise ValueError(f"Unknown model type: {model_type}")
+
+
+def freeze_backbone(model: nn.Module, model_type: str):
+    """
+    Freeze backbone parameters for transfer learning.
+    For HF classifiers, keep 'classifier' or 'head' trainable; freeze the rest.
+
+    Args:
+        model: nn.Module
+        model_type: 'vit' | 'dinov2' | ('timm' if you wire it similarly)
+    """
+    if model_type in HF_MODELS:
+        for name, param in model.named_parameters():
+            # Leave classifier/head trainable, freeze others
+            if ("classifier" in name) or ("head" in name):
+                param.requires_grad = True
+            else:
+                param.requires_grad = False
+    elif model_type == "timm":
+        # Optional: implement project-specific rules (e.g., freeze all except last classifier)
+        for name, param in model.named_parameters():
+            if ("classifier" in name) or ("fc" in name) or ("head" in name):
+                param.requires_grad = True
+            else:
+                param.requires_grad = False
+    else:
+        raise ValueError(f"Unsupported model_type: {model_type}")
+
+
+def save_model(model: nn.Module, model_info: Dict[str, Any], save_dir: str, preprocessor=None):
+    """
+    Save model based on its type.
+
+    Args:
+        model: Model to save
+        model_info: Model configuration
+        save_dir: Directory to save to
+        preprocessor: Optional HF preprocessor to save
+    """
+    os.makedirs(save_dir, exist_ok=True)
+    model_type = model_info["type"]
+
+    if model_type in HF_MODELS:
+        model.save_pretrained(save_dir)
+        if preprocessor is not None:
+            preprocessor.save_pretrained(save_dir)
+    elif model_type == "timm":
+        # Torch-style checkpoint for timm models
+        import torch
+        ckpt_path = os.path.join(save_dir, "pytorch_model.bin")
+        torch.save(model.state_dict(), ckpt_path)
+        # Minimal config export
+        with open(os.path.join(save_dir, "config.json"), "w") as f:
+            import json
+            json.dump(
+                {
+                    "model_type": "timm",
+                    "model_id": model_info["model_id"],
+                    "num_labels": model_info.get("config", {}).get("num_labels", None),
+                },
+                f,
+                indent=2,
+            )
+    else:
+        raise ValueError(f"Unsupported model_type: {model_type}")
