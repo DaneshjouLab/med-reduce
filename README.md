@@ -34,6 +34,9 @@ This project explores how compressed and degraded dermatology images (from the I
 ## Project Structure
 
 ```
+reduced-perception/
+├── configs/
+│   └── example_config.yaml          # Configs for job submissions
 compressed-perception/
 ├── README.md                    # Project overview & documentation
 ├── LICENSES/                    # Directory containing license files (REUSE compliance)
@@ -43,8 +46,51 @@ compressed-perception/
 ├── setup.py                     # Installation script for the package
 ├── setup.cfg                    # Configuration for setup tools
 │
+├── scripts/                         # Lightweight utility or shell scripts
+│   ├── download_unpack_isic2019.sh  # Downloads and unpacks ISIC data
+│   └── submit_from_config.sh        # SLURM submission helper
+│
+├── jobs/                            # SLURM-related job definitions
+│   └── job_template.slurm
+│
+├── src/                             # Source code, logically grouped
+│   ├── __init__.py
+│   ├── finetune/                    # Fine-tuning workflows
+│   │   └── baseline_finetuning.py
+│   ├── evaluation/                  # Evaluation + plotting
+│   │   └── evaluate_isic_results.py
+│   └── models/                      # Model-related scripts
+│       ├── model_comparison.py      # Config file with constant strings
+│       ├── model_comparison.py
+│       └── model_comparison_2.py
+
+│
+├── results/                         # Auto-generated results
+│   ├── plots/                       # Accuracy/f1/AUC plots
+│   └── logs/                        # Training logs or SLURM outputs
+│
+├── requirements.txt
+├── .gitignore
+├── .github
+└── README.md
+```
+
+## Quick Start
+
+1. Install requirements:
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+2. Run training:
+   ```bash
+   python train_models.py
+   ```
+
+3. View results
+   We use weights and biases for logging, so output plots can be seen there
 ├── requirements.txt             # Dependencies file
-├── requirements.txt.license     # Dependencies file license 
+├── requirements.txt.license     # Dependencies file license
 ├── .yamllint                    # YAML linter configuration
 ├── .yamllint.license            # YAML linter configuration license
 │
@@ -54,13 +100,13 @@ compressed-perception/
 │       └── pull_request.yml
 │
 ├── .reuse/                      # REUSE compliance configuration
-│   └── dep5                     # Copyright and license information         
+│   └── dep5                     # Copyright and license information
 │
 ├── docs/                        # Documentation
 │   └── pipeline.md              # Pipeline documentation
 │
 ├── scripts/                        # Standalone scripts
-│   ├── ...   
+│   ├── ...
 │   └── visualize_isic_results.py   # Visualize metrics for model comparison (TODO)
 │
 ├── configs/                     # Configuration files (TODO)
@@ -124,10 +170,10 @@ compressed-perception/
 │       │       ├── __init__.py
 │       │       └── preparation.py  # Dataset preparation
 │       │
-│       
 │
-├── results/                 
-│ 
+│
+├── results/
+│
 ├── jobs/                         # Cluster job submission files
 │   ├── job_template.slurm        # SLURM job template
 │   ├── run.sh                    # General run script
