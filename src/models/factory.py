@@ -1,3 +1,9 @@
+# This source file is part of the Daneshjou Lab projects
+#
+# SPDX-FileCopyrightText: 2025 Stanford University and the project authors (see AUTHORS.md)
+#
+# SPDX-License-Identifier: MIT
+
 # src/models/factory.py
 # -*- coding: utf-8 -*-
 """Unified model factory: HF vision models (ViT/DINOv2), optional timm,

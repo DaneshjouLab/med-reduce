@@ -1,3 +1,10 @@
+
+# This source file is part of the Daneshjou Lab projects
+#
+# SPDX-FileCopyrightText: 2025 Stanford University and the project authors (see AUTHORS.md)
+#
+# SPDX-License-Identifier: MIT
+
 """Configuration and constants."""
 from dataclasses import dataclass
 from typing import List, Dict, Any
@@ -28,11 +35,11 @@ class TrainingConfig:
     eval_steps: int = 10
     learning_rate: float = 1e-4
     weight_decay: float = 0.01
-    
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for logging."""
         return self.__dict__
-    
+
     def to_wandb_config(self) -> Dict[str, Any]:
         """Create wandb configuration."""
         import torch
