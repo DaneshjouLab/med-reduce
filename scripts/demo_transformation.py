@@ -62,12 +62,12 @@ def process_images(
             sample = dataset[idx]
             original = sample["image"]
             label = sample.get("label", None)
-            print(f"\n🖼️  Image {idx} | Original size: {original.size} | Label: {label}")
+            print(f"\nImage {idx} | Original size: {original.size} | Label: {label}")
 
             # Save original
             orig_path = output_dir / f"original_{idx}.png"
             original.save(orig_path)
-            print(f"  💾 Saved original → {orig_path.name}")
+            print(f"Saved original → {orig_path.name}")
 
             # Save reduced (actual transformed size)
             reduced = transform(original)
@@ -94,7 +94,6 @@ def main():
     indices = range(num_images)
 
     # Use target size and DO NOT upsample back in the transform
-    # Ensure your class has restore_original_size=False (default) as we discussed.
     resolution_transform = ResolutionReductionTransform(
         target_resolution=(54, 54),
         restore_original_size=False
