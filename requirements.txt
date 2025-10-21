@@ -21,6 +21,7 @@ fonttools
 h11
 httpcore
 httpx
+hydra
 idna
 importlib_metadata
 ipykernel
@@ -36,6 +37,7 @@ matplotlib
 matplotlib-inline
 nest_asyncio
 numpy>=1.26.0
+omegaconf
 openai
 packaging
 pandas>=2.2.0
@@ -65,11 +67,11 @@ stack-data
 thop
 threadpoolctl
 timm
-torch
-torchvision
-tqdm
+torch>=2.0.0
+torchvision>=0.15.0
+tqdm>=4.65.0
 traitlets
-transformers
+transformers>=4.30.0
 triton
 typing-inspect
 typing_extensions
