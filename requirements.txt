@@ -22,6 +22,7 @@ h11
 httpcore
 httpx
 hydra
+hydra-core==1.3.2
 idna
 importlib_metadata
 ipykernel
@@ -37,7 +38,7 @@ matplotlib
 matplotlib-inline
 nest_asyncio
 numpy>=1.26.0
-omegaconf
+omegaconf==2.3.0
 openai
 packaging
 pandas>=2.2.0
