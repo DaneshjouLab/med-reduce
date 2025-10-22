@@ -4,7 +4,7 @@
 #
 # SPDX-License-Identifier: MIT
 
-# src/data/isic_loader.py
+"""ISIC dataset loader implementation for dermatology image datasets."""
 from typing import Any, Dict, Union
 from torch.utils.data import Dataset, Subset
 
@@ -27,7 +27,7 @@ class ISICBaseDataset(Dataset):
         return len(self.dataset)
 
     def __getitem__(self, idx: int) -> Dict[str, Any]:
-        # Handle Subset wrapping transparently
+        # Handle Subset wrapping
         base = self.dataset
         if hasattr(base, "dataset") and hasattr(base, "indices"):
             # Subset case
@@ -35,14 +35,13 @@ class ISICBaseDataset(Dataset):
         else:
             item = base[idx]
 
-        # Do NOT touch the image (no resize, no cast, no transforms)
+        # no resize, no cast, no transforms
         image = item["image"]
         label = item["label"]
 
-        # Make sure label is int-like, but don't coerce image
         try:
             label = int(label)
-        except Exception:
-            raise TypeError("Label must be convertible to int.")
+        except Exception as exc:
+            raise TypeError("Label must be convertible to int.") from exc
 
         return {"image": image, "label": label}

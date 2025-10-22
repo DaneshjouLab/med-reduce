@@ -5,6 +5,7 @@
 
 # -*- coding: utf-8 -*-
 """Training engine for linear probing."""
+# pylint: disable=duplicate-code
 from __future__ import annotations
 from typing import Dict, Any, Tuple, Optional
 
@@ -15,16 +16,20 @@ from torch import nn
 # --- AMP import (robust across versions) ---
 try:
     # PyTorch 2.0+ unified AMP API
-    from torch.amp import autocast, GradScaler
+    from torch.amp import autocast
 except ImportError:
     # Fallback for older PyTorch versions
-    from torch.cuda.amp import autocast, GradScaler
+    from torch.cuda.amp import autocast
 
 # pylint: disable=import-error
 from src.utils.logging import get_logger
-from src.engines.utils.training_loops import (
+from src.engines.utils.training_core import (
     _maybe_scheduler_step,
-    _evaluate,
+    _create_grad_scaler,
+    _update_history_and_log,
+    _preprocess_batch,
+    _run_validation_and_scheduler,
+    _update_best_model_state,
 )
 
 log = get_logger(__name__)
@@ -52,19 +57,10 @@ def train_probe(  # pylint: disable=too-many-arguments,too-many-locals,too-many-
     model.train()
 
     # Initialize GradScaler safely across torch versions
-    try:
-        scaler = GradScaler(
-            enabled=mixed_precision,
-            init_scale=2.0**16,
-            growth_factor=2.0,
-            backoff_factor=0.5,
-            growth_interval=2000,
-        )
-    except TypeError:
-        scaler = GradScaler(enabled=mixed_precision)
+    scaler = _create_grad_scaler(mixed_precision)
 
     sched, sched_meta = scheduler or (None, {})
-    best_metric = -math.inf
+    best_metric = -math.inf if not metric_key.endswith("loss") else math.inf
     best_state_dict = None
 
     history = {"train_loss": [], "val_loss": [], "val_acc": [], "lr": []}
@@ -74,11 +70,7 @@ def train_probe(  # pylint: disable=too-many-arguments,too-many-locals,too-many-
         running_loss, n_seen = 0.0, 0
 
         for step, batch in enumerate(loaders["train"], start=1):
-            if isinstance(batch, dict):
-                x, y = batch["image"], batch["label"]
-            else:
-                x, y = batch
-            x, y = x.to(device, non_blocking=True), y.to(device, non_blocking=True)
+            x, y = _preprocess_batch(batch, device)
 
             optimizer.zero_grad(set_to_none=True)
             with autocast(device_type=device.type, enabled=mixed_precision):
@@ -115,63 +107,40 @@ def train_probe(  # pylint: disable=too-many-arguments,too-many-locals,too-many-
 
         train_loss = running_loss / max(n_seen, 1)
 
-        # ---- validation
-        val_loss, val_acc = _evaluate(
+        # ---- validation and scheduler step
+        val_loss, val_acc = _run_validation_and_scheduler(
             model=model,
-            loader=loaders["val"],
+            loaders=loaders,
             loss_fn=loss_fn,
             device=device,
             mixed_precision=mixed_precision,
+            sched=sched,
+            sched_meta=sched_meta,
+            metric_key=metric_key,
         )
-
-        # scheduler on epoch or val metric
-        if sched is not None:
-            if isinstance(sched, torch.optim.lr_scheduler.ReduceLROnPlateau):
-                sched_meta["monitor"] = (
-                    val_loss if metric_key.endswith("loss") else val_acc
-                )
-                _maybe_scheduler_step(sched_meta, sched, on="val")
-            else:
-                _maybe_scheduler_step(sched_meta, sched, on="epoch")
 
         # logging
         cur_lr = optimizer.param_groups[0]["lr"]
-        history["train_loss"].append(train_loss)
-        history["val_loss"].append(val_loss)
-        history["val_acc"].append(val_acc)
-        history["lr"].append(cur_lr)
-
-        if wandb_logger:
-            wandb_logger.log(
-                {
-                    "epoch": epoch,
-                    "train/loss_epoch": train_loss,
-                    "val/loss": val_loss,
-                    "val/acc": val_acc,
-                    "lr": cur_lr,
-                }
-            )
-
-        log.info(
-            "Epoch %d | train_loss=%.4f | val_loss=%.4f | val_acc=%.4f | lr=%.2e",
-            epoch,
-            train_loss,
-            val_loss,
-            val_acc,
-            cur_lr,
+        _update_history_and_log(
+            history=history,
+            epoch=epoch,
+            train_loss=train_loss,
+            val_loss=val_loss,
+            val_acc=val_acc,
+            cur_lr=cur_lr,
+            wandb_logger=wandb_logger,
+            log=log,
         )
 
-        monitor = val_loss if metric_key.endswith("loss") else val_acc
-        is_better = (
-            (monitor < best_metric)
-            if metric_key.endswith("loss")
-            else (monitor > best_metric)
+        updated_state, best_metric, is_better = _update_best_model_state(
+            model=model,
+            metric_key=metric_key,
+            val_loss=val_loss,
+            val_acc=val_acc,
+            best_metric=best_metric,
         )
         if is_better:
-            best_metric = monitor
-            best_state_dict = {
-                k: v.detach().cpu().clone() for k, v in model.state_dict().items()
-            }
+            best_state_dict = updated_state
 
     # restore best (optional: caller can save now)
     if best_state_dict is not None:
