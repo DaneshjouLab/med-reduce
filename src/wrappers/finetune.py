@@ -13,7 +13,7 @@ import torch
 from torch.utils.data import DataLoader
 
 # pylint: disable=import-error
-from src.utils.logging import setup_logging, get_logger, WandbLogger
+from src.utils.logging_core import setup_logging, get_logger, WandbLogger
 from src.utils.optim import make_optimizer_and_scheduler
 from src.losses.classification import cross_entropy_loss
 from src.models.factory import create_model, create_preprocessor, save_model

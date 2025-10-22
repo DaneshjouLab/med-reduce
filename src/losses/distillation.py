@@ -4,11 +4,20 @@
 #
 # SPDX-License-Identifier: MIT
 
+"""
+Knowledge distillation loss functions.
+
+This module provides various loss functions used in knowledge distillation,
+including cosine embedding loss, KL divergence, and hybrid distillation loss
+for transferring knowledge from teacher to student models.
+"""
+
 # src/losses/distillation.py
 # -*- coding: utf-8 -*-
 from typing import Dict
+# pylint: disable=import-error
 import torch.nn.functional as F
-from torch import Tensor
+from torch import Tensor  # pylint: disable=import-error
 
 
 def cosine_loss(reduction: str = "mean"):
@@ -23,7 +32,7 @@ def cosine_loss(reduction: str = "mean"):
         loss = 1.0 - sim  # minimize (1 - cos)
         if reduction == "mean":
             return loss.mean()
-        elif reduction == "sum":
+        if reduction == "sum":
             return loss.sum()
         return loss
     return _loss
@@ -33,14 +42,14 @@ def kl_divergence_loss(temperature: float = 1.0, reduction: str = "batchmean"):
     """
     KL divergence on logits with temperature scaling (Hinton et al., 2015).
     """
-    T = float(temperature)
-    T2 = T * T
+    temp = float(temperature)
+    temp_squared = temp * temp
 
     def _loss(s_logits: Tensor, t_logits: Tensor) -> Tensor:
-        log_p_s = F.log_softmax(s_logits / T, dim=-1)
-        p_t = F.softmax(t_logits / T, dim=-1)
+        log_p_s = F.log_softmax(s_logits / temp, dim=-1)
+        p_t = F.softmax(t_logits / temp, dim=-1)
         kl = F.kl_div(log_p_s, p_t, reduction=reduction)
-        return kl * T2
+        return kl * temp_squared
     return _loss
 
 

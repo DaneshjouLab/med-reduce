@@ -21,5 +21,3 @@ HF_MODELS = {"vit", "dinov2"}
 
 NUM_CLASSES = 1000  # update dynamically per dataset if needed
 NUM_FILTERED_CLASSES = 8  # for ISIC filtered subset example
-
-

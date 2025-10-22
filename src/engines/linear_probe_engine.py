@@ -22,8 +22,8 @@ except ImportError:
     from torch.cuda.amp import autocast
 
 # pylint: disable=import-error
-from src.utils.logging import get_logger
-from src.engines.utils.training_core import (
+from src.utils.logging_core import get_logger
+from src.engines.training_core import (
     _maybe_scheduler_step,
     _create_grad_scaler,
     _update_history_and_log,

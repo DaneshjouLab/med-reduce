@@ -1,4 +1,3 @@
-
 # This source file is part of the Daneshjou Lab projects
 #
 # SPDX-FileCopyrightText: 2025 Stanford University and the project authors (see AUTHORS.md)
@@ -7,7 +6,15 @@
 
 """Configuration and constants."""
 from dataclasses import dataclass
-from typing import List, Dict, Any
+from typing import Dict, Any
+
+# Optional import - used for hardware detection
+try:
+    import torch  # pylint: disable=import-error
+    CUDA_AVAILABLE = torch.cuda.is_available()
+except ImportError:
+    # If torch is not available, assume no CUDA
+    CUDA_AVAILABLE = False
 
 # Model constants
 HF_MODELS = ["vit", "dinov2"]
@@ -24,9 +31,11 @@ IMAGE_NORMALIZATION = {
     "std": [0.229, 0.224, 0.225],
 }
 
+
 @dataclass
-class TrainingConfig:
+class TrainingConfig: # pylint: disable=too-many-instance-attributes
     """Training configuration."""
+
     num_train_images: int = 100
     proportion_per_transform: float = 0.2
     resolution: int = 224
@@ -42,11 +51,11 @@ class TrainingConfig:
 
     def to_wandb_config(self) -> Dict[str, Any]:
         """Create wandb configuration."""
-        import torch
         return {
             **self.to_dict(),
-            "gpu_available": torch.cuda.is_available(),
+            "gpu_available": CUDA_AVAILABLE,
         }
+
 
 # Model configurations
 MODEL_REGISTRY = [
@@ -54,18 +63,12 @@ MODEL_REGISTRY = [
         "name": "vit",
         "model_id": "google/vit-base-patch16-224",
         "type": "vit",
-        "config": {
-            "num_labels": NUM_FILTERED_CLASSES,
-            "ignore_mismatched_sizes": True
-        }
+        "config": {"num_labels": NUM_FILTERED_CLASSES, "ignore_mismatched_sizes": True},
     },
     {
         "name": "dinov2",
         "model_id": "facebook/dinov2-base",
         "type": "dinov2",
-        "config": {
-            "num_labels": NUM_FILTERED_CLASSES,
-            "ignore_mismatched_sizes": True
-        }
+        "config": {"num_labels": NUM_FILTERED_CLASSES, "ignore_mismatched_sizes": True},
     },
 ]

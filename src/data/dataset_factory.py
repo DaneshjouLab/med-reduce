@@ -9,10 +9,10 @@
 from typing import Optional, List, Dict, Any, Union
 
 # Third-party imports
-import numpy as np
-import torch
-from PIL import Image
-from torch.utils.data import Dataset, ConcatDataset, Subset
+import numpy as np  # pylint: disable=import-error
+import torch  # pylint: disable=import-error
+from PIL import Image  # pylint: disable=import-error
+from torch.utils.data import Dataset, ConcatDataset, Subset  # pylint: disable=import-error
 
 # Local imports
 # pylint: disable=import-error,relative-beyond-top-level
@@ -340,7 +340,7 @@ def _load_isic_split(data_dir: str, split: str) -> Dataset:
 
     If you already have it elsewhere, just import and return it here.
     """
-    # pylint: disable=import-outside-toplevel,relative-beyond-top-level
+    # pylint: disable=import-outside-toplevel,relative-beyond-top-level,import-error
 
     try:
         from src.data.isic_raw import ISICRawSplit  # Use absolute import

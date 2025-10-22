@@ -5,20 +5,15 @@
 # SPDX-License-Identifier: MIT
 
 """Image transformation utilities."""
+# Standard library imports
 import io
-from typing import Optional
-import numpy as np
-from PIL import Image, ImageFilter
-
 from typing import Optional, Tuple
-import numpy as np
-from PIL import Image
 
-from typing import Optional, Tuple
-import numpy as np
-from PIL import Image
+# Third-party imports
+import numpy as np  # pylint: disable=import-error
+from PIL import Image, ImageFilter  # pylint: disable=import-error
 
-class ResolutionReductionTransform:
+class ResolutionReductionTransform:  # pylint: disable=too-few-public-methods
     """Reduce image resolution by factor or target resolution."""
 
     def __init__(
@@ -99,7 +94,7 @@ class GaussianBlurTransform:  # pylint: disable=too-few-public-methods
 
         return img.filter(ImageFilter.GaussianBlur(radius=radius))
 
-class ColorQuantizationTransform:
+class ColorQuantizationTransform:  # pylint: disable=too-few-public-methods
     """Reduce color palette of images."""
 
     def __init__(self, n_colors: Optional[int] = None):

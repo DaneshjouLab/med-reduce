@@ -4,6 +4,8 @@
 #
 # SPDX-License-Identifier: MIT
 
+# pylint: disable=all
+
 # src/utils/training_utils.py
 # -*- coding: utf-8 -*-
 from __future__ import annotations

@@ -5,7 +5,7 @@
 
 # src/cli/train.py
 # -*- coding: utf-8 -*-
-
+# pylint: disable=import-error, broad-exception-caught
 """
 CLI entry point for training/evaluating models across paradigms (probe/finetune).
 It normalizes dataset config → data config, builds a BaseDataModule using the
@@ -28,7 +28,8 @@ Usage examples:
   python -m src.cli.train -m \
     hydra.sweeper=basic \
     hydra.sweeper.n_trials=20 \
-    hydra.sweeper.params='optim.lr=log(1e-5,1e-3); optim.weight_decay=uniform(0,0.1); dataset.batch_size=choice(64,128)' \
+    hydra.sweeper.params='optim.lr=log(1e-5,1e-3); optim.weight_decay=uniform(0,0.1); \
+dataset.batch_size=choice(64,128)' \
     train.mode=probe \
     dataset.name=isic2019 dataset.data_dir=/data/ISIC \
     dataset.image_size=224 \
@@ -59,21 +60,24 @@ from typing import Dict, Any, Optional, Tuple, Union
 
 import torch
 import numpy as np
-import hydra
-from omegaconf import DictConfig, OmegaConf
+import hydra  # pylint: disable=import-error
+from omegaconf import DictConfig, OmegaConf  # pylint: disable=import-error
 
 # ---- Training wrappers (each provides run(cfg) -> dict of metrics)
-from src.wrappers import probe as probe_wrapper
-from src.wrappers import finetune as finetune_wrapper
+from src.wrappers import probe as probe_wrapper  # pylint: disable=import-error
+from src.wrappers import finetune as finetune_wrapper  # pylint: disable=import-error
 
 # ---- Data pipeline
-from src.data.datamodule import BaseDataModule
-from src.transformations.transforms import ResolutionReductionTransform
+from src.data.datamodule import BaseDataModule  # pylint: disable=import-error
+from src.transformations.transforms import (
+    ResolutionReductionTransform,
+)  # pylint: disable=import-error
 
 # ---- Optional HF preprocessor (only needed when actually running a HF backbone)
 try:
     from transformers import AutoImageProcessor  # noqa: F401
-except Exception:  # pylint: broad-exception-caught # pragma: no cover
+except ImportError:  # pragma: no cover
+    # If transformers is not installed, we continue without it
     AutoImageProcessor = None  # type: ignore
 
 log = logging.getLogger("train")
@@ -82,6 +86,7 @@ log = logging.getLogger("train")
 # ---------------------------------------------------------------------------
 # Helper functions
 # ---------------------------------------------------------------------------
+
 
 def _is_rank_zero() -> bool:
     local_rank = int(os.environ.get("LOCAL_RANK", "0"))
@@ -182,7 +187,9 @@ def _normalize_dataset_into_data(cfg: DictConfig) -> None:
     cfg.data.dataset_name = str(ds.get("name"))
     cfg.data.data_dir = ds.get("data_dir")  # can be None for HF datasets
     cfg.data.image_size = int(ds.get("image_size", 224))
-    cfg.data.batch_size = int(ds.get("batch_size", getattr(cfg.train, "batch_size", 64)))
+    cfg.data.batch_size = int(
+        ds.get("batch_size", getattr(cfg.train, "batch_size", 64))
+    )
     cfg.data.num_workers = int(ds.get("num_workers", 4))
     cfg.data.pin_memory = bool(ds.get("pin_memory", True))
 
@@ -199,7 +206,9 @@ def _normalize_dataset_into_data(cfg: DictConfig) -> None:
         raise ValueError("cfg.dataset.name must be set (e.g., 'isic2019').")
 
 
-def _build_degradation_transform(degr_cfg: DictConfig) -> Optional[ResolutionReductionTransform]:
+def _build_degradation_transform(
+    degr_cfg: DictConfig,
+) -> Optional[ResolutionReductionTransform]:
     """
     Build a ResolutionReductionTransform from a degradation config group.
     Supports:
@@ -211,7 +220,9 @@ def _build_degradation_transform(degr_cfg: DictConfig) -> Optional[ResolutionRed
         return None
 
     # normalize target_resolution
-    target_res: Optional[Union[int, Tuple[int, int]]] = getattr(degr_cfg, "target_resolution", None)
+    target_res: Optional[Union[int, Tuple[int, int]]] = getattr(
+        degr_cfg, "target_resolution", None
+    )
     restore: bool = bool(getattr(degr_cfg, "restore_original_size", False))
     reduction_factor = getattr(degr_cfg, "reduction_factor", None)
 
@@ -263,9 +274,9 @@ def _build_datamodule(cfg: DictConfig) -> BaseDataModule:
         batch_size=batch_size,
         num_workers=num_workers,
         pin_memory=pin_memory,
-        preprocessor=preproc,            # None -> ModelPreprocessor no-op
-        resolution=image_size,           # model input size (e.g., 224)
-        transform=transform,             # may be None
+        preprocessor=preproc,  # None -> ModelPreprocessor no-op
+        resolution=image_size,  # model input size (e.g., 224)
+        transform=transform,  # may be None
         model_type=model_type,
     )
 
@@ -278,6 +289,7 @@ def _build_datamodule(cfg: DictConfig) -> BaseDataModule:
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
+
 
 @hydra.main(config_path="../../configs", config_name="defaults", version_base=None)
 def main(cfg: DictConfig):
@@ -331,7 +343,9 @@ def main(cfg: DictConfig):
         metrics = metrics or {}
         with open(run_dir / "final_metrics.json", "w", encoding="utf-8") as f:
             json.dump(metrics, f, indent=2)
-        print("✅ Train done. Final metrics written to final_metrics.json\n", flush=True)
+        print(
+            "✅ Train done. Final metrics written to final_metrics.json\n", flush=True
+        )
 
 
 if __name__ == "__main__":
