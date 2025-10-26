@@ -8,6 +8,15 @@ import wandb
 from datasets import load_dataset, ClassLabel
 from transformers import Trainer, TrainingArguments
 from typing import Dict, Any
+from torch.utils.data import DataLoader
+from umap_viz import create_umap_callback
+from huggingface_hub import login
+from dotenv import load_dotenv
+
+load_dotenv()
+
+HF_TOKEN = os.getenv("HF_TOKEN")
+login(token=HF_TOKEN)
 
 from src.config import (
     TrainingConfig, MODEL_REGISTRY, FILTERED_CLASSES, 
@@ -21,119 +30,16 @@ from src.models import (
     create_model, create_preprocessor, freeze_backbone, save_model
 )
 from src.data_utils import (
-    ISICDataset, create_transformed_datasets, balance_dataset
+    ISICDataCollator, create_transformed_datasets, balance_dataset,
+    create_multi_validation_datasets, evaluate_all_datasets
 )
 from src.transforms import (
-    get_degradation_transforms, JPEGCompressionTransform,
-    GaussianBlurTransform, ColorQuantizationTransform
+    get_degradation_transforms
 )
 from src.training import (
     LossLoggerCallback, WandbCallback, profile_model,
     create_compute_metrics_fn
 )
-
-def create_multi_validation_datasets(
-    val_dataset,
-    preprocessor,
-    resolution: int,
-    model_type: str
-) -> Dict[str, Any]:
-    """
-    Create validation datasets with different degradation levels.
-    
-    Returns:
-        Dictionary mapping degradation name to dataset
-    """
-    val_datasets = {}
-    
-    # Clean (no degradation)
-    val_datasets['clean'] = ISICDataset(
-        val_dataset,
-        preprocessor,
-        resolution,
-        transform=None,
-        model_type=model_type
-    )
-    
-    # JPEG compression at different quality levels
-    for quality in [90, 50, 20]:
-        val_datasets[f'jpeg_{quality}'] = ISICDataset(
-            val_dataset,
-            preprocessor,
-            resolution,
-            transform=JPEGCompressionTransform(quality=quality),
-            model_type=model_type
-        )
-    
-    # Gaussian blur at different radii
-    for radius in [1.0, 3.0, 5.0]:
-        val_datasets[f'blur_{radius:.1f}'] = ISICDataset(
-            val_dataset,
-            preprocessor,
-            resolution,
-            transform=GaussianBlurTransform(radius=radius),
-            model_type=model_type
-        )
-    
-    # Color quantization at different levels
-    for n_colors in [64, 16, 4]:
-        val_datasets[f'color_{n_colors}'] = ISICDataset(
-            val_dataset,
-            preprocessor,
-            resolution,
-            transform=ColorQuantizationTransform(n_colors=n_colors),
-            model_type=model_type
-        )
-    
-    return val_datasets
-
-def evaluate_all_datasets(trainer, val_datasets: Dict[str, Any], model_name: str) -> Dict[str, Any]:
-    """
-    Evaluate model on all validation datasets.
-    
-    Args:
-        trainer: HuggingFace Trainer object
-        val_datasets: Dictionary of validation datasets
-        model_name: Name of the model for logging
-        
-    Returns:
-        Dictionary of results for each dataset
-    """
-    all_results = {}
-    
-    for val_name, val_dataset in val_datasets.items():
-        print(f"Evaluating on {val_name}...")
-        
-        # Evaluate on this dataset
-        eval_results = trainer.evaluate(
-            eval_dataset=val_dataset,
-            metric_key_prefix=f"eval_{val_name}"
-        )
-        
-        # Extract key metrics
-        accuracy = eval_results.get(f"eval_{val_name}_accuracy", 0)
-        f1 = eval_results.get(f"eval_{val_name}_f1", 0)
-        auc = eval_results.get(f"eval_{val_name}_auc", 0)
-        
-        # Store results
-        all_results[val_name] = {
-            "accuracy": accuracy,
-            "f1": f1,
-            "auc": auc,
-            "loss": eval_results.get(f"eval_{val_name}_loss", 0)
-        }
-        
-        # Log to wandb
-        wandb.log({
-            f"{val_name}/accuracy": accuracy,
-            f"{val_name}/f1": f1,
-            f"{val_name}/auc": auc,
-            "model": model_name
-        })
-        
-        print(f"  {val_name}: Acc={accuracy:.3f}, F1={f1:.3f}, AUC={auc:.3f}")
-    
-    return all_results
 
 def train_model(
     model_info: dict,
@@ -167,7 +73,7 @@ def train_model(
     # Initialize wandb
     wandb.init(
         entity="sonnet-xu-stanford-university",
-        project="CS231N Test",
+        project="Compressed Perception Test",
         name=f"{name}_{config.resolution}_{config.num_epochs}_epochs_{training_mode}",
         config={
             **config.to_wandb_config(),
@@ -238,12 +144,12 @@ def train_model(
         weight_decay=config.weight_decay,
         logging_dir=os.path.join(log_dir, f"{name}_{training_mode}"),
         logging_steps=1,
-        evaluation_strategy="steps",
+        eval_strategy="steps",
         eval_steps=config.eval_steps,
         save_strategy="steps",
         save_steps=config.eval_steps,
         load_best_model_at_end=True,  # Load best model for final evaluation
-        metric_for_best_model="eval_clean_accuracy",  # Use clean accuracy for model selection
+        metric_for_best_model="eval_accuracy",  # Use eval accuracy for model selection
         greater_is_better=True,
         save_total_limit=1,
         save_safetensors=False,
@@ -251,7 +157,7 @@ def train_model(
     )
     
     # Check disk space
-    check_disk_space(required_gb=1.0)
+    # check_disk_space(required_gb=1.0)
     
     # Create trainer with clean validation set for checkpointing
     trainer = Trainer(
@@ -259,6 +165,7 @@ def train_model(
         args=training_args,
         train_dataset=train_ds,
         eval_dataset=val_datasets['clean'],  # Use clean for model selection
+        data_collator=ISICDataCollator(),
         compute_metrics=create_compute_metrics_fn(name),
         callbacks=[
             LossLoggerCallback(log_dir, training_mode, name),
@@ -274,7 +181,18 @@ def train_model(
     start_time = time.time()
     peak_memory = get_gpu_memory()
     
+    umap_callbacks = create_umap_callback(
+        val_dataloader=DataLoader(val_datasets['clean'], batch_size=32),
+        device=device,
+        output_dir=os.path.join(log_dir, "umap_plots"),
+        model_name=f"{name}_{training_mode}",
+        max_samples=2000,
+    )
+    umap_callbacks["capture_before"](model)
+
     trainer.train()
+
+    umap_callbacks["capture_after"](trainer.model)
     
     # Evaluate on all validation datasets
     eval_start_time = time.time()
@@ -350,15 +268,13 @@ def main(config: TrainingConfig):
         split="train",
     )
     print(f"Initial dataset size: {len(dataset)} images")
-    
-    # Slice dataset for debug purposes
-    dataset = dataset[:50]
 
     # Filter for desired classes
     filtered_indices = [
         i for i, label in enumerate(dataset["label"])
         if str(label) in FILTERED_CLASSES
     ]
+
     dataset = dataset.select(filtered_indices)
     print(f"After filtering: {len(dataset)} images")
     
@@ -367,7 +283,8 @@ def main(config: TrainingConfig):
     
     # Balance dataset
     balanced_dataset = balance_dataset(dataset, FILTERED_CLASSES, config.num_train_images)
-    
+    print(f"Balanced dataset size: {len(balanced_dataset)} images")
+
     # Split into train and validation
     split_dataset = balanced_dataset.train_test_split(
         test_size=0.2,
@@ -384,7 +301,7 @@ def main(config: TrainingConfig):
     degradation_transforms = get_degradation_transforms()
     
     # Select models to train
-    models = [m for m in MODEL_REGISTRY if m["name"] in ["vit"]]  # Modify as needed
+    models = [m for m in MODEL_REGISTRY if m["name"] in ["dinov3"]]  # Modify as needed
     
     # Store all results
     all_results = {
@@ -438,7 +355,7 @@ def main(config: TrainingConfig):
     
     # Save comprehensive results
     output_filename = (
-        f"results_comprehensive_lr{config.learning_rate}_"
+        f"results_lr{config.learning_rate}_{config.resolution}_"
         f"bs{config.batch_size}_ep{config.num_epochs}.json"
     )
     save_results(
@@ -486,8 +403,8 @@ if __name__ == "__main__":
                       help='Input image resolution (default: 224)')
     parser.add_argument('--batch_size', type=int, default=128,
                       help='Batch size for training (default: 128)')
-    parser.add_argument('--num_train_images', type=int, default=500,
-                      help='Number of training images (default: 500)')
+    parser.add_argument('--num_train_images', type=int, default=10000,
+                      help='Number of training images (default: 10000)')
     parser.add_argument('--num_epochs', type=int, default=3,
                       help='Number of training epochs (default: 3)')
     parser.add_argument('--eval_steps', type=int, default=100,

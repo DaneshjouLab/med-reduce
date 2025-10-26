@@ -1,9 +1,10 @@
 """Configuration and constants."""
 from dataclasses import dataclass
 from typing import List, Dict, Any
+import torch
 
 # Model constants
-HF_MODELS = ["vit", "dinov2"]
+HF_MODELS = ["vit", "dinov2", "dinov3", "MedSigLIP"]
 
 # Dataset constants
 NUM_CLASSES = 8
@@ -56,6 +57,25 @@ MODEL_REGISTRY = [
         "name": "dinov2",
         "model_id": "facebook/dinov2-base",
         "type": "dinov2",
+        "config": {
+            "num_labels": NUM_FILTERED_CLASSES,
+            "ignore_mismatched_sizes": True
+        }
+    },
+    {
+        "name": "dinov3",
+        "model_id": "facebook/dinov3-vits16-pretrain-lvd1689m",
+        "type": "dinov3",
+        "dtype": torch.bfloat16,
+        "config": {
+            "num_labels": NUM_FILTERED_CLASSES,
+            "ignore_mismatched_sizes": True
+        }
+    },
+    {
+        "name": "MedSigLIP",
+        "model_id": "google/medsiglip-448",
+        "type": "MedSigLIP",
         "config": {
             "num_labels": NUM_FILTERED_CLASSES,
             "ignore_mismatched_sizes": True

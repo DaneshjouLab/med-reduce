@@ -26,7 +26,7 @@ This project explores how compressed and degraded dermatology images (from the I
 ## Project Structure
 
 ```
-CS231N/
+compressed-perception/
 ├── configs/
 │   ├── config.yaml                 # SLURM job configuration
 │   └── example_config.yaml 

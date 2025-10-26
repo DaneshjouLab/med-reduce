@@ -1,13 +1,14 @@
 """Dataset implementations and data utilities."""
 import numpy as np
 import torch
+import wandb
 from PIL import Image
 from torch.utils.data import Dataset, DataLoader, ConcatDataset, Subset
 from torchvision import transforms
 from typing import Optional, List, Dict, Any, Union
 
 from src.config import HF_MODELS, IMAGE_NORMALIZATION, DEFAULT_IMAGE_SIZE
-from src.transforms import JPEGCompressionTransform
+from src.transforms import JPEGCompressionTransform, GaussianBlurTransform, ColorQuantizationTransform
 
 class ISICDataset(Dataset):
     """ISIC dataset with support for multiple model types and transformations."""
@@ -69,15 +70,49 @@ class ISICDataset(Dataset):
         # Apply model-specific preprocessing
         if self.model_type in HF_MODELS:
             # For HuggingFace models
-            if hasattr(self.preprocessor, 'size'):
-                self.preprocessor.size = self.resolution
-            encoding = self.preprocessor(images=image, return_tensors="pt")
+            encoding = self.preprocessor(
+                images=image,
+                return_tensors="pt",
+                size={'height': self.resolution, 'width': self.resolution},
+                do_resize=True
+            )
             pixel_values = encoding["pixel_values"].squeeze(0)
         else:
             raise ValueError(f"Unsupported model_type: {self.model_type}")
         
-        label = torch.tensor(label, dtype=torch.long)
-        return {"pixel_values": pixel_values, "labels": label}
+        return {"pixel_values": pixel_values, "labels": int(label)}
+
+class ISICDataCollator:
+    """
+    Custom data collator for ISIC dataset.
+    
+    Ensures all tensors are properly batched and ready for device transfer.
+    The Trainer will automatically move the batch to the correct device.
+    """
+    
+    def __call__(self, features: List[Dict[str, Any]]) -> Dict[str, torch.Tensor]:
+        """
+        Collate a list of samples into a batch.
+        
+        Args:
+            features: List of dictionaries from dataset.__getitem__
+            
+        Returns:
+            Batched dictionary with pixel_values and labels as tensors
+        """
+        # Extract pixel_values and stack into batch
+        pixel_values = torch.stack([f['pixel_values'] for f in features])
+        
+        # Extract labels and convert to tensor
+        # Labels should be integers from dataset, convert to long tensor
+        labels = torch.tensor([f['labels'] for f in features], dtype=torch.long)
+        
+        batch = {
+            'pixel_values': pixel_values,
+            'labels': labels
+        }
+        
+        return batch
 
 def create_transformed_datasets(
     train_dataset: Dataset,
@@ -198,3 +233,106 @@ def balance_dataset(dataset: Dataset, filtered_classes: List[str], num_train_ima
     
     np.random.shuffle(balanced_indices)
     return dataset.select(balanced_indices)
+
+def create_multi_validation_datasets(
+    val_dataset,
+    preprocessor,
+    resolution: int,
+    model_type: str
+) -> Dict[str, Any]:
+    """
+    Create validation datasets with different degradation levels.
+    
+    Returns:
+        Dictionary mapping degradation name to dataset
+    """
+    val_datasets = {}
+    
+    # Clean (no degradation)
+    val_datasets['clean'] = ISICDataset(
+        val_dataset,
+        preprocessor,
+        resolution,
+        transform=None,
+        model_type=model_type
+    )
+    
+    # JPEG compression at different quality levels
+    for quality in [90, 50, 20]:
+        val_datasets[f'jpeg_{quality}'] = ISICDataset(
+            val_dataset,
+            preprocessor,
+            resolution,
+            transform=JPEGCompressionTransform(quality=quality),
+            model_type=model_type
+        )
+    
+    # Gaussian blur at different radii
+    for radius in [1.0, 3.0, 5.0]:
+        val_datasets[f'blur_{radius:.1f}'] = ISICDataset(
+            val_dataset,
+            preprocessor,
+            resolution,
+            transform=GaussianBlurTransform(radius=radius),
+            model_type=model_type
+        )
+    
+    # Color quantization at different levels
+    for n_colors in [64, 16, 4]:
+        val_datasets[f'color_{n_colors}'] = ISICDataset(
+            val_dataset,
+            preprocessor,
+            resolution,
+            transform=ColorQuantizationTransform(n_colors=n_colors),
+            model_type=model_type
+        )
+    
+    return val_datasets
+
+def evaluate_all_datasets(trainer, val_datasets: Dict[str, Any], model_name: str) -> Dict[str, Any]:
+    """
+    Evaluate model on all validation datasets.
+    
+    Args:
+        trainer: HuggingFace Trainer object
+        val_datasets: Dictionary of validation datasets
+        model_name: Name of the model for logging
+        
+    Returns:
+        Dictionary of results for each dataset
+    """
+    all_results = {}
+    
+    for val_name, val_dataset in val_datasets.items():
+        print(f"Evaluating on {val_name}...")
+        
+        # Evaluate on this dataset
+        eval_results = trainer.evaluate(
+            eval_dataset=val_dataset,
+            metric_key_prefix=f"eval_{val_name}"
+        )
+        
+        # Extract key metrics
+        accuracy = eval_results.get(f"eval_{val_name}_accuracy", 0)
+        f1 = eval_results.get(f"eval_{val_name}_f1", 0)
+        auc = eval_results.get(f"eval_{val_name}_auc", 0)
+        
+        # Store results
+        all_results[val_name] = {
+            "accuracy": accuracy,
+            "f1": f1,
+            "auc": auc,
+            "loss": eval_results.get(f"eval_{val_name}_loss", 0)
+        }
+        
+        # Log to wandb
+        wandb.log({
+            f"{val_name}/accuracy": accuracy,
+            f"{val_name}/f1": f1,
+            f"{val_name}/auc": auc,
+            "model": model_name
+        })
+        
+        print(f"  {val_name}: Acc={accuracy:.3f}, F1={f1:.3f}, AUC={auc:.3f}")
+    
+    return all_results
