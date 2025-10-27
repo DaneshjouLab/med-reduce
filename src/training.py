@@ -77,9 +77,20 @@ def compute_metrics(eval_pred: Tuple[np.ndarray, np.ndarray], model_name: Option
     acc = accuracy_score(labels, predictions)
     f1 = f1_score(labels, predictions, average="weighted")
     
-    # For binary classification, use probability of positive class
+    # For binary classification, compute AUC only if both classes present
     probs = torch.softmax(torch.tensor(logits), dim=1).numpy()
-    auc = roc_auc_score(labels, probs[:, 1])
+    
+    # Check if both classes are present in labels
+    unique_labels = np.unique(labels)
+    if len(unique_labels) > 1:
+        try:
+            auc = roc_auc_score(labels, probs[:, 1])
+        except ValueError as e:
+            print(f"AUC computation failed: {e}")
+            auc = 0.0
+    else:
+        print(f"Only one class present in batch: {unique_labels}. Skipping AUC.")
+        auc = 0.0
     
     # Save visualizations if model_name provided
     if model_name:
