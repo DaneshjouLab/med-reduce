@@ -1,3 +1,9 @@
+# This source file is part of the Daneshjou Lab projects
+#
+# SPDX-FileCopyrightText: 2025 Stanford University and the project authors (see AUTHORS.md)
+#
+# SPDX-License-Identifier: MIT
+
 # src/utils/constants.py
 # -*- coding: utf-8 -*-
 """Global constants and lightweight enums used across the training pipeline."""
@@ -15,5 +21,3 @@ HF_MODELS = {"vit", "dinov2"}
 
 NUM_CLASSES = 1000  # update dynamically per dataset if needed
 NUM_FILTERED_CLASSES = 8  # for ISIC filtered subset example
-
-

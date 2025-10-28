@@ -1,3 +1,11 @@
+# This source file is part of the Daneshjou Lab projects
+#
+# SPDX-FileCopyrightText: 2025 Stanford University and the project authors (see AUTHORS.md)
+#
+# SPDX-License-Identifier: MIT
+
+# pylint: disable=all
+
 # src/utils/training_utils.py
 # -*- coding: utf-8 -*-
 from __future__ import annotations

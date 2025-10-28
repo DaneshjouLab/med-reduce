@@ -1,9 +1,17 @@
+# This source file is part of the Daneshjou Lab projects
+#
+# SPDX-FileCopyrightText: 2025 Stanford University and the project authors (see AUTHORS.md)
+#
+# SPDX-License-Identifier: MIT
+
+# pylint: disable=all
+
 # src/utils/callbacks_hf.py
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 import os
 import json
-from typing import Optional, Dict, Any
+from typing import Dict, Any
 from transformers import TrainerCallback  # type: ignore
 
 from src.utils.training_utils import get_gpu_memory

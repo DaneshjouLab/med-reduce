@@ -1,38 +1,147 @@
-from typing import Dict, Any
-import torch
+# This source file is part of the Daneshjou Lab projects
+#
+# SPDX-FileCopyrightText: 2025 Stanford University
+# SPDX-License-Identifier: MIT
 
-from src.engines.finetune_engine import train_finetune
-from src.data.datamodule import build_datamodule
-from src.models.factory import build_classifier
-from src.losses.classification import cross_entropy_loss
+# -*- coding: utf-8 -*-
+"""Fine-tuning wrapper for end-to-end optimization."""
+from __future__ import annotations
+from typing import Any, Dict
+
+import os
+import torch
+from torch.utils.data import DataLoader
+
+# pylint: disable=import-error
+from src.utils.logging_core import setup_logging, get_logger, WandbLogger
 from src.utils.optim import make_optimizer_and_scheduler
-from src.utils.logging import get_logger # TODO
+from src.losses.classification import cross_entropy_loss
+from src.models.factory import create_model, create_preprocessor, save_model
+from src.data.datamodule import BaseDataModule
+from src.engines.finetune_engine import train_finetune
+from src.utils.training_utils import profile_model
 
 log = get_logger(__name__)
 
-def run(cfg) -> Dict[str, Any]:
-    device = torch.device(cfg.runtime["device"])
-    dm = build_datamodule(cfg)
-    model = build_classifier(cfg).to(device)         # backbone + classification head
 
-    # Unfreeze all params for full finetuning
-    if hasattr(model, "unfreeze_all"):
-        model.unfreeze_all()
+class FinetuneWrapper:  # pylint: disable=too-many-instance-attributes,too-few-public-methods
+    """
+    Orchestrates full fine-tuning:
+      - builds model (+preprocessor if needed),
+      - prepares dataloaders via DataModule,
+      - creates optimizer/scheduler/loss,
+      - calls the finetune engine,
+      - saves best model.
+    """
 
-    loss_fn = cross_entropy_loss()
+    def __init__(self, cfg: Any):
+        """
+        Expected cfg fields (suggested):
+          cfg.model, cfg.data, cfg.train, cfg.loss, cfg.logging, cfg.runtime
+        """
+        self.cfg = cfg
+        setup_logging()
 
-    optimizer, scheduler = make_optimizer_and_scheduler(cfg, model.parameters())
+        # Model
+        self.model_info = cfg.model
+        self.model = create_model(self.model_info, resolution=cfg.data.image_size)
 
-    log.info("Starting end-to-end finetuning...")
-    metrics = train_finetune(
-        model=model,
-        loaders=dm.loaders(),
-        loss_fn=loss_fn,
-        optimizer=optimizer,
-        scheduler=scheduler,
-        device=device,
-        epochs=cfg.train.epochs,
-        grad_clip=getattr(cfg.train, "grad_clip_norm", None),
-        mixed_precision=getattr(cfg.train, "amp", True),
-    )
-    return metrics
+        # Optional preprocessor
+        try:
+            self.preprocessor = create_preprocessor(
+                self.model_info, resolution=cfg.data.image_size
+            )
+        except (ImportError, AttributeError, KeyError) as e:
+            log.debug(f"Preprocessor creation failed: {e}")
+            self.preprocessor = None
+
+        # Data
+        self.dm = BaseDataModule(
+            cfg=cfg,
+            dataset_name=cfg.data.dataset_name,
+            data_dir=cfg.data.data_dir,
+            batch_size=cfg.data.batch_size,
+            num_workers=cfg.data.num_workers,
+            pin_memory=True,
+        )
+        self.dm.setup("fit")
+
+        # Optimizer & scheduler
+        self.optimizer, (self.scheduler, self.sched_meta) = (
+            make_optimizer_and_scheduler(cfg, self.model.parameters())
+        )
+
+        # Loss
+        self.loss_fn = cross_entropy_loss(
+            label_smoothing=float(getattr(cfg.loss, "label_smoothing", 0.0)),
+            class_weight=None,
+            ignore_index=int(getattr(cfg.loss, "ignore_index", -100)),
+            reduction=str(getattr(cfg.loss, "reduction", "mean")),
+        )
+
+        # W&B
+        self.wandb = WandbLogger(
+            project=getattr(cfg.logging, "project", "resolution-aware-finetune"),
+            run_name=getattr(cfg.logging, "run_name", None),
+            config=cfg,
+            enabled=bool(getattr(cfg.logging, "wandb_enabled", True)),
+            entity=getattr(cfg.logging, "entity", None),
+            tags=getattr(cfg.logging, "tags", ["finetune"]),
+        )
+
+        # Device
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.model.to(self.device)
+
+    def _make_loaders(self) -> Dict[str, DataLoader]:
+        return {
+            "train": self.dm.train_dataloader(),
+            "val": self.dm.val_dataloader(),
+        }
+
+    def train(self) -> Dict[str, Any]:
+        """Run fine-tuning training."""
+        log.info("Starting fine-tune...")
+
+        gflops = profile_model(self.model, self.cfg.data.image_size)
+        if self.wandb:
+            self.wandb.log({"model/gflops": gflops})
+
+        results = train_finetune(
+            model=self.model,
+            loaders=self._make_loaders(),
+            loss_fn=self.loss_fn,
+            optimizer=self.optimizer,
+            scheduler=(self.scheduler, self.sched_meta),
+            device=self.device,
+            epochs=int(self.cfg.train.epochs),
+            grad_clip=getattr(self.cfg.train, "grad_clip", None),
+            mixed_precision=bool(getattr(self.cfg.train, "mixed_precision", True)),
+            log_interval=int(getattr(self.cfg.train, "log_interval", 50)),
+            wandb_logger=self.wandb,
+            metric_key=str(getattr(self.cfg.train, "metric_key", "val_acc")),
+        )
+
+        run_dir = getattr(self.cfg.runtime, "run_dir", "./runs/finetune")
+        os.makedirs(run_dir, exist_ok=True)
+        try:
+            save_model(
+                self.model,
+                self.model_info,
+                save_dir=run_dir,
+                preprocessor=self.preprocessor
+            )
+        except (OSError, ValueError, AttributeError) as e:
+            log.warning(f"Failed to save model in HF format; error: {e}")
+
+        if self.wandb:
+            self.wandb.log({"best/metric": results.get("best_metric", None)})
+            self.wandb.finish()
+
+        log.info("Fine-tune finished.")
+        return results
+
+
+def run(cfg: Any) -> Dict[str, Any]:
+    wrapper = FinetuneWrapper(cfg)
+    return wrapper.train()
