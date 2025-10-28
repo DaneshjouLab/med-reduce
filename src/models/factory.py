@@ -37,7 +37,9 @@ except ImportError:
 try:
     from src.utils.constants import HF_MODELS  # e.g., {"vit", "dinov2"}
 except ImportError:
-    HF_MODELS = {"vit", "dinov2"}
+    HF_MODELS = {"vit", "dinov2", "dinov3"}
+
+from src.models.dinov3 import DINOv3ForImageClassification, DINOv3Config
 
 # --- Pillow resampling constant (handles both new and old Pillow versions) ---
 try:
@@ -84,6 +86,17 @@ def create_model(model_info: Dict[str, Any], resolution: int = 224) -> nn.Module
             ignore_mismatched_sizes=bool(config.get("ignore_mismatched_sizes", True)),
             image_size=resolution,
         )
+
+    if model_type == "dinov3":
+        dinov3_config = DINOv3Config(
+            backbone_model_id=model_id,
+            num_labels=config["num_labels"],
+            hidden_size=config.get("hidden_size", 768),
+            dropout_rate=config.get("dropout_rate", 0.1),
+            use_quantization=config.get("use_quantization", False),
+            use_safetensors=True
+        )
+        return DINOv3ForImageClassification(dinov3_config)
 
     # --- timm ---
     if model_type == "timm":
@@ -133,6 +146,9 @@ def create_preprocessor(model_info: Dict[str, Any], resolution: int = 224):
             image_mean=[0.485, 0.456, 0.406],
             image_std=[0.229, 0.224, 0.225],
         )
+
+    if model_type == "dinov3":
+        return AutoImageProcessor.from_pretrained("facebook/dinov3-vits16-pretrain-lvd1689m")
 
     if model_type == "timm":
         # timm uses torchvision transforms; return None and build transforms in your datamodule

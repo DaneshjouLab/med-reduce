@@ -20,6 +20,17 @@ from src.models.factory import create_model, create_preprocessor, save_model
 from src.data.datamodule import BaseDataModule
 from src.engines.finetune_engine import train_finetune
 from src.utils.training_utils import profile_model
+from src.engines.training_core import _get_embeddings
+from src.config import LoggingConfig, RuntimeConfig, DataConfig, ModelConfig, LossConfig, TrainingConfig
+
+# Create config instances
+logging_cfg = LoggingConfig(
+    save_umap_embeddings=True,
+    umap_max_samples=1000,
+    run_name="vit_flowers_umap"
+)
+
+runtime_cfg = RuntimeConfig(run_dir="./runs/experiment_1")
 
 log = get_logger(__name__)
 
@@ -107,9 +118,35 @@ class FinetuneWrapper:  # pylint: disable=too-many-instance-attributes,too-few-p
         if self.wandb:
             self.wandb.log({"model/gflops": gflops})
 
+        # Create loaders once
+        loaders = self._make_loaders()
+        
+        # Get UMAP config settings (with defaults)
+        umap_enabled = getattr(self.cfg.logging, "save_umap_embeddings", False)
+        max_samples = getattr(self.cfg.logging, "umap_max_samples", None)
+        run_name = getattr(self.cfg.logging, "run_name", "run")
+        run_dir = getattr(self.cfg.runtime, "run_dir", "./runs/finetune")
+        umap_dir = os.path.join(run_dir, "umap_embeddings")
+        
+        if umap_enabled:
+            os.makedirs(umap_dir, exist_ok=True)
+            
+            log.info("Extracting embeddings before training (epoch 0)...")
+            embeddings, labels = _get_embeddings(
+                model=self.model,
+                dataloader=loaders["val"],
+                device=self.device,
+                mixed_precision=bool(getattr(self.cfg.train, "mixed_precision", True)),
+                max_samples=max_samples,
+            )
+            save_path = os.path.join(umap_dir, f"{run_name}_e000.pt")
+            torch.save({"embeddings": embeddings, "labels": labels.long()}, save_path)
+            log.info(f"Saved pre-training embeddings to {save_path}")
+
+        # Run training
         results = train_finetune(
             model=self.model,
-            loaders=self._make_loaders(),
+            loaders=loaders,  # Pass the already-created loaders
             loss_fn=self.loss_fn,
             optimizer=self.optimizer,
             scheduler=(self.scheduler, self.sched_meta),
@@ -122,7 +159,21 @@ class FinetuneWrapper:  # pylint: disable=too-many-instance-attributes,too-few-p
             metric_key=str(getattr(self.cfg.train, "metric_key", "val_acc")),
         )
 
-        run_dir = getattr(self.cfg.runtime, "run_dir", "./runs/finetune")
+        if umap_enabled:
+            epochs = int(self.cfg.train.epochs)
+            log.info(f"Extracting embeddings after training (epoch {epochs})...")
+            embeddings, labels = _get_embeddings(
+                model=self.model,
+                dataloader=loaders["val"],
+                device=self.device,
+                mixed_precision=bool(getattr(self.cfg.train, "mixed_precision", True)),
+                max_samples=max_samples,
+            )
+            save_path = os.path.join(umap_dir, f"{run_name}_e{epochs:03d}.pt")
+            torch.save({"embeddings": embeddings, "labels": labels.long()}, save_path)
+            log.info(f"Saved post-training embeddings to {save_path}")
+
+        # Save model
         os.makedirs(run_dir, exist_ok=True)
         try:
             save_model(

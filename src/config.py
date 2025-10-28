@@ -6,7 +6,7 @@
 
 """Configuration and constants."""
 from dataclasses import dataclass
-from typing import Dict, Any
+from typing import Dict, Any, Optional, List
 
 # Optional import - used for hardware detection
 try:
@@ -17,7 +17,7 @@ except ImportError:
     CUDA_AVAILABLE = False
 
 # Model constants
-HF_MODELS = ["vit", "dinov2"]
+HF_MODELS = ["vit", "dinov2", "dinov3"]
 
 # Dataset constants
 NUM_CLASSES = 8
@@ -56,6 +56,39 @@ class TrainingConfig: # pylint: disable=too-many-instance-attributes
             "gpu_available": CUDA_AVAILABLE,
         }
 
+@dataclass
+class RuntimeConfig:
+    """Runtime and environment configuration."""
+    
+    run_dir: str = "./runs/finetune"
+    seed: int = 42
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for logging."""
+        return self.__dict__
+    
+@dataclass
+class LoggingConfig:
+    """Logging and experiment tracking configuration."""
+    
+    project: str = "resolution-aware-finetune"
+    run_name: Optional[str] = None
+    wandb_enabled: bool = True
+    entity: Optional[str] = None
+    tags: List[str] = None
+    
+    # UMAP embedding settings
+    save_umap_embeddings: bool = False
+    umap_max_samples: Optional[int] = None  # None = use all samples
+    
+    def __post_init__(self):
+        """Initialize default tags if None."""
+        if self.tags is None:
+            self.tags = ["finetune"]
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for logging."""
+        return self.__dict__
 
 # Model configurations
 MODEL_REGISTRY = [
@@ -70,5 +103,15 @@ MODEL_REGISTRY = [
         "model_id": "facebook/dinov2-base",
         "type": "dinov2",
         "config": {"num_labels": NUM_FILTERED_CLASSES, "ignore_mismatched_sizes": True},
+    },
+    {
+        "name": "dinov3",
+        "model_id": "facebook/dinov3-vits16-pretrain-lvd1689m",
+        "type": "dinov3",
+        "dtype": torch.bfloat16,
+        "config": {
+            "num_labels": NUM_FILTERED_CLASSES,
+            "ignore_mismatched_sizes": True
+        }
     },
 ]

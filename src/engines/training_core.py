@@ -24,6 +24,8 @@ from typing import Dict, Any, Tuple, List, Optional
 
 import torch
 from torch import nn
+import numpy as np
+import tqdm
 
 try:
     # PyTorch 2.0+ unified AMP API
@@ -274,3 +276,66 @@ def _update_best_model_state(
         }
 
     return best_state_dict, updated_best_metric, is_better
+
+def _get_embeddings(
+    model: nn.Module,
+    dataloader: torch.utils.data.DataLoader,
+    device: torch.device,
+    mixed_precision: bool = True, # Ignored here but kept for compatibility
+    max_samples: Optional[int] = None, # Include this if you want a limit
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """
+    Extracts embeddings (pre-logits) and targets by calling the external 
+    extract_embeddings utility. Returns Tensors for saving.
+    """
+    # NOTE: Assuming extract_embeddings is imported or defined locally
+    model.eval()
+    embeddings = []
+    labels = []
+    
+    with torch.no_grad():
+        for batch_idx, batch in enumerate(tqdm(dataloader, desc="Extracting embeddings")):
+            # Handle different batch formats
+            if isinstance(batch, dict):
+                pixel_values = batch['pixel_values'].to(device)
+                batch_labels = batch['labels'].to(device)
+            else:
+                pixel_values, batch_labels = batch[0].to(device), batch[1].to(device)
+            
+            # Get embeddings before classifier
+            if hasattr(model, 'backbone'):
+                # DINOv3 wrapper
+                outputs = model.backbone(pixel_values=pixel_values)
+                emb = outputs.pooler_output
+            elif hasattr(model, 'vit'):
+                # ViT models
+                outputs = model.vit(pixel_values=pixel_values)
+                emb = outputs.last_hidden_state[:, 0]  # CLS token
+            elif hasattr(model, 'dinov2'):
+                # DINOv2 models
+                outputs = model.dinov2(pixel_values=pixel_values)
+                emb = outputs.last_hidden_state[:, 0]
+            else:
+                # Fallback: use model's forward but extract features
+                outputs = model(pixel_values=pixel_values, output_hidden_states=True)
+                if hasattr(outputs, 'hidden_states') and outputs.hidden_states:
+                    emb = outputs.hidden_states[-1][:, 0]
+                else:
+                    raise ValueError("Cannot extract embeddings from this model")
+            
+            embeddings.append(emb.cpu().numpy())
+            labels.append(batch_labels.cpu().numpy())
+            
+            # Early stop if max_samples reached
+            if max_samples and len(embeddings) * emb.shape[0] >= max_samples:
+                break
+    
+    embeddings = np.vstack(embeddings)
+    labels = np.concatenate(labels)
+    
+    if max_samples:
+        embeddings = embeddings[:max_samples]
+        labels = labels[:max_samples]
+      
+    # Convert NumPy arrays back to Tensors for torch.save in the training loop
+    return torch.from_numpy(embeddings), torch.from_numpy(labels)

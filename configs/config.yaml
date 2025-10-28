@@ -1,0 +1,17 @@
+# Job identification
+job_name: cs231n_train
+output_file: logs/train_%j.out
+error_file: logs/train_%j.err
+
+# Sherlock GPU partition settings
+partition: roxanad
+time_limit: "02:00:00"      # 2 hours (max is 24:00:00 for gpu)
+gpus: 1                      # Number of GPUs (1-2 typical)
+
+# Resource allocation
+cpus_per_task: 8             # CPUs per task (8 is good for 1 GPU)
+memory: "32G"                # Memory (32G is standard for GPU nodes)
+
+# Paths
+code_dir: /home/groups/roxanad/sonnet/compressed-perception
+project_root: /home/groups/roxanad/sonnet/compressed-perception
