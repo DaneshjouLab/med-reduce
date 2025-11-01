@@ -328,7 +328,29 @@ def main(cfg: DictConfig):
 
     # Kick off the selected training paradigm
     try:
-        metrics = _dispatch_wrapper(cfg)
+        from src.wrappers.finetune_randomsearch import run as run_random_search
+
+        param_grid = {
+            "lr": [1e-5, 1e-4, 5e-4],
+            "weight_decay": [0.01, 0.05],
+            "batch_size": [64, 128],
+        }
+
+        random_search_results = run_random_search(cfg, param_grid)
+        
+        print(random_search_results['best_params'], random_search_results['results'])
+
+        best_params = random_search_results['best_params']
+        if 'lr' in best_params:
+            cfg.train.learning_rate = best_params['lr']
+        if 'weight_decay' in best_params:
+            cfg.train.weight_decay = best_params['weight_decay']
+        if 'batch_size' in best_params:
+            cfg.data.batch_size = best_params['batch_size']
+            
+        # Now, run the final CV using the optimized configuration
+        from src.wrappers.finetune_cv import run as run_cv
+        metrics = run_cv(cfg)
     except KeyboardInterrupt:
         if _is_rank_zero():
             print("\n⚠️ Training interrupted by user.", flush=True)
