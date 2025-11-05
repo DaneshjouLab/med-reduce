@@ -37,7 +37,6 @@ IMAGE_NORMALIZATION = {
 }
 
 # --- MODEL REGISTRY ---
-# Defines pre-configured models that ModelConfig will select from
 MODEL_REGISTRY = [
     {
         "name": "vit",
@@ -64,38 +63,39 @@ MODEL_REGISTRY = [
 ]
 
 
-# --- CONFIGURATION DATACLASSES ---
-
 @dataclass
-class ModelConfig:
-    """Model selection configuration (replaces direct registry access)."""
-    name: str = "vit" # Key used to look up settings in MODEL_REGISTRY
-    checkpoint_path: Optional[str] = None # For loading custom weights
-
-@dataclass
-class DataConfig:
-    """Dataset and DataLoader configuration (required by FinetuneWrapper)."""
-    dataset_name: str = "flowers"
-    data_dir: str = "./data/flowers"
-    image_size: int = DEFAULT_IMAGE_SIZE
-    batch_size: int = 256
-    num_workers: int = 4
-    pin_memory: bool = CUDA_AVAILABLE
+class HyperparamSearchConfig:
+    """Hyperparameter search configuration."""
+    enabled: bool = False
+    n_samples: int = 15
+    subset_frac: float = 0.3
+    use_cv: bool = False
+    param_grid: Dict[str, List[Any]] = field(default_factory=lambda: {
+        "lr": [1e-5, 5e-5, 1e-4, 5e-4, 1e-3],
+        "weight_decay": [0.0, 0.01, 0.05, 0.1],
+        "batch_size": [32, 64, 128],
+    })
     
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary for logging."""
-        return self.__dict__
+    def validate(self) -> None:
+        """Validate configuration."""
+        if self.enabled:
+            if not self.param_grid:
+                raise ValueError("param_grid must be specified when search is enabled")
+            if not 0.0 < self.subset_frac <= 1.0:
+                raise ValueError(f"subset_frac must be in (0, 1], got {self.subset_frac}")
+            if self.n_samples < 1:
+                raise ValueError(f"n_samples must be >= 1, got {self.n_samples}")
 
-@dataclass
-class LossConfig:
-    """Loss function configuration (required by FinetuneWrapper)."""
-    label_smoothing: float = 0.0
-    ignore_index: int = -100
-    reduction: str = "mean"
-    
     def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary for logging."""
-        return self.__dict__
+        """Convert to dictionary."""
+        return {
+            "enabled": self.enabled,
+            "n_samples": self.n_samples,
+            "subset_frac": self.subset_frac,
+            "use_cv": self.use_cv,
+            "param_grid": self.param_grid,
+        }
+
 
 @dataclass
 class TrainingConfig:  # pylint: disable=too-many-instance-attributes
@@ -106,7 +106,7 @@ class TrainingConfig:  # pylint: disable=too-many-instance-attributes
     learning_rate: float = 1e-4
     weight_decay: float = 0.01
     grad_clip: Optional[float] = None
-    mixed_precision: bool = BFLOAT16_AVAILABLE # Use bfloat16 if supported
+    mixed_precision: bool = BFLOAT16_AVAILABLE  # Use bfloat16 if supported
     log_interval: int = 50
     metric_key: str = "val_acc"
     
@@ -121,10 +121,20 @@ class TrainingConfig:  # pylint: disable=too-many-instance-attributes
     k_folds: int = 5
     subset_frac: float = 1.0
     seed: int = 42
+    deterministic: bool = False
+    
+    # Hyperparameter search
+    hyperparam_search: HyperparamSearchConfig = field(default_factory=HyperparamSearchConfig)
+
+    def __post_init__(self):
+        """Validate configuration after initialization."""
+        self.hyperparam_search.validate()
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for logging."""
-        return self.__dict__
+        base_dict = {k: v for k, v in self.__dict__.items() if k != "hyperparam_search"}
+        base_dict["hyperparam_search"] = self.hyperparam_search.to_dict()
+        return base_dict
 
     def to_wandb_config(self) -> Dict[str, Any]:
         """Create wandb configuration."""
@@ -133,47 +143,3 @@ class TrainingConfig:  # pylint: disable=too-many-instance-attributes
             "cuda_available": CUDA_AVAILABLE,
             "bfloat16_available": BFLOAT16_AVAILABLE,
         }
-
-@dataclass
-class RuntimeConfig:
-    """Runtime and environment configuration."""
-    
-    run_dir: str = "./runs/finetune"
-    seed: int = 42
-    
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary for logging."""
-        return self.__dict__
-    
-@dataclass
-class LoggingConfig:
-    """Logging and experiment tracking configuration."""
-    
-    project: str = "resolution-aware-finetune"
-    run_name: Optional[str] = None
-    wandb_enabled: bool = True
-    entity: Optional[str] = None
-    tags: List[str] = field(default_factory=lambda: ["finetune"])
-    
-    # UMAP embedding settings (used in FinetuneWrapper.train)
-    save_umap_embeddings: bool = False
-    umap_max_samples: Optional[int] = None 
-    
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary for logging."""
-        return self.__dict__
-
-# --- MAIN CONFIGURATION ---
-
-@dataclass
-class MainConfig:
-    """The root configuration object passed to the run function."""
-    model: ModelConfig = field(default_factory=ModelConfig)
-    data: DataConfig = field(default_factory=DataConfig)
-    train: TrainingConfig = field(default_factory=TrainingConfig)
-    loss: LossConfig = field(default_factory=LossConfig)
-    logging: LoggingConfig = field(default_factory=LoggingConfig)
-    runtime: RuntimeConfig = field(default_factory=RuntimeConfig)
-
-# Instantiate the main config object that will be passed to run(cfg)
-CONFIG = MainConfig()

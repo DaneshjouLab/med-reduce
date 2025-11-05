@@ -21,16 +21,6 @@ from src.data.datamodule import BaseDataModule
 from src.engines.finetune_engine import train_finetune
 from src.utils.training_utils import profile_model
 from src.engines.training_core import _get_embeddings
-from src.config import LoggingConfig, RuntimeConfig
-
-# Create config instances
-logging_cfg = LoggingConfig(
-    save_umap_embeddings=True,
-    umap_max_samples=1000,
-    run_name="vit_flowers_umap"
-)
-
-runtime_cfg = RuntimeConfig(run_dir="./runs/experiment_1")
 
 log = get_logger(__name__)
 
