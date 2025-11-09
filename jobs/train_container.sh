@@ -19,7 +19,7 @@ TOOL=$(command -v apptainer || command -v singularity)
 SIF_STORE="/scratch/users/$USER/simg"
 
 # Run the training inside the container
-"$TOOL" shell --nv \
+"$TOOL" exec --nv \
      -B "/home/groups/roxanad/compressed-perception:/workspace" \
      -B "/scratch/users/$USER:/scratch_user" \
      -B "/scratch/users/$USER/pip_cache:/root/.cache/pip" \
@@ -28,10 +28,13 @@ SIF_STORE="/scratch/users/$USER/simg"
      "$SIF_STORE/python_3.10-slim-copy.sif" \
       bash -c "
 
-    cd /workspace
+    set -e
 
-    # Activate the virtual environment
+    cd /workspace
+    echo 'INFO: Successfully navigated to /workspace.'
+
     source .venv/bin/activate
+    echo 'INFO: Virtual environment activated.'
 
     # Add src to PYTHONPATH
     export PYTHONPATH=\$PYTHONPATH:/workspace/src
@@ -46,16 +49,16 @@ SIF_STORE="/scratch/users/$USER/simg"
     export PLOT_DIR=/scratch/users/$USER/plots
 
     # Create all directories
-    mkdir -p $TMPDIR $HF_HOME $HF_DATASETS_CACHE $TORCH_HOME \
-            $TRAIN_OUTPUT_DIR $LOG_DIR $MODEL_DIR $PLOT_DIR
+    echo 'INFO: Creating required directories...'
+    mkdir -p \$TMPDIR \$HF_HOME \$HF_DATASETS_CACHE \$TORCH_HOME \
+            \$TRAIN_OUTPUT_DIR \$LOG_DIR \$MODEL_DIR \$PLOT_DIR
+
+    echo 'INFO: Installing hydra-core...'
+    python -m pip install --no-cache-dir hydra-core
 
     # Run the distillation script
-    python -m src.cli.train \
-      --resolution 112 \
-      --batch_size 64 \
-      --num_train_images 10000 \
-      --num_epochs 5 \
-      --eval_steps 200 \
-      --learning_rate 1e-5 \
-      --mode both
+    echo 'INFO: Starting Hydra run...'
+    hydra run -c configs/config.yaml src.cli.main.train.batch_size=64
+    
+    echo 'INFO: Job finished successfully.'
   "

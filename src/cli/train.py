@@ -6,47 +6,6 @@
 # src/cli/train.py
 # -*- coding: utf-8 -*-
 # pylint: disable=import-error, broad-exception-caught
-"""
-CLI entry point for training/evaluating models across paradigms (probe/finetune).
-It normalizes dataset config → data config, builds a BaseDataModule using the
-dataset factory, and dispatches to the selected training wrapper.
-
-Usage examples:
-  python -m src.cli.train train.mode=probe \
-      dataset.name=isic2019 dataset.data_dir=/data/ISIC \
-      dataset.image_size=224 dataset.batch_size=128 \
-      model.type=vit model.model_id=google/vit-base-patch16-224
-
-  # With controlled degradation: downsample to 112px, then pipeline resizes to 224
-  python -m src.cli.train train.mode=probe \
-      dataset.name=isic2019 dataset.data_dir=/data/ISIC \
-      dataset.image_size=224 dataset.batch_size=128 \
-      dataset.degradation.target_resolution=112 \
-      model.type=vit model.model_id=google/vit-base-patch16-224
-
-  # Random search (build-in basic sweep)
-  python -m src.cli.train -m \
-    hydra.sweeper=basic \
-    hydra.sweeper.n_trials=20 \
-    hydra.sweeper.params='optim.lr=log(1e-5,1e-3); optim.weight_decay=uniform(0,0.1); \
-dataset.batch_size=choice(64,128)' \
-    train.mode=probe \
-    dataset.name=isic2019 dataset.data_dir=/data/ISIC \
-    dataset.image_size=224 \
-    model.type=vit model.model_id=google/vit-base-patch16-224
-
-  OR
-
-  python -m src.cli.train -m \
-    train.mode=probe \
-    dataset.name=isic2019 dataset.data_dir=/data/ISIC \
-    dataset.image_size=224 dataset.batch_size=128 \
-    model.type=vit model.model_id=google/vit-base-patch16-224 \
-    optim.lr=1e-5,3e-5,1e-4,3e-4 \
-    optim.weight_decay=0.0,0.01
-
-"""
-
 from __future__ import annotations
 
 import os
@@ -282,7 +241,7 @@ def _build_datamodule(cfg: DictConfig) -> BaseDataModule:
 
     # Expose to wrappers
     cfg.runtime = dict(getattr(cfg, "runtime", {}))
-    cfg.runtime["datamodule"] = dm
+    # cfg.runtime["datamodule"] = dm
     return dm
 
 
@@ -291,10 +250,12 @@ def _build_datamodule(cfg: DictConfig) -> BaseDataModule:
 # ---------------------------------------------------------------------------
 
 
-@hydra.main(config_path="../../configs", config_name="defaults", version_base=None)
+@hydra.main(config_path="../../configs", config_name="config", version_base=None)
 def main(cfg: DictConfig):
     """Main training CLI entry point."""
     OmegaConf.set_struct(cfg, False)
+
+    print("Hydra config:\n", OmegaConf.to_yaml(cfg), flush=True)
 
     # Normalize dataset selection into cfg.data for wrappers/datamodules
     _normalize_dataset_into_data(cfg)
@@ -319,8 +280,10 @@ def main(cfg: DictConfig):
     }
 
     # Build & setup datamodule using dataset factory logic
-    dm = _build_datamodule(cfg)
-    dm.setup(stage="fit")  # prepares train/val (or splits train if no val split)
+    # dm = _build_datamodule(cfg)
+    dm = hydra.utils.instantiate(cfg.datamodule, full_cfg=cfg)
+
+    dm.setup(_stage="fit")  # prepares train/val (or splits train if no val split)
 
     # Persist resolved config and print header
     _save_resolved_config(cfg, run_dir)

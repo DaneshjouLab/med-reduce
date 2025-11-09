@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Tuple
 import os
 import torch
 import numpy as np
+import hydra
 from torch.utils.data import Subset, DataLoader
 from sklearn.model_selection import KFold
 
@@ -35,17 +36,10 @@ class FinetuneCVWrapper:
         setup_logging()
 
         # Setup base data module
-        self.dm = BaseDataModule(
-            cfg=cfg,
-            dataset_name=cfg.data.dataset_name,
-            data_dir=cfg.data.data_dir,
-            batch_size=cfg.data.batch_size,
-            num_workers=cfg.data.num_workers,
-            pin_memory=True,
-        )
+        self.dm = hydra.utils.instantiate(cfg.datamodule, full_cfg=cfg)
         self.dm.setup("fit")
 
-        self.dataset = self.dm.train_dataset  
+        self.dataset = self.dm.train_set  
         self.k_folds = int(getattr(cfg.train, "k_folds", 5))
         self.subset_frac = float(getattr(cfg.train, "subset_frac", 1.0))
 

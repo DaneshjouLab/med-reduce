@@ -25,7 +25,7 @@ from typing import Dict, Any, Tuple, List, Optional
 import torch
 from torch import nn
 import numpy as np
-import tqdm
+from tqdm import tqdm
 
 try:
     # PyTorch 2.0+ unified AMP API
@@ -192,7 +192,7 @@ def _preprocess_batch(batch, device):
     """
     if isinstance(batch, dict):
         x, y = batch.get("image", batch.get("pixel_values")), batch.get(
-            "label", batch.get("labels")
+            "label", batch.get("label")
         )
     else:
         x, y = batch
@@ -298,7 +298,7 @@ def _get_embeddings(
             # Handle different batch formats
             if isinstance(batch, dict):
                 pixel_values = batch['pixel_values'].to(device)
-                batch_labels = batch['labels'].to(device)
+                batch_labels = batch['label'].to(device)
             else:
                 pixel_values, batch_labels = batch[0].to(device), batch[1].to(device)
             

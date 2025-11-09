@@ -95,7 +95,15 @@ def train_finetune(  # pylint: disable=too-many-arguments,too-many-locals,too-ma
             x, y = _preprocess_batch(batch, device)
 
             with autocast(device_type=device.type, enabled=mixed_precision):
-                logits = model(x)
+                output = model(x)
+                
+                if hasattr(output, 'logits'):
+                    logits = output.logits
+                elif isinstance(output, dict) and 'logits' in output:
+                    logits = output['logits']
+                else:
+                    logits = output
+
                 loss = loss_fn(logits, y)
                 loss_to_backprop = loss / accumulation_steps
 

@@ -156,7 +156,7 @@ class ISICHFRawSplit(Dataset):
         if self.transform is not None:
             image = self.transform(image)
 
-        return {"image": image, "label": label}
+        return {"pixel_values": image, "label": label}
 
 
 class ISICBaseDataset(ISICHFRawSplit):  # type: ignore[misc]

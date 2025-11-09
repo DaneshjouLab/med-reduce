@@ -57,7 +57,7 @@ def analyze_saved_embeddings(
     try:
         data_before = torch.load(os.path.join(embedding_dir, before_file))
         embeddings_before = data_before['embeddings']
-        labels = data_before['labels']
+        labels = data_before['label']
         print(f"Loaded 'Before Training' embeddings from: {before_file}")
     except Exception as e:
         print(f"Error loading initial embeddings from {before_file}: {e}")

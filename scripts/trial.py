@@ -15,7 +15,7 @@ project_root = current_dir.parent
 sys.path.insert(0, str(project_root))
 
 from src.data.isic_loader import ISICBaseDataset  # HF-backed
-from src.transformation.transforms import ResolutionReductionTransform
+from src.transformations.transforms import ResolutionReductionTransform
 
 def main():
     out_dir = Path("outputs/trial_isic112")

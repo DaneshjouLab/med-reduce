@@ -169,7 +169,7 @@ class ISICDataset(Dataset):
 
         # 4. Prepare output
         label = torch.tensor(label, dtype=torch.long)
-        return {"pixel_values": pixel_values, "labels": label}
+        return {"pixel_values": pixel_values, "label": label}
 
 # ============================================================================
 # DATASET CREATION UTILITIES

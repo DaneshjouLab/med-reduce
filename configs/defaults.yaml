@@ -1,0 +1,35 @@
+train:
+  mode: finetune
+  batch_size: 32
+  learning_rate: 0.001
+  weight_decay: 0.001
+  epochs: 10
+  metric_key: val_acc
+  hyperparam_search:
+    enabled: false
+    n_samples: 15
+    subset_frac: 0.3
+    use_cv: false
+    param_grid:
+      lr: [0.001, 0.01, 0.1]
+      weight_decay: [0.0001, 0.001, 0.01]
+
+model:
+  type: vit
+  model_id: facebook/vit-base-patch32-224
+
+dataset:
+  dataset_name: isic2019
+  data_dir: /path/to/dataset
+  image_size: 224
+  batch_size: 32
+  num_workers: 4
+  pin_memory: true
+
+loss:
+  label_smoothing: 0.0
+  reduction: mean
+
+logging:
+  project: resolution-aware-finetune
+  run_name: finetune_example
