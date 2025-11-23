@@ -1,20 +1,20 @@
 # Job identification
-job_name: cs231n_train
+job_name: reduced_perception
 output_file: logs/train_%j.out
 error_file: logs/train_%j.err
 
 # Sherlock GPU partition settings
 partition: roxanad
-time_limit: "02:00:00"      # 2 hours (max is 24:00:00 for gpu)
-gpus: 1                      # Number of GPUs (1-2 typical)
+time_limit: "23:00:00"     
+gpus: 1                   
 
 # Resource allocation
 cpus_per_task: 8             # CPUs per task (8 is good for 1 GPU)
 memory: "32G"                # Memory (32G is standard for GPU nodes)
 
 # Paths
-code_dir: /home/groups/roxanad/sonnet/compressed-perception
-project_root: /home/groups/roxanad/sonnet/compressed-perception
+code_dir: /home/groups/roxanad/compressed-perception/src
+project_root: /home/groups/roxanad/compressed-perception
 
 # Global settings
 seed: 42
@@ -24,20 +24,22 @@ datamodule:
   _target_: src.data.isic_datamodule.ISICDataModule 
   dataset_name: "MKZuziak/ISIC_2019_224" 
   data_dir: /scratch/users/sonnet/huggingface/datasets
-  batch_size: 32
-  num_workers: 8
+  batch_size: 256
+  num_workers: 4
+  persistent_workers: false
+  prefetch_factor: 2
 
   filtered_classes: ["0", "1"]  # Strings of class labels
   balance_data: true
-  num_train_images: 1000 
+  num_train_images: 10000 
 
 dataset:
   # --- Mandatory Fields ---
   name: "MKZuziak/ISIC_2019_224" # The name of the dataset on the Hugging Face Hub (e.g., "cifar10", "glue/cola")
   data_dir: null # Set to null when loading from the Hub; the library handles the path/caching.
-  image_size: 224 # The target input size for the model
-  batch_size: 64 # Number of samples per batch
-  num_workers: 8 # Number of subprocesses to use for data loading
+  image_size: 224 
+  batch_size: 128 
+  num_workers: 4
 
   # --- Optional Fields ---
   pin_memory: True # Speed up data transfer to GPU
@@ -50,7 +52,7 @@ dataset:
 train:
   # Core training loop params
   mode: "finetune"
-  epochs: 100
+  epochs: 5
   learning_rate: 1e-4
   weight_decay: 0.01
   grad_clip: 1.0
@@ -70,21 +72,19 @@ train:
   subset_frac: 1.0
   seed: 42
   
-  # Data ablation params (if applicable)
-  num_train_images: 100
+  # Data ablation params
   proportion_per_transform: 0.2
-  eval_steps: 10
 
   hyperparam_search:
     enabled: false
     n_samples: 20
-    subset_frac: 0.3
+    subset_frac: 0.1
     use_cv: false
     param_grid:
-      lr: [1e-5, 5e-5, 1e-4, 5e-4, 1e-3]
-      weight_decay: [0.0, 0.01, 0.05, 0.1]
-      batch_size: [32, 64, 128]
-      label_smoothing: [0.0, 0.1, 0.2]
+      lr: [1e-5, 1e-4, 5e-4]
+      weight_decay: [0.01]
+      batch_size: [128]
+      label_smoothing: [0.0]
   
 # Loss configuration
 loss:
@@ -97,7 +97,7 @@ logging:
   project: "crossval-finetune"
   run_name: "cv_run"
   wandb_enabled: true
-  save_umap_embeddings: true
+  save_umap_embeddings: false
   umap_max_samples: 15        
 
 # Runtime configuration (will be populated by main())

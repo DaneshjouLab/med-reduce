@@ -13,6 +13,7 @@ import numpy as np  # pylint: disable=import-error
 import torch  # pylint: disable=import-error
 from PIL import Image  # pylint: disable=import-error
 from torch.utils.data import Dataset, ConcatDataset, Subset  # pylint: disable=import-error
+from datasets import Dataset as HFDataset
 
 # Local imports
 # pylint: disable=import-error,relative-beyond-top-level
@@ -120,57 +121,6 @@ class ModelPreprocessor:
         arr = np.transpose(arr, (2, 0, 1))
         return torch.from_numpy(arr)
 
-
-# ============================================================================
-# COMBINED DATASET
-# ============================================================================
-
-class ISICDataset(Dataset):
-    """ISIC dataset that combines data loading, image processing, and model preprocessing."""
-
-    def __init__(
-        self,
-        dataset: Union[Dataset, Subset],
-        *,  # Force keyword arguments after first positional arg
-        preprocessor: Optional[Any] = None,
-        resolution: int = DEFAULT_IMAGE_SIZE,
-        transform: Optional[Any] = None,
-        model_type: str = "vit",
-    ):  # pylint: disable=too-many-arguments
-        # Data loading
-        self.data_wrapper = DatasetWrapper(dataset)
-
-        # Image processing
-        self.image_processor = ImageProcessor(resolution)
-
-        # Model preprocessing
-        self.model_preprocessor = ModelPreprocessor(preprocessor, model_type)
-
-        # Transformation
-        self.transform = transform
-
-    def __len__(self) -> int:
-        return len(self.data_wrapper)
-
-    def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
-        # 1. Load raw data
-        item = self.data_wrapper.get_raw_item(idx)
-        image = item["image"]
-        label = item["label"]
-
-        # 2. Process image
-        image = self.image_processor.resize_image(image)
-        image = self.image_processor.apply_transforms(image, self.transform)
-
-        # 3. Apply model-specific preprocessing
-        pixel_values = self.model_preprocessor.preprocess(
-            image, self.image_processor.resolution
-        )
-
-        # 4. Prepare output
-        label = torch.tensor(label, dtype=torch.long)
-        return {"pixel_values": pixel_values, "label": label}
-
 # ============================================================================
 # DATASET CREATION UTILITIES
 # ============================================================================
@@ -270,16 +220,37 @@ def create_transformed_datasets(
 
 def get_class_distribution(dataset: Dataset, filtered_classes: List[str]) -> Dict[str, List[int]]:
     """Get class distribution and indices."""
-    class_counts = {class_label: 0 for class_label in filtered_classes}
-    class_indices = {class_label: [] for class_label in filtered_classes}
+    filtered_classes = [str(c) for c in filtered_classes]
+    is_hf = isinstance(dataset, HFDataset)
 
-    for i, item in enumerate(dataset):
+    if is_hf:
+        label_col = "label" if "label" in dataset.column_names else "labels"
+
+        labels = np.array(dataset[label_col]).astype(str)
+
+        class_indices = {
+            cls: np.where(labels == cls)[0]
+            for cls in filtered_classes
+        }
+
+        class_counts = {cls: len(class_indices[cls]) for cls in filtered_classes}
+        print(f"Class counts before balancing: {class_counts}")
+
+        return class_indices
+
+    class_indices = {cls: [] for cls in filtered_classes}
+
+    for idx in range(len(dataset)):
+        item = dataset[idx]
         label_str = str(item["label"])
-        if label_str in filtered_classes:
-            class_counts[label_str] += 1
-            class_indices[label_str].append(i)
+        if label_str in class_indices:
+            class_indices[label_str].append(idx)
 
+    class_indices = {cls: np.array(idxs) for cls, idxs in class_indices.items()}
+
+    class_counts = {cls: len(class_indices[cls]) for cls in filtered_classes}
     print(f"Class counts before balancing: {class_counts}")
+
     return class_indices
 
 
@@ -309,23 +280,73 @@ def sample_balanced_indices(
 
 
 def balance_dataset(
-    dataset: Dataset,
-    filtered_classes: List[str],
-    num_train_images: int,
+    dataset,
+    filtered_classes,
+    num_train_images,
     seed: int = 42
-) -> Dataset:
+):
     """
-    Balance dataset by sampling equal numbers from each class.
-    - If `dataset` is a PyTorch Dataset: returns a torch.utils.data.Subset
-    - If `dataset` is an HF Dataset (has `.select`): returns a selected HF Dataset
+    Balances dataset by sampling equal counts per class.
+    Works with HF Datasets and PyTorch Datasets.
     """
-    class_indices = get_class_distribution(dataset, filtered_classes)
-    balanced_indices = sample_balanced_indices(class_indices, num_train_images, seed)
 
-    # HF Dataset has .select; PyTorch does not
-    if hasattr(dataset, "select"):
-        return dataset.select(balanced_indices)
-    return Subset(dataset, balanced_indices)
+    is_hf = isinstance(dataset, HFDataset)
+    rng = np.random.default_rng(seed)
+
+    # ============================================================
+    # INDEX EXTRACTION
+    # ============================================================
+    if is_hf:
+        if hasattr(dataset, "column_names"):
+            label_col = "label" if "label" in dataset.column_names else "labels"
+        elif hasattr(dataset, "ds") and hasattr(dataset.ds, "column_names"):
+            label_col = "label" if "label" in dataset.ds.column_names else "labels"
+        else:
+            # fallback for PyTorch-style datasets
+            label_col = "label"
+
+        labels = dataset[label_col]  # zero-copy memoryview
+        labels = np.array(labels)
+
+        class_indices = {
+            cls: np.where(labels == cls)[0]
+            for cls in filtered_classes
+        }
+
+    else:
+        class_indices = {cls: [] for cls in filtered_classes}
+
+        for idx in range(len(dataset)):
+            _, label = dataset[idx]
+            if label in class_indices:
+                class_indices[label].append(idx)
+
+        class_indices = {k: np.array(v) for k, v in class_indices.items()}
+
+    # ============================================================
+    # BALANCED SAMPLING (NUMPY RNG)
+    # ============================================================
+    per_class = num_train_images // len(filtered_classes)
+    min_samples = min(len(arr) for arr in class_indices.values())
+    per_class = min(per_class, min_samples)
+
+    balanced_indices = []
+    for cls in filtered_classes:
+        arr = class_indices[cls]
+        if len(arr) < per_class:
+            raise ValueError(f"Class {cls} only has {len(arr)} samples.")
+
+        chosen = rng.choice(arr, size=per_class, replace=False)
+        balanced_indices.append(chosen)
+
+    balanced_indices = np.concatenate(balanced_indices)
+
+    if is_hf:
+        balanced_indices.sort()
+        return dataset.select(balanced_indices.tolist())
+
+    return Subset(dataset, balanced_indices.tolist())
+
 
 def _load_isic_split(data_dir: str, split: str) -> Dataset:
     """

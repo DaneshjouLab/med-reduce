@@ -39,6 +39,7 @@ except ImportError:  # pragma: no cover
     # If transformers is not installed, we continue without it
     AutoImageProcessor = None  # type: ignore
 
+logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("train")
 
 
@@ -281,9 +282,9 @@ def main(cfg: DictConfig):
 
     # Build & setup datamodule using dataset factory logic
     # dm = _build_datamodule(cfg)
-    dm = hydra.utils.instantiate(cfg.datamodule, full_cfg=cfg)
+    # dm = hydra.utils.instantiate(cfg.datamodule, full_cfg=cfg)
 
-    dm.setup(_stage="fit")  # prepares train/val (or splits train if no val split)
+    # dm.setup(_stage="fit")  # prepares train/val (or splits train if no val split)
 
     # Persist resolved config and print header
     _save_resolved_config(cfg, run_dir)

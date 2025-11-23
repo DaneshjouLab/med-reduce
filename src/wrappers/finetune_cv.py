@@ -39,7 +39,19 @@ class FinetuneCVWrapper:
         self.dm = hydra.utils.instantiate(cfg.datamodule, full_cfg=cfg)
         self.dm.setup("fit")
 
-        self.dataset = self.dm.train_set  
+        raw_dataset = self.dm.train_set
+        if isinstance(raw_dataset, Subset):
+            log.info("Detected Subset from random_split, unwrapping to base dataset for CV")
+            # Extract the underlying dataset and indices
+            self.base_dataset = raw_dataset.dataset
+            self.base_indices = np.array(raw_dataset.indices)
+            log.info(f"Unwrapped Subset: base dataset type={type(self.base_dataset).__name__}, "
+                    f"using {len(self.base_indices)} samples from random_split")
+        else:
+            self.base_dataset = raw_dataset
+            self.base_indices = None
+            log.info(f"Using dataset directly: type={type(self.base_dataset).__name__}")
+            
         self.k_folds = int(getattr(cfg.train, "k_folds", 5))
         self.subset_frac = float(getattr(cfg.train, "subset_frac", 1.0))
 
@@ -82,8 +94,22 @@ class FinetuneCVWrapper:
         return model, optimizer, (scheduler, sched_meta), preprocessor
 
     def _get_fold_loaders(self, train_idx, val_idx):
-        train_subset = Subset(self.dataset, train_idx)
-        val_subset = Subset(self.dataset, val_idx)
+        """
+        Create dataloaders for a fold.
+        
+        Uses torch.utils.data.Subset to avoid nesting issues.
+        Subset is lightweight and works with all PyTorch datasets including ISICHFRawSplit.
+        """
+        # If we have base_indices (from unwrapped Subset), map through them
+        if self.base_indices is not None:
+            actual_train_idx = self.base_indices[train_idx]
+            actual_val_idx = self.base_indices[val_idx]
+        else:
+            actual_train_idx = train_idx
+            actual_val_idx = val_idx
+        
+        train_subset = Subset(self.base_dataset, actual_train_idx)
+        val_subset = Subset(self.base_dataset, actual_val_idx)
 
         return {
             "train": DataLoader(train_subset, batch_size=self.cfg.data.batch_size, shuffle=True),
@@ -112,16 +138,29 @@ class FinetuneCVWrapper:
     def train(self) -> Dict[str, Any]:
         """Run K-fold cross-validation."""
         np.random.seed(int(getattr(self.cfg.train, "seed", 42)))
+        
+        # Determine the working set of indices
+        if self.base_indices is not None:
+            working_indices = self.base_indices.copy()
+        else:
+            working_indices = np.arange(len(self.base_dataset))
+        
+        # Apply additional subset if needed
         if self.subset_frac < 1.0:
-            subset_size = int(len(self.dataset) * self.subset_frac)
-            indices = np.random.choice(len(self.dataset), subset_size, replace=False)
-            self.dataset = Subset(self.dataset, indices)
+            subset_size = int(len(working_indices) * self.subset_frac)
+            selected = np.random.choice(len(working_indices), subset_size, replace=False)
+            working_indices = working_indices[selected]
             log.info(f"Using subset of {subset_size} samples ({self.subset_frac*100:.0f}%) for CV.")
 
+        # Update base_indices to reflect our working set
+        self.base_indices = working_indices
+        
+        # Create k-fold splits on the working indices
         kf = KFold(n_splits=self.k_folds, shuffle=True, random_state=int(getattr(self.cfg.train, "seed", 42)))
         fold_metrics = []
 
-        for fold, (train_idx, val_idx) in enumerate(kf.split(self.dataset)):
+        # Split on index range, not the dataset itself
+        for fold, (train_idx, val_idx) in enumerate(kf.split(range(len(working_indices)))):
             log.info(f"🔹 Fold {fold+1}/{self.k_folds}")
 
             model, optimizer, (scheduler, sched_meta), preprocessor = self._make_model_and_optim()
