@@ -1,31 +1,12 @@
-# Job identification
-job_name: reduced_perception
-output_file: logs/train_%j.out
-error_file: logs/train_%j.err
-
-# Sherlock GPU partition settings
-partition: roxanad
-time_limit: "23:00:00"     
-gpus: 1                   
-
-# Resource allocation
-cpus_per_task: 8             # CPUs per task (8 is good for 1 GPU)
-memory: "32G"                # Memory (32G is standard for GPU nodes)
-
-# Paths
-code_dir: /home/groups/roxanad/compressed-perception/src
-project_root: /home/groups/roxanad/compressed-perception
-
 # Global settings
 seed: 42
-project_name: "crossval-finetune"
 
 datamodule:
   _target_: src.data.isic_datamodule.ISICDataModule 
   dataset_name: "MKZuziak/ISIC_2019_224" 
   data_dir: /scratch/users/sonnet/huggingface/datasets
   batch_size: 256
-  num_workers: 4
+  num_workers: 8
   persistent_workers: false
   prefetch_factor: 2
 
@@ -39,7 +20,7 @@ dataset:
   data_dir: null # Set to null when loading from the Hub; the library handles the path/caching.
   image_size: 224 
   batch_size: 128 
-  num_workers: 4
+  num_workers: 8
 
   # --- Optional Fields ---
   pin_memory: True # Speed up data transfer to GPU
@@ -60,15 +41,10 @@ train:
   deterministic: false
   log_interval: 50
   metric_key: "val_acc"
-  
-  # Optimizer/Scheduler
-  optimizer: 
-    name: "AdamW"
-  scheduler: 
-    name: "cosine"
+  scheduler: "cosine"
   
   # Cross-validation params
-  k_folds: 5
+  k_folds: 2
   subset_frac: 1.0
   seed: 42
   
@@ -77,7 +53,7 @@ train:
 
   hyperparam_search:
     enabled: false
-    n_samples: 20
+    n_samples: 15
     subset_frac: 0.1
     use_cv: false
     param_grid:
@@ -94,26 +70,30 @@ loss:
 
 # Logging configuration
 logging:
-  project: "crossval-finetune"
-  run_name: "cv_run"
+  project: "compressed-perception"
+  run_name: "dinov3_finetune_run"
   wandb_enabled: true
   save_umap_embeddings: false
-  umap_max_samples: 15        
+  umap_max_samples: 15
+  save_checkpoints: true  # Save best model checkpoint from each fold        
 
 # Runtime configuration (will be populated by main())
 runtime:
-  device: "cuda"                # Will be auto-detected
   run_dir: "./runs/finetune"    # Output directory
-  start_time: null              # Will be set at runtime
-  rank_zero: true               # Will be set at runtime
-  world_size: 1                 # For distributed training
 
 # --- DINOv3 Model ---
 model:
   name: "dinov3"
   model_id: "facebook/dinov3-vits16-pretrain-lvd1689m"
   type: "dinov3"
-  dtype: "bfloat16"
   config:
     num_labels: 2
-    ignore_mismatched_sizes: true
+
+# # --- ViT Model ---
+# model:
+#   name: "vit"
+#   model_id: "google/vit-base-patch16-224"
+#   type: "vit"
+#   dtype: "bfloat16"
+#   config:
+#     num_labels: 2

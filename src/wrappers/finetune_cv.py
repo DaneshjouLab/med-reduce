@@ -78,10 +78,18 @@ class FinetuneCVWrapper:
         self.run_name = getattr(cfg.logging, "run_name", "cv_run")
         self.run_dir = getattr(cfg.runtime, "run_dir", "./runs/finetune")
         self.umap_base_dir = os.path.join(self.run_dir, "umap_embeddings")
-        
+
         if self.umap_enabled:
             os.makedirs(self.umap_base_dir, exist_ok=True)
             log.info(f"UMAP embeddings will be saved to {self.umap_base_dir}")
+
+        # Checkpoint configuration
+        self.save_checkpoints = getattr(cfg.logging, "save_checkpoints", True)
+        self.checkpoint_dir = os.path.join(self.run_dir, "checkpoints")
+
+        if self.save_checkpoints:
+            os.makedirs(self.checkpoint_dir, exist_ok=True)
+            log.info(f"Model checkpoints will be saved to {self.checkpoint_dir}")
 
     def _make_model_and_optim(self):
         model = create_model(self.model_info, resolution=self.cfg.data.image_size).to(self.device)
@@ -111,9 +119,30 @@ class FinetuneCVWrapper:
         train_subset = Subset(self.base_dataset, actual_train_idx)
         val_subset = Subset(self.base_dataset, actual_val_idx)
 
+        num_workers = getattr(self.cfg.datamodule, 'num_workers', 8)
+        pin_memory = getattr(self.cfg.datamodule, 'pin_memory', True)
+        persistent_workers = getattr(self.cfg.datamodule, 'persistent_workers', False)
+        prefetch_factor = getattr(self.cfg.datamodule, 'prefetch_factor', 2)
+
         return {
-            "train": DataLoader(train_subset, batch_size=self.cfg.data.batch_size, shuffle=True),
-            "val": DataLoader(val_subset, batch_size=self.cfg.data.batch_size, shuffle=False),
+            "train": DataLoader(
+                train_subset, 
+                batch_size=self.cfg.data.batch_size, 
+                shuffle=True,
+                num_workers=num_workers,
+                pin_memory=pin_memory,
+                persistent_workers=persistent_workers and num_workers > 0,
+                prefetch_factor=prefetch_factor if num_workers > 0 else None,
+            ),
+            "val": DataLoader(
+                val_subset, 
+                batch_size=self.cfg.data.batch_size, 
+                shuffle=False,
+                num_workers=num_workers,
+                pin_memory=pin_memory,
+                persistent_workers=persistent_workers and num_workers > 0,
+                prefetch_factor=prefetch_factor if num_workers > 0 else None,
+            ),
         }
 
     def _save_fold_embeddings(self, model, dataloader, fold, epoch):
@@ -125,15 +154,36 @@ class FinetuneCVWrapper:
             mixed_precision=bool(getattr(self.cfg.train, "mixed_precision", True)),
             max_samples=self.umap_max_samples,
         )
-        
+
         # Create fold-specific directory
         fold_dir = os.path.join(self.umap_base_dir, f"fold_{fold+1}")
         os.makedirs(fold_dir, exist_ok=True)
-        
+
         # Save with epoch number
         save_path = os.path.join(fold_dir, f"{self.run_name}_e{epoch:03d}.pt")
         torch.save({"embeddings": embeddings, "labels": labels.long()}, save_path)
         log.info(f"Saved embeddings to {save_path}")
+
+    def _save_checkpoint(self, model, fold, metric, optimizer=None):
+        """Save model checkpoint for a specific fold."""
+        checkpoint = {
+            "model_state_dict": model.state_dict(),
+            "fold": fold,
+            "metric": metric,
+            "model_config": self.model_info,
+            "cfg": self.cfg,
+        }
+
+        if optimizer is not None:
+            checkpoint["optimizer_state_dict"] = optimizer.state_dict()
+
+        checkpoint_path = os.path.join(
+            self.checkpoint_dir,
+            f"{self.run_name}_fold{fold+1}_metric{metric:.4f}.pt"
+        )
+        torch.save(checkpoint, checkpoint_path)
+        log.info(f"Saved checkpoint to {checkpoint_path}")
+        return checkpoint_path
 
     def train(self) -> Dict[str, Any]:
         """Run K-fold cross-validation."""
@@ -187,13 +237,22 @@ class FinetuneCVWrapper:
                 wandb_logger=self.wandb,
                 metric_key=str(getattr(self.cfg.train, "metric_key", "val_acc")),
             )
-            
+
+            # Save best model checkpoint for this fold
+            if self.save_checkpoints:
+                self._save_checkpoint(
+                    model=model,
+                    fold=fold,
+                    metric=result["best_metric"],
+                    optimizer=optimizer
+                )
+
             # Extract post-training embeddings
             if self.umap_enabled:
                 epochs = int(self.cfg.train.epochs)
                 log.info(f"Extracting embeddings after training (fold {fold+1}, epoch {epochs})...")
                 self._save_fold_embeddings(model, loaders["val"], fold, epoch=epochs)
-            
+
             fold_metrics.append(result["best_metric"])
 
         mean_metric = float(np.mean(fold_metrics))
