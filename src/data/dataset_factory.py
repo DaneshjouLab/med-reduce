@@ -18,7 +18,6 @@ from datasets import Dataset as HFDataset
 # Local imports
 # pylint: disable=import-error,relative-beyond-top-level
 from src.config import HF_MODELS, DEFAULT_IMAGE_SIZE
-from src.data.isic_loader import ISICBaseDataset
 
 # ============================================================================
 # DATA LOADING
@@ -156,64 +155,6 @@ def split_dataset_for_transforms(
 
     return subsets
 
-
-def create_transformed_datasets(
-    train_dataset: Dataset,
-    val_dataset: Dataset,
-    transforms_list: List[Any],
-    proportion_per_transform: float,
-    *,  # Force keyword arguments
-    preprocessor: Optional[Any] = None,
-    resolution: int = DEFAULT_IMAGE_SIZE,
-    model_type: str = "vit"
-) -> tuple[Dataset, Dataset]:
-    """Create train and validation datasets with transformations."""
-    # pylint: disable=too-many-arguments,too-many-locals
-
-    # Split training data into subsets
-    train_subsets = split_dataset_for_transforms(
-        train_dataset, transforms_list, proportion_per_transform
-    )
-
-    # Create datasets with transforms
-    transformed_datasets = []
-
-    # Apply each transform to corresponding subset
-    for _, (subset, transform) in enumerate(zip(train_subsets[:-1], transforms_list)):
-        transformed_ds = ISICDataset(
-            subset,
-            preprocessor=preprocessor,
-            resolution=resolution,
-            transform=transform,
-            model_type=model_type
-        )
-        transformed_datasets.append(transformed_ds)
-
-    # Add untransformed subset (if any remaining)
-    if len(train_subsets) > len(transforms_list):
-        untransformed_ds = ISICDataset(
-            train_subsets[-1],
-            preprocessor=preprocessor,
-            resolution=resolution,
-            transform=None,
-            model_type=model_type
-        )
-        transformed_datasets.append(untransformed_ds)
-
-    # Combine all training datasets
-    train_ds = ConcatDataset(transformed_datasets)
-
-    # Create validation dataset (no transformations)
-    val_ds = ISICDataset(
-        val_dataset,
-        preprocessor=preprocessor,
-        resolution=resolution,
-        transform=None,
-        model_type=model_type
-    )
-
-    return train_ds, val_ds
-
 # ============================================================================
 # DATASET BALANCING
 # ============================================================================
@@ -346,81 +287,3 @@ def balance_dataset(
         return dataset.select(balanced_indices.tolist())
 
     return Subset(dataset, balanced_indices.tolist())
-
-
-def _load_isic_split(data_dir: str, split: str) -> Dataset:
-    """
-    Replace with your real ISIC split loader that yields dicts:
-      {"image": PIL.Image, "label": int}
-
-    Expected interface:
-      class ISICRawSplit(Dataset):
-          def __init__(self, data_dir: str, split: str): ...
-          def __getitem__(self, i) -> {"image": PIL.Image, "label": int}
-          def __len__(self) -> int: ...
-
-    If you already have it elsewhere, just import and return it here.
-    """
-    # pylint: disable=import-outside-toplevel,relative-beyond-top-level,import-error
-
-    try:
-        from src.data.isic_raw import ISICRawSplit  # Use absolute import
-    except ImportError as e:
-        raise ImportError(
-            "ISICRawSplit not found. Create src/data/isic_raw.py with an ISICRawSplit "
-            "that returns {'image': PIL.Image, 'label': int}."
-        ) from e
-
-    return ISICRawSplit(data_dir, split)
-
-
-def get_dataset(
-    dataset_name: str,
-    data_dir: str,
-    split: str,
-    cfg=None,  # Kept for API compatibility
-    *,
-    preprocessor=None,
-    resolution: int = DEFAULT_IMAGE_SIZE,
-    transform=None,
-    model_type: str = "vit",
-    mode: str = "model_ready",  # "raw" or "model_ready"
-) -> Dataset:
-    """
-    Unified dataset factory used by BaseDataModule.
-
-    Args:
-        dataset_name: e.g., "isic2019"
-        data_dir: root directory for the dataset
-        split: "train" | "val" | "test" (if "val" doesn't exist, DataModule can split)
-        cfg: optional config (unused but kept for API compatibility)
-        preprocessor: HF image processor or similar (used by model_ready)
-        resolution: model input resolution (used by model_ready)
-        transform: optional PIL->PIL degradation transform (applied before preprocess)
-        model_type: str key you use in HF_MODELS
-        mode: "raw" (no transforms/preprocessing) or "model_ready" (pipeline)
-
-    Returns:
-        A torch.utils.data.Dataset
-    """
-    # pylint: disable=too-many-arguments,unused-argument
-
-    name = dataset_name.lower()
-
-    if name in {"isic", "isic2019", "dermatology"}:
-        base_ds = _load_isic_split(data_dir, split)
-
-        if mode == "raw":
-            # No resize/degradation or model preprocessing
-            return ISICBaseDataset(base_ds)
-
-        # model_ready: resize + optional degradation + HF preprocessing
-        return ISICDataset(
-            dataset=base_ds,
-            preprocessor=preprocessor,
-            resolution=resolution,
-            transform=transform,
-            model_type=model_type,
-        )
-
-    raise ValueError(f"Unknown dataset_name: {dataset_name}")

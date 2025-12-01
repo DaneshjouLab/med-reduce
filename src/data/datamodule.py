@@ -13,19 +13,14 @@ Provides a unified interface for working with different datasets.
 from typing import Optional, Any
 
 # Third-party imports
-import torch    # pylint: disable=import-error
-from torch.utils.data import DataLoader, random_split, Subset # pylint: disable=import-error
-
-# Local imports
-# pylint: disable=import-error
-from src.data.dataset_factory import get_dataset
+from torch.utils.data import DataLoader, Subset # pylint: disable=import-error
 
 class BaseDataModule:
     """
-    Dataset-agnostic data module.
+    Base class for data modules providing common dataloader interface.
 
-    - If get_dataset(dataset_name, split=...) exists, we use provided splits.
-    - Otherwise we create train/val via random_split from a single 'train' split.
+    Subclasses must implement the setup() method to load their specific datasets.
+    Examples: ISICDataModule, ISICSegDataModule, etc.
     """
     # pylint: disable=too-many-instance-attributes
 
@@ -79,50 +74,18 @@ class BaseDataModule:
     # ------------------------------------------------------------------
     def setup(self, _stage: Optional[str] = None):
         """
-        Initialize datasets. _stage: 'fit' | 'validate' | 'test' | None
-        Tries explicit splits first; falls back to random_split from a 'train' split.
+        Initialize datasets. Must be overridden by subclasses.
 
         Args:
             _stage: Current stage of training pipeline (unused but kept for API compatibility)
+
+        Raises:
+            NotImplementedError: This is an abstract method that must be implemented by subclasses
         """
-        # Try to fetch explicit train/val
-        ds_train = get_dataset(
-            self.dataset_name, self.data_dir, split="train", cfg=self.cfg,
-            preprocessor=self.preprocessor, resolution=self.resolution,
-            transform=self.transform, model_type=self.model_type,
+        raise NotImplementedError(
+            f"{self.__class__.__name__} must implement setup() method. "
+            "Use a specific datamodule like ISICDataModule instead of BaseDataModule directly."
         )
-
-        try:
-            ds_val = get_dataset(
-                self.dataset_name, self.data_dir, split="val", cfg=self.cfg,
-                preprocessor=self.preprocessor, resolution=self.resolution,
-                transform=None, model_type=self.model_type,
-            )
-        except Exception as e:  # pylint: disable=broad-exception-caught, unused-variable
-            # Exception is broad to handle any dataset-specific errors
-            ds_val = None
-
-        try:
-            ds_test = get_dataset(
-                self.dataset_name, self.data_dir, split="test", cfg=self.cfg,
-                preprocessor=self.preprocessor, resolution=self.resolution,
-                transform=None, model_type=self.model_type,
-            )
-        except Exception as e:  # pylint: disable=broad-exception-caught, unused-variable
-            # Exception is broad to handle any dataset-specific errors
-            ds_test = None
-
-        if ds_val is None:
-            # Fallback: split train into train/val
-            n_total = len(ds_train)
-            n_val = max(1, int(0.1 * n_total))
-            n_train = n_total - n_val
-            g = torch.Generator().manual_seed(self.split_seed)
-            self.train_set, self.val_set = random_split(ds_train, [n_train, n_val], generator=g)
-        else:
-            self.train_set, self.val_set = ds_train, ds_val
-
-        self.test_set = ds_test
 
     # ------------------------------------------------------------------
     def train_dataloader(self):

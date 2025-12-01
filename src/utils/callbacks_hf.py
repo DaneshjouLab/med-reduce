@@ -11,10 +11,11 @@
 from __future__ import annotations
 import os
 import json
-from typing import Dict, Any
+import csv
+from typing import Dict, Any, Optional
 from transformers import TrainerCallback  # type: ignore
 
-from src.utils.training_utils import get_gpu_memory
+from src.utils.training_utils import get_gpu_memory, profile_model, calculate_inference_latency
 
 # Optional W&B; safe if not installed
 try:
@@ -37,11 +38,41 @@ class LossLoggerCallback(TrainerCallback):
             f.write(json.dumps(payload) + "\n")
 
 class WandbCallback(TrainerCallback):
-    """Minimal W&B logger that adds model/phase and GPU memory (if available)."""
-    def __init__(self, model_name: str, phase: str):
+    """W&B logger with model/phase, GPU memory, FLOPs, and inference latency."""
+    def __init__(
+        self,
+        model_name: str,
+        phase: str,
+        model: Optional[Any] = None,
+        image_size: Optional[int] = None,
+        log_model_metrics: bool = True
+    ):
         self.model_name = model_name
         self.phase = phase
         self.best_accuracy = 0.0
+        self.model = model
+        self.image_size = image_size
+        self.log_model_metrics = log_model_metrics
+        self._profiled = False
+
+    def on_train_begin(self, args, state, control, **kwargs):
+        """Profile model FLOPs and latency once at training start."""
+        if not _WANDB or not self.log_model_metrics or self._profiled:
+            return
+        if self.model is None or self.image_size is None:
+            return
+
+        self._profiled = True
+
+        # Profile FLOPs
+        gflops = profile_model(self.model, self.image_size)
+        if gflops > 0:
+            wandb.log({"model/gflops": gflops}, step=0)
+
+        # Profile inference latency
+        latency_ms = calculate_inference_latency(self.model, self.image_size)
+        if latency_ms > 0:
+            wandb.log({"model/inference_latency_ms": latency_ms}, step=0)
 
     def on_log(self, args, state, control, logs=None, **kwargs):
         if not _WANDB or not logs:

@@ -1,34 +1,43 @@
+# Configuration for local ISIC dataset
+# Use this when loading data from local files instead of HuggingFace Hub
+
 # Global settings
 seed: 42
 
 datamodule:
   _target_: src.data.isic_datamodule.ISICDataModule
-  dataset_name: "MKZuziak/ISIC_2019_224"
-  data_dir: /scratch/users/sonnet/huggingface/datasets
+  dataset_name: null  # Set to null for local data
+  data_dir: /scratch/groups/roxanad/datasets/isic/challenges/2017/ISIC-2017_Training_Data/ISIC-2017_Training_Data
   batch_size: 256
   num_workers: 8
   persistent_workers: false
   prefetch_factor: 2
-  image_size: 112  # Match this to model.config.image_size below
+  image_size: 224  # Match this to model.config.image_size below
 
-  filtered_classes: ["0", "1"]  # Strings of class labels
+  # Local dataset configuration
+  local_label_file: /scratch/groups/roxanad/datasets/isic/challenges/2017/ISIC-2017_Training_Part3_GroundTruth.csv  # CHANGE THIS: Path to CSV file (absolute or relative to data_dir)
+  local_image_id_column: image_id  # Column containing image IDs (e.g., "ISIC_0000000")
+  local_label_column: melanoma # [melanoma, seborrheic_keratosis]  # Can be single string or list of label columns
+  local_image_extension: .jpg  # File extension for images
+
+  filtered_classes: ["0.0", "1.0"]  # Strings of class labels
   balance_data: true
-  num_train_images: 10000 
+  num_train_images: 10000
 
 dataset:
   # --- Mandatory Fields ---
-  name: "MKZuziak/ISIC_2019_224" # The name of the dataset on the Hugging Face Hub (e.g., "cifar10", "glue/cola")
-  data_dir: null # Set to null when loading from the Hub; the library handles the path/caching.
-  image_size: 112 
-  batch_size: 128 
+  name: null  # Not used for local data
+  data_dir: /scratch/groups/roxanad/datasets/isic/challenges/2017/ISIC-2017_Training_Data/ISIC-2017_Training_Data
+  image_size: 224
+  batch_size: 128
   num_workers: 8
 
   # --- Optional Fields ---
   pin_memory: True # Speed up data transfer to GPU
-  
+
   # --- Optional Degradation Group ---
   degradation:
-    target_resolution: 128 
+    target_resolution: 128
 
 # Training configuration
 train:
@@ -48,8 +57,6 @@ train:
     weight_decay: 0.001
     betas: [0.9, 0.999]  # For AdamW
     eps: 1e-8  # For AdamW
-    # momentum: 0.9  # For SGD
-    # nesterov: true  # For SGD
 
   # Scheduler configuration (used by optim.py)
   scheduler:
@@ -57,10 +64,6 @@ train:
     epochs: 5  # Total epochs for scheduler (should match train.epochs)
     warmup_epochs: 0  # Number of warmup epochs
     min_lr: 1e-6  # Minimum learning rate for cosine annealing
-    # step_size: 30  # For step scheduler
-    # gamma: 0.1  # For step scheduler
-    # patience: 5  # For plateau scheduler
-    # factor: 0.5  # For plateau scheduler
 
   # Cross-validation params
   k_folds: 5  # Use 5-fold CV for hyperparameter tuning
@@ -71,31 +74,17 @@ train:
   proportion_per_transform: 0.2
 
   # Hyperparameter search configuration
-  # NOTE: Hyperparameter tuning performed using 5-fold cross-validation on training split
-  # Should be run at highest resolution:
-  #   - 512px for dermatology and radiology
-  #   - 1024px for pathology
-  # Grid search parameters:
-  #   - Learning rate η ∈ {1×10⁻⁴, 3×10⁻⁴, 1×10⁻³}
-  #   - Weight decay λ ∈ {0, 1×10⁻⁴, 1×10⁻³}
-  #   - Batch size b ∈ {32, 64}
-  #   - Decoder dropout (segmentation only) ∈ {0.0, 0.1, 0.3}
-  #
-  # Workflow:
-  #   1. Run hyperparameter search at highest resolution (enabled: true)
-  #   2. Best hyperparameters are saved to best_hyperparameters.json
-  #   3. For lower resolutions, load those hyperparameters (load_from_file: path/to/best_hyperparameters.json)
   hyperparam_search:
     enabled: false  # Set to true to enable hyperparameter search
-    use_cv: true  # Use 5-fold CV for hyperparameter tuning
-    load_from_file: null  # Path to best_hyperparameters.json from high-res search (for lower-res experiments)
+    n_samples: 15  # Number of random hyperparameter combinations to try
+    subset_frac: 0.1  # Use 10% of data for hyperparameter search (faster)
+    use_cv: true  # Use single train/val split for search, then 5-fold CV for best
     param_grid:
-      lr: [1e-4, 3e-4, 1e-3]
-      weight_decay: [0.0, 1e-4, 1e-3]
-      batch_size: [32, 64]
-      # For segmentation tasks, uncomment and add decoder_dropout:
-      # decoder_dropout: [0.0, 0.1, 0.3]
-  
+      lr: [1e-5, 5e-5, 1e-4]
+      weight_decay: [0.001, 0.01]
+      batch_size: [128, 256]
+      label_smoothing: [0.0, 0.1]
+
 # Loss configuration
 loss:
   label_smoothing: 0.0
@@ -105,7 +94,7 @@ loss:
 # Logging configuration
 logging:
   project: "compressed-perception"
-  run_name: "dinov3_probe_112_run"
+  run_name: "dinov3_probe_local_224_run"
   wandb_enabled: true
   save_umap_embeddings: false
   umap_max_samples: 15
@@ -126,14 +115,11 @@ distillation:
   teacher_cache_dir: "./cache/teacher_embeddings"  # Where to store/load cached embeddings
   full_resolution: 224  # Full resolution for teacher embeddings
 
-  # If use_cached_embeddings is false, teacher will run online during training
-  # (much slower, not recommended for production)
-
   # Distillation loss weights
   alpha: 0.5  # Weight for cosine embedding loss
   beta: 0.5   # Weight for KL divergence on logits
   gamma: 0.0  # Weight for CE loss on ground truth (0 = pure distillation)
-  temperature: 2.0  # Temperature for KL divergence        
+  temperature: 2.0  # Temperature for KL divergence
 
 # Runtime configuration (will be populated by main())
 runtime:
@@ -146,14 +132,4 @@ model:
   type: "dinov3"
   config:
     num_labels: 2
-    image_size: 112
-
-# # --- ViT Model ---
-# model:
-#   name: "vit"
-#   model_id: "google/vit-base-patch16-224"
-#   type: "vit"
-#   dtype: "bfloat16"
-#   config:
-#     num_labels: 2
-#     image_size: 112
+    image_size: 224

@@ -5,8 +5,6 @@ import os
 from torch.utils.data import DataLoader, random_split, Subset
 import torch
 from torchvision import transforms
-from torchvision import set_image_backend
-set_image_backend("accimage")
 
 from src.data.datamodule import BaseDataModule 
 from src.data.dataset_factory import balance_dataset
@@ -28,7 +26,7 @@ class ISICDataModule(BaseDataModule):
 
     def __init__(
         self,
-        dataset_name: Optional[str] = DEFAULT_REPO_ID, 
+        dataset_name: Optional[str] = DEFAULT_REPO_ID,
         data_dir: Optional[str] = None,
         *,
         num_workers: int = 8,
@@ -36,18 +34,23 @@ class ISICDataModule(BaseDataModule):
         pin_memory: bool = True,
         drop_last: bool = False,
         split_seed: int = 42,
-        transform: Optional[Any] = None, 
+        transform: Optional[Any] = None,
         filter_fn: Optional[Any] = None,
         keep_indices: Optional[Any] = None,
         full_cfg: Optional[Any] = None,
-        filtered_classes: Optional[List[str]] = None, 
+        filtered_classes: Optional[List[str]] = None,
         balance_data: bool = True,
         num_train_images: Optional[int] = 1000,
-        local_label_file: str = "labels.csv", 
-        local_image_column: str = "file_name",
+        image_size: int = 224,  # Target image size for the model
+        # Local dataset parameters (only used when data_dir points to local files)
+        local_label_file: Optional[str] = None,
+        local_image_id_column: str = "image_id",
+        local_label_column: Any = "label",  # Can be str or list of str
+        local_image_extension: str = ".jpg",
         **kwargs # Catch-all for any other parameters from BaseDataModule
     ):
         self.full_cfg = full_cfg
+        self.image_size = image_size
 
         super().__init__(
             cfg=full_cfg,
@@ -61,28 +64,38 @@ class ISICDataModule(BaseDataModule):
             transform=transform,
             **kwargs
         )
-        
+
         self.filter_fn = filter_fn
         self.keep_indices = keep_indices
-        self.repo_id = dataset_name 
+        self.repo_id = dataset_name
 
-        self.filtered_classes = filtered_classes or ["0", "1"] 
+        self.filtered_classes = filtered_classes or ["0", "1"]
         self.balance_data = balance_data
         self.num_train_images = num_train_images
-        
+
+        # Determine data source
         if dataset_name and not os.path.isdir(str(dataset_name)):
             self.data_source = "remote_hf"
             self.source_id = dataset_name
         elif data_dir and os.path.isdir(str(data_dir)):
             self.data_source = "local"
             self.source_id = data_dir
+            # For local data, label_file is required
+            if local_label_file is None:
+                raise ValueError(
+                    "When using local data (data_dir is a directory), "
+                    "you must specify 'local_label_file' parameter."
+                )
         else:
             raise ValueError(
-                "Must provide valid `repo_id` (HF Hub) or `data_dir` (local directory)."
+                "Must provide valid `dataset_name` (HF Hub) or `data_dir` (local directory)."
             )
-        
+
+        # Store local dataset parameters
         self.local_label_file = local_label_file
-        self.local_image_column = local_image_column
+        self.local_image_id_column = local_image_id_column
+        self.local_label_column = local_label_column
+        self.local_image_extension = local_image_extension
     def _load_split(
         self, 
         split: str, 
@@ -105,12 +118,13 @@ class ISICDataModule(BaseDataModule):
         elif self.data_source == "local":
             wrapper = ISICHFRawSplitLocal(
                 data_dir=self.source_id,
-                split=split,
+                label_file=self.local_label_file,
+                image_id_column=self.local_image_id_column,
+                label_column=self.local_label_column,
+                image_extension=self.local_image_extension,
                 transform=transform,
                 filter_fn=self.filter_fn,
                 keep_indices=self.keep_indices,
-                label_file=self.local_label_file, 
-                image_column=self.local_image_column,
             )
         else:
             raise ValueError(f"Unknown data source: {self.data_source}")
@@ -146,15 +160,28 @@ class ISICDataModule(BaseDataModule):
             print(f"  Balance data: {self.balance_data}")
             if self.num_train_images:
                 print(f"  Num train images: {self.num_train_images}")
+        print(f"  Image size: {self.image_size}")
         print(f"{'='*60}\n")
-        
+
+        # Create transforms with proper resizing
         val_test_transform = transforms.Compose([
+            transforms.Resize((self.image_size, self.image_size)),
             transforms.ToTensor(),
-            transforms.Normalize(mean=[0.485, 0.456, 0.406], 
+            transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                std=[0.229, 0.224, 0.225])
         ])
-        
-        train_transform = self.transform if self.transform is not None else val_test_transform
+
+        # If custom transform provided, add resize + normalize after it
+        if self.transform is not None:
+            train_transform = transforms.Compose([
+                transforms.Resize((self.image_size, self.image_size)),
+                self.transform,
+                transforms.ToTensor(),
+                transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                   std=[0.229, 0.224, 0.225])
+            ])
+        else:
+            train_transform = val_test_transform
         
         print("Loading training set...")
         self.train_set = self._load_split(

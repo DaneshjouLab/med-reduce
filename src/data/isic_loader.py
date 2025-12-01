@@ -6,9 +6,7 @@
 
 """ISIC dataset loader implementation for dermatology image datasets.
 
-This module provides a Hugging Face–backed loader for ISIC that returns
-dicts shaped like:
-    {"image": PIL.Image, "label": int}
+This module provides a Hugging Face–backed loader
 
 Typical usage (HF-only, no DataModule required):
     from src.data.isic_loader import ISICHFRawSplit
@@ -186,76 +184,115 @@ from datasets import load_dataset, Dataset
 from datasets import Image as HFImageFeature
 from .isic_loader import ISICHFRawSplit
 
-class ISICHFRawSplitLocal(ISICHFRawSplit):
+class ISICHFRawSplitLocal(Dataset):
     """
     Hugging Face-backed ISIC split for local files (CSV + Image folder).
 
     Parameters
     ----------
     data_dir : str
-        The local root directory containing the data (e.g., '/my_classification_data').
+        The local root directory containing the images (e.g., '/path/to/images').
     label_file : str
-        The name of the CSV file (e.g., 'labels.csv').
-    image_column : str
-        The column in the CSV containing relative paths to images (e.g., 'file_name').
-    label_column : str
-        The column in the CSV containing the integer labels (e.g., 'label').
+        Path to the CSV file (can be absolute or relative to data_dir).
+    image_id_column : str
+        The column in the CSV containing image IDs (e.g., 'image_id').
+        Image files are expected to be named as {image_id}.jpg in data_dir.
+    label_column : str or list[str]
+        The column(s) in the CSV containing the labels.
+        - If str: Uses that column directly as integer label
+        - If list[str]: Converts multi-label columns to integer (argmax for single label)
+    image_extension : str
+        File extension for images (default: '.jpg')
+    transform : Optional[callable]
+        Optional PIL->PIL transform.
+    filter_fn : Optional[callable]
+        Optional row-level filter function.
+    keep_indices : Optional[Sequence[int]]
+        Optional explicit list of indices to keep.
     """
 
     def __init__(
         self,
         *,
-        data_dir: str,
-        split: str = "train",
-        label_file: str = "labels.csv",
-        image_column: str = "file_name",
-        label_column: str = "label",
+        data_dir: str = "/scratch/groups/roxanad/datasets/isic/challenges/2017/ISIC-2017_Training_Data/ISIC-2017_Training_Data",
+        label_file: str = "/scratch/groups/roxanad/datasets/isic/challenges/2017/ISIC-2017_Training_Part3_GroundTruth.csv",
+        image_id_column: str = "image_id",
+        label_column: str | Sequence[str] = "label",
+        image_extension: str = ".jpg",
+        transform: Optional[Any] = None,
         filter_fn: Optional[Any] = None,
         keep_indices: Optional[Sequence[int]] = None,
-        **kwargs
     ):
-        csv_path = os.path.join(data_dir, label_file)
+        # Load CSV
+        if os.path.isabs(label_file):
+            csv_path = label_file
+        else:
+            csv_path = os.path.join(data_dir, label_file)
+
         if not os.path.exists(csv_path):
             raise FileNotFoundError(f"Label file not found: {csv_path}")
 
         ds: Dataset = load_dataset("csv", data_files=csv_path, split="train")
 
+        # Apply filter_fn
         if filter_fn:
             idx = [i for i, row in enumerate(ds) if filter_fn(row)]
         else:
             idx = list(range(len(ds)))
 
+        # Apply keep_indices
         if keep_indices is not None:
             keep = set(int(k) for k in keep_indices)
             idx = [i for i in idx if i in keep]
 
         ds = ds.select(idx)
 
+        # Map image IDs to full paths and handle labels
         def map_to_full_path(example: Dict[str, Any]):
-            example["image"] = os.path.join(data_dir, example[image_column])
+            image_id = example[image_id_column]
+            example["image"] = os.path.join(data_dir, f"{image_id}{image_extension}")
+
+            # Handle label columns
+            if isinstance(label_column, (list, tuple)):
+                # Multi-label case: convert to single integer label
+                label_values = [float(example[col]) for col in label_column]
+                example["label"] = int(np.argmax(label_values))
+            else:
+                # Single label column
+                example["label"] = int(float(example[label_column]))
+
             return example
 
-        ds = ds.map(map_to_full_path, remove_columns=[image_column])
+        # Remove original columns we don't need
+        cols_to_remove = [image_id_column]
+        if isinstance(label_column, (list, tuple)):
+            cols_to_remove.extend(label_column)
+        elif label_column != "label":
+            cols_to_remove.append(label_column)
+
+        cols_to_remove = [c for c in cols_to_remove if c in ds.column_names]
+        ds = ds.map(map_to_full_path, remove_columns=cols_to_remove)
+
+        # Cast image column to HF Image feature for automatic PIL loading
         ds = ds.cast_column("image", HFImageFeature())
 
+        # Try to get class names if available
         try:
-            names = getattr(ds.features.get(label_column, None), "names", None)
-            class_names = tuple(names) if names else None
+            names = getattr(ds.features.get("label", None), "names", None)
+            self.class_names = tuple(names) if names else None
         except Exception:
-            class_names = None
+            self.class_names = None
+
+        # If we have multi-label columns, create class names from them
+        if isinstance(label_column, (list, tuple)):
+            self.class_names = tuple(label_column)
 
         self.ds = ds
-        self.repo_id = data_dir
-        self.image_column = "image"  
-        self.label_column = label_column
-        self.class_names = class_names
-
-        # Call parent constructor last
-        super().__init__(
-            repo_id=self.repo_id,
-            split=split,
-            **kwargs
-        )
+        self.data_dir = data_dir
+        self.image_column = "image"
+        self.label_column = "label"
+        self.transform = transform
+        self._indices = list(range(len(self.ds)))
 
     def __len__(self):
         return len(self.ds)
@@ -264,7 +301,14 @@ class ISICHFRawSplitLocal(ISICHFRawSplit):
         item = self.ds[idx]
         image = _to_pil(item[self.image_column])
         label = int(item[self.label_column])
+
+        if self.transform:
+            image = self.transform(image)
+
         return {"pixel_values": image, "label": label}
+
+    def __getitems__(self, indices):
+        return [self.__getitem__(idx) for idx in indices]
 
     @property
     def hf_dataset(self):

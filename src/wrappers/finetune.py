@@ -11,13 +11,13 @@ from typing import Any, Dict
 import os
 import torch
 from torch.utils.data import DataLoader
+from hydra.utils import instantiate
 
 # pylint: disable=import-error
 from src.utils.logging_core import setup_logging, get_logger, WandbLogger
 from src.utils.optim import make_optimizer_and_scheduler
 from src.losses.classification import cross_entropy_loss
 from src.models.factory import create_model, create_preprocessor, save_model
-from src.data.datamodule import BaseDataModule
 from src.engines.finetune_engine import train_finetune
 from src.utils.training_utils import profile_model
 from src.engines.training_core import _get_embeddings
@@ -56,15 +56,15 @@ class FinetuneWrapper:  # pylint: disable=too-many-instance-attributes,too-few-p
             log.debug(f"Preprocessor creation failed: {e}")
             self.preprocessor = None
 
-        # Data
-        self.dm = BaseDataModule(
-            cfg=cfg,
-            dataset_name=cfg.data.dataset_name,
-            data_dir=cfg.data.data_dir,
-            batch_size=cfg.data.batch_size,
-            num_workers=cfg.data.num_workers,
-            pin_memory=True,
-        )
+        # Data - Use datamodule from config if specified, otherwise create default
+        if hasattr(cfg, 'datamodule') and cfg.datamodule is not None:
+            self.dm = instantiate(cfg.datamodule)
+        else:
+            # Fallback for backward compatibility
+            raise ValueError(
+                "Config must specify 'datamodule' section with _target_. "
+                "Example: datamodule._target_ = 'src.data.isic_datamodule.ISICDataModule'"
+            )
         self.dm.setup("fit")
 
         # Optimizer & scheduler

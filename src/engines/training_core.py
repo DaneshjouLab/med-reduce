@@ -283,7 +283,7 @@ def _update_best_model_state(
 
     return best_state_dict, updated_best_metric, is_better
 
-    def _get_embeddings(
+def _get_embeddings(
         model: nn.Module,
         dataloader: torch.utils.data.DataLoader,
         device: torch.device,

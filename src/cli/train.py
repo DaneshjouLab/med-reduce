@@ -261,8 +261,9 @@ def main(cfg: DictConfig):
     # Normalize dataset selection into cfg.data for wrappers/datamodules
     _normalize_dataset_into_data(cfg)
 
-    # Set up run directory (Hydra sets CWD to the unique run dir)
-    run_dir = Path(os.getcwd())
+    # Set up run directory using Hydra's output directory
+    # Hydra creates a unique directory for each run (outputs/YYYY-MM-DD/HH-MM-SS by default)
+    run_dir = Path(hydra.core.hydra_config.HydraConfig.get().runtime.output_dir)
 
     # Device & seeding
     device = _select_device(cfg)
@@ -279,12 +280,6 @@ def main(cfg: DictConfig):
         "rank_zero": _is_rank_zero(),
         "world_size": int(os.environ.get("WORLD_SIZE", "1")),
     }
-
-    # Build & setup datamodule using dataset factory logic
-    # dm = _build_datamodule(cfg)
-    # dm = hydra.utils.instantiate(cfg.datamodule, full_cfg=cfg)
-
-    # dm.setup(_stage="fit")  # prepares train/val (or splits train if no val split)
 
     # Persist resolved config and print header
     _save_resolved_config(cfg, run_dir)
