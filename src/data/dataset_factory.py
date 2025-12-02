@@ -249,10 +249,38 @@ def balance_dataset(
         labels = dataset[label_col]  # zero-copy memoryview
         labels = np.array(labels)
 
+        # Convert filtered_classes to match label dtype
+        # If labels are int and filtered_classes are strings, convert filtered_classes to int
+        print(f"Label dtype: {labels.dtype}, filtered_classes: {filtered_classes}")
+        if labels.dtype.kind in ('i', 'u', 'f'):  # integer or float
+            # Try to convert filtered_classes to numeric
+            try:
+                filtered_classes = [int(float(cls)) for cls in filtered_classes]
+                print(f"Converted filtered_classes to numeric: {filtered_classes}")
+            except (ValueError, TypeError):
+                pass  # Keep as-is if conversion fails
+        else:
+            # Labels are strings or objects, convert to string
+            labels = labels.astype(str)
+            filtered_classes = [str(cls) for cls in filtered_classes]
+            print(f"Converted labels and filtered_classes to strings")
+
         class_indices = {
             cls: np.where(labels == cls)[0]
             for cls in filtered_classes
         }
+
+        # Debug: Print class distribution
+        for cls, indices in class_indices.items():
+            print(f"  Class {cls}: {len(indices)} samples")
+
+        if all(len(indices) == 0 for indices in class_indices.values()):
+            unique_labels = np.unique(labels)
+            raise ValueError(
+                f"No samples found for any filtered class! "
+                f"Filtered classes: {filtered_classes}, "
+                f"Unique labels in dataset: {unique_labels[:20]}"  # Show first 20
+            )
 
     else:
         class_indices = {cls: [] for cls in filtered_classes}

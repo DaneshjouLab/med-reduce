@@ -48,14 +48,16 @@ class ExperimentMetrics:
 
     # Accuracy metrics
     top1_accuracy: float
-    top5_accuracy: Optional[float] = None
-    f1_score: Optional[float] = None
-    auc_score: Optional[float] = None
 
     # Efficiency metrics
     flops_giga: float  # GFLOPs for forward pass
     inference_latency_ms: float  # ms per image
     peak_gpu_memory_mb: float  # Peak GPU memory during training
+
+    # Optional accuracy metrics
+    top5_accuracy: Optional[float] = None
+    f1_score: Optional[float] = None
+    auc_score: Optional[float] = None
     training_time_hours: Optional[float] = None
 
     # Model size metrics

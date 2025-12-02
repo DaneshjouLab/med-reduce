@@ -15,10 +15,10 @@ datamodule:
   image_size: 224  # Match this to model.config.image_size below
 
   # Local dataset configuration
-  local_label_file: /scratch/groups/roxanad/datasets/isic/challenges/2017/ISIC-2017_Training_Part3_GroundTruth.csv  # CHANGE THIS: Path to CSV file (absolute or relative to data_dir)
+  local_label_file: /scratch/groups/roxanad/datasets/isic/challenges/2017/ISIC-2017_Training_Part3_GroundTruth.csv  
   local_image_id_column: image_id  # Column containing image IDs (e.g., "ISIC_0000000")
   local_label_column: melanoma # [melanoma, seborrheic_keratosis]  # Can be single string or list of label columns
-  local_image_extension: .jpg  # File extension for images
+  local_image_extension: .jpg  
 
   filtered_classes: ["0.0", "1.0"]  # Strings of class labels
   balance_data: true
