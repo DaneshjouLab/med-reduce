@@ -11,7 +11,7 @@ from typing import List
 # Define experiment grid
 MODELS = ["vit", "dinov3"]
 RESOLUTIONS = [224, 112, 56]
-MODES = ["finetune", "probe"]
+MODES = ["probe"]
 
 # Model configurations
 MODEL_CONFIGS = {

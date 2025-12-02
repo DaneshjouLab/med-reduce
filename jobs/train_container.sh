@@ -1,8 +1,8 @@
 #!/bin/bash
-#SBATCH --job-name=train_container
+#SBATCH --job-name=compressed_perception
 #SBATCH --partition=roxanad
 #SBATCH --gres=gpu:1
-#SBATCH --time=12:00:00
+#SBATCH --time=23:59:00
 #SBATCH --mem=32G
 #SBATCH --cpus-per-task=4
 #SBATCH --output=logs/%x_%j.out
@@ -29,15 +29,12 @@ SIF_STORE="/scratch/users/$USER/simg"
       bash -c "
 
     set -e
-
+    
     cd /workspace
     echo 'INFO: Successfully navigated to /workspace.'
-
+    
     source .venv/bin/activate
     echo 'INFO: Virtual environment activated.'
-
-    # Add src to PYTHONPATH
-    export PYTHONPATH=\$PYTHONPATH:/workspace/src
 
     export TMPDIR=/scratch/users/$USER/tmp
     export HF_HOME=/scratch/users/$USER/huggingface
@@ -53,12 +50,22 @@ SIF_STORE="/scratch/users/$USER/simg"
     mkdir -p \$TMPDIR \$HF_HOME \$HF_DATASETS_CACHE \$TORCH_HOME \
             \$TRAIN_OUTPUT_DIR \$LOG_DIR \$MODEL_DIR \$PLOT_DIR
 
-    echo 'INFO: Installing hydra-core...'
-    python -m pip install --no-cache-dir hydra-core
-
-    # Run the distillation script
+    # Run the script
     echo 'INFO: Starting Hydra run...'
-    hydra run -c configs/config.yaml src.cli.main.train.batch_size=64
+    export HYDRA_FULL_ERROR=1 
+    python -m src.cli.run_experiments --config configs/config_local.yaml
+
+    CONFIG_FILE="configs/config_local.yaml"
+    CACHE_DIR="./cache/teacher_embeddings"
+    FULL_RESOLUTION=224
+
+    python -m src.cli.cache_teacher_embeddings \
+    --config "$CONFIG_FILE" \
+    --cache-dir "$CACHE_DIR" \
+    --full-resolution $FULL_RESOLUTION \
+    --batch-size 256 \
+    --num-workers 8 \
+    --splits train
     
     echo 'INFO: Job finished successfully.'
   "

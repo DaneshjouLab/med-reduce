@@ -75,7 +75,7 @@ train:
 
   # Hyperparameter search configuration
   hyperparam_search:
-    enabled: false  # Set to true to enable hyperparameter search
+    enabled: true  # Set to true to enable hyperparameter search
     n_samples: 15  # Number of random hyperparameter combinations to try
     subset_frac: 0.1  # Use 10% of data for hyperparameter search (faster)
     use_cv: true  # Use single train/val split for search, then 5-fold CV for best
@@ -112,7 +112,7 @@ distillation:
 
   # Teacher embedding cache settings
   use_cached_embeddings: true  # Use pre-cached embeddings (recommended)
-  teacher_cache_dir: "./cache/teacher_embeddings"  # Where to store/load cached embeddings
+  teacher_cache_dir: "/scratch/groups/roxanad/compressed_perception/cache/teacher_embeddings"  # Where to store/load cached embeddings
   full_resolution: 224  # Full resolution for teacher embeddings
 
   # Distillation loss weights
@@ -123,7 +123,7 @@ distillation:
 
 # Runtime configuration (will be populated by main())
 runtime:
-  run_dir: "./runs/probe"    # Output directory
+  run_dir: "/scratch/groups/roxanad/compressed_perception/runs/probe"    # Output directory
 
 # --- DINOv3 Model ---
 model:
