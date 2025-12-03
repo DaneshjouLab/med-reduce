@@ -134,6 +134,44 @@ class SegmentationTransform:
                 # Ensure mask is integer-like if required by the loss function
                 return image, mask
 
+class FeatureDetectionTransform:
+    """
+    Applies deterministic transforms (Resize, ToTensor, Normalize) to both image and superpixel mask.
+
+    For feature detection, we need to:
+    1. Resize image and superpixel mask together
+    2. Normalize image (but not superpixel mask)
+    3. Keep superpixel mask as integer IDs (use nearest neighbor interpolation)
+    """
+    def __init__(self, target_size=256):
+        self.target_size = target_size
+        self.img_transform = transforms.Compose([
+            transforms.Resize((target_size, target_size)),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+        ])
+        # For superpixel mask, use nearest neighbor to preserve integer IDs
+        self.mask_resize = transforms.Resize((target_size, target_size), interpolation=Image.Resampling.NEAREST)
+
+    def __call__(self, image, superpixel_mask):
+        import torch
+
+        # Transform image
+        image = self.img_transform(image)
+
+        # Transform superpixel mask (keep as PIL for resize, then convert to tensor)
+        if isinstance(superpixel_mask, np.ndarray):
+            # Convert numpy array to PIL Image for resizing
+            superpixel_mask = Image.fromarray(superpixel_mask.astype(np.int32), mode='I')
+
+        superpixel_mask = self.mask_resize(superpixel_mask)
+
+        # Convert to tensor (keep as long integers for indexing)
+        superpixel_mask = torch.from_numpy(np.array(superpixel_mask)).long()
+
+        return image, superpixel_mask
+
+
 def get_degradation_transforms():
     """Get default list of degradation transforms."""
     return [

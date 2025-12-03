@@ -9,7 +9,7 @@ from torchvision import transforms
 from src.data.datamodule import BaseDataModule
 from src.data.dataset_factory import balance_dataset
 from src.data.isic_loader import ISICHFRawSplit, ISICHFRawSplitLocal
-from src.transformations.transforms import SegmentationTransform
+from src.transformations.transforms import SegmentationTransform, FeatureDetectionTransform
 
 # --- Constants
 VAL_SPLIT_RATIO = 0.1
@@ -458,3 +458,142 @@ class ISICSegDataModule(BaseDataModule):
         if self.test_set:
             print(f"  Test: {len(self.test_set)} samples")
         print(f"{'='*60}\n")
+
+
+class ISICFeatureDataModule(BaseDataModule):
+    """
+    DataModule for ISIC dermoscopic feature detection tasks.
+
+    This task involves multi-label classification of superpixel regions.
+    Each image has:
+    - An RGB image
+    - A superpixel mask (encoded as RGB PNG)
+    - JSON annotations with 4 features per superpixel
+    """
+
+    def __init__(
+        self,
+        image_dir: str,
+        superpixel_dir: str,
+        annotation_dir: str,
+        *,
+        num_workers: int = 8,
+        batch_size: int = 16,
+        pin_memory: bool = True,
+        drop_last: bool = False,
+        split_seed: int = 42,
+        transform: Optional[Any] = None,
+        filter_fn: Optional[Any] = None,
+        keep_indices: Optional[Any] = None,
+        full_cfg: Optional[Any] = None,
+        image_size: int = 256,
+        image_extension: str = ".jpg",
+        superpixel_extension: str = ".png",
+        annotation_extension: str = ".json",
+        superpixel_suffix: str = "_superpixels",
+        **kwargs
+    ):
+        self.full_cfg = full_cfg
+        self.image_size = image_size
+
+        super().__init__(
+            cfg=full_cfg,
+            dataset_name=None,
+            data_dir=None,
+            num_workers=num_workers,
+            batch_size=batch_size,
+            pin_memory=pin_memory,
+            drop_last=drop_last,
+            split_seed=split_seed,
+            transform=transform,
+            **kwargs
+        )
+
+        self.filter_fn = filter_fn
+        self.keep_indices = keep_indices
+
+        # Store feature detection-specific parameters
+        self.image_dir = image_dir
+        self.superpixel_dir = superpixel_dir
+        self.annotation_dir = annotation_dir
+        self.image_extension = image_extension
+        self.superpixel_extension = superpixel_extension
+        self.annotation_extension = annotation_extension
+        self.superpixel_suffix = superpixel_suffix
+
+        # Validate directories
+        if not os.path.isdir(image_dir):
+            raise ValueError(f"image_dir must be a valid directory: {image_dir}")
+        if not os.path.isdir(superpixel_dir):
+            raise ValueError(f"superpixel_dir must be a valid directory: {superpixel_dir}")
+        if not os.path.isdir(annotation_dir):
+            raise ValueError(f"annotation_dir must be a valid directory: {annotation_dir}")
+
+    def _load_split(
+        self,
+        split: str = "train",
+        transform: Optional[Any] = None
+    ):
+        """Load a feature detection dataset split."""
+        from src.data.isic_feature_loader import ISICFeatureDetectionDataset
+
+        print(f"Loading {split} split from local directories")
+
+        dataset = ISICFeatureDetectionDataset(
+            image_dir=self.image_dir,
+            superpixel_dir=self.superpixel_dir,
+            annotation_dir=self.annotation_dir,
+            image_extension=self.image_extension,
+            superpixel_extension=self.superpixel_extension,
+            annotation_extension=self.annotation_extension,
+            superpixel_suffix=self.superpixel_suffix,
+            transform=transform,
+            filter_fn=self.filter_fn,
+            keep_indices=self.keep_indices,
+        )
+
+        print(f"Dataset loaded: {len(dataset)} samples")
+        return dataset
+
+    def setup(self, _stage: Optional[str] = None):
+        """Initialize datasets for feature detection."""
+        print(f"Setting up ISIC Feature Detection DataModule")
+        print(f"  Image dir: {self.image_dir}")
+        print(f"  Superpixel dir: {self.superpixel_dir}")
+        print(f"  Annotation dir: {self.annotation_dir}")
+        print(f"  Image size: {self.image_size}")
+
+        # Create feature detection transforms
+        val_test_transform = FeatureDetectionTransform(target_size=self.image_size)
+        train_transform = self.transform if self.transform is not None else val_test_transform
+
+        print("Loading dataset...")
+        full_dataset = self._load_split(
+            split="train",
+            transform=train_transform
+        )
+        print(f"  ✓ {len(full_dataset)} total samples\n")
+
+        # Split into train/val
+        print("Splitting dataset into train/val...")
+        total = len(full_dataset)
+        n_val = max(1, int(total * VAL_SPLIT_RATIO))
+        n_train = total - n_val
+
+        g = torch.Generator().manual_seed(self.split_seed)
+        idx_train, idx_val = random_split(
+            range(total), [n_train, n_val], generator=g
+        )
+
+        self.train_set = Subset(full_dataset, idx_train.indices)
+        self.val_set = Subset(full_dataset, idx_val.indices)
+
+        print(f"  ✓ Split: {n_train} train, {n_val} val\n")
+
+        # No separate test set for feature detection (typically)
+        self.test_set = None
+
+        print(f"DataModule setup complete!")
+        print(f"  Train: {len(self.train_set)} samples")
+        print(f"  Val: {len(self.val_set)} samples")
+
