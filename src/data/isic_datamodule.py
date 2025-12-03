@@ -6,7 +6,7 @@ from torch.utils.data import DataLoader, random_split, Subset
 import torch
 from torchvision import transforms
 
-from src.data.datamodule import BaseDataModule 
+from src.data.datamodule import BaseDataModule
 from src.data.dataset_factory import balance_dataset
 from src.data.isic_loader import ISICHFRawSplit, ISICHFRawSplitLocal
 from src.transformations.transforms import SegmentationTransform
@@ -17,10 +17,10 @@ DEFAULT_REPO_ID = "MKZuziak/ISIC_2019_224"
 
 class ISICDataModule(BaseDataModule):
     """
-    A specific DataModule for the Hugging Face-backed ISIC dataset, 
+    A specific DataModule for the Hugging Face-backed ISIC dataset,
     using ISICHFRawSplit for loading.
-    
-    It overrides the 'setup' method to directly instantiate the dataset, 
+
+    It overrides the 'setup' method to directly instantiate the dataset,
     bypassing the generic dataset_factory.
     """
 
@@ -97,20 +97,20 @@ class ISICDataModule(BaseDataModule):
         self.local_label_column = local_label_column
         self.local_image_extension = local_image_extension
     def _load_split(
-        self, 
-        split: str, 
+        self,
+        split: str,
         transform: Optional[Any] = None,
         balance: bool = False
     ):
         """Load a dataset split with optional balancing."""
-        
+
         print(f"Loading split from: {self.data_source}")
 
         if self.data_source == "remote_hf":
             wrapper = ISICHFRawSplit(
                 repo_id=self.source_id,
                 split=split,
-                cache_dir=self.data_dir, 
+                cache_dir=self.data_dir,
                 transform=transform,
                 filter_fn=self.filter_fn,
                 keep_indices=self.keep_indices,
@@ -182,15 +182,15 @@ class ISICDataModule(BaseDataModule):
             ])
         else:
             train_transform = val_test_transform
-        
+
         print("Loading training set...")
         self.train_set = self._load_split(
             split="train",
             transform=train_transform,
-            balance=True  
+            balance=True
         )
         print(f"  ✓ {len(self.train_set)} training samples\n")
-        
+
         print("Loading validation set...")
         try:
             self.val_set = self._load_split(
@@ -201,7 +201,7 @@ class ISICDataModule(BaseDataModule):
             print(f"  ✓ {len(self.val_set)} validation samples\n")
         except Exception as e:
             print(f"  No validation split found, splitting from training...")
-            
+
             total = len(self.train_set)
             n_val = max(1, int(total * VAL_SPLIT_RATIO))
             n_train = total - n_val
@@ -213,21 +213,21 @@ class ISICDataModule(BaseDataModule):
 
             self.val_set = Subset(self.train_set, idx_val.indices)
             self.train_set = Subset(self.train_set, idx_train.indices)
-            
+
             print(f"  ✓ Split: {n_train} train, {n_val} val\n")
-        
+
         print("Loading test set...")
         try:
             self.test_set = self._load_split(
                 split="test",
                 transform=val_test_transform,
-                balance=self.balance_data  
+                balance=self.balance_data
             )
             print(f"  ✓ {len(self.test_set)} test samples\n")
         except Exception:
             print(f"  No test split found\n")
             self.test_set = None
-        
+
         print(f"{'='*60}")
         print(f"DataModule setup complete!")
         print(f"  Train: {len(self.train_set)} samples")
@@ -237,30 +237,46 @@ class ISICDataModule(BaseDataModule):
         print(f"{'='*60}\n")
 
 class ISICSegDataModule(BaseDataModule):
+    """
+    DataModule for ISIC segmentation tasks.
+
+    Supports both:
+    1. HF dataset with CSV (repo_id + label_file)
+    2. Local directories (image_dir + mask_dir)
+    """
     def __init__(
         self,
-        repo_id: str, 
-        data_dir: str,
+        dataset_name: Optional[str] = None,
+        data_dir: Optional[str] = None,
         *,
         num_workers: int = 8,
         batch_size: int = 32,
         pin_memory: bool = True,
         drop_last: bool = False,
         split_seed: int = 42,
-        transform: Optional[Any] = None, 
+        transform: Optional[Any] = None,
         filter_fn: Optional[Any] = None,
         keep_indices: Optional[Any] = None,
         full_cfg: Optional[Any] = None,
-        filtered_classes: Optional[List[str]] = None, 
-        balance_data: bool = True,
-        num_train_images: Optional[int] = 1000,
+        image_size: int = 256,
+        # For CSV-based loading
+        label_file: Optional[str] = None,
+        image_column: str = "image_path",
+        mask_column: str = "mask_path",
+        # For directory-based loading
+        image_dir: Optional[str] = None,
+        mask_dir: Optional[str] = None,
+        image_extension: str = ".jpg",
+        mask_extension: str = ".png",
+        mask_suffix: str = "_segmentation",
         **kwargs
     ):
         self.full_cfg = full_cfg
+        self.image_size = image_size
 
         super().__init__(
             cfg=full_cfg,
-            dataset_name=repo_id,
+            dataset_name=dataset_name,
             data_dir=data_dir,
             num_workers=num_workers,
             batch_size=batch_size,
@@ -270,61 +286,175 @@ class ISICSegDataModule(BaseDataModule):
             transform=transform,
             **kwargs
         )
-        
+
         self.filter_fn = filter_fn
         self.keep_indices = keep_indices
-        self.repo_id = repo_id 
+        self.repo_id = dataset_name
 
-        self.filtered_classes = filtered_classes or ["0", "1"] 
-        self.balance_data = balance_data
-        self.num_train_images = num_train_images
-    
+        # Store segmentation-specific parameters
+        self.label_file = label_file
+        self.image_column = image_column
+        self.mask_column = mask_column
+        self.image_dir = image_dir
+        self.mask_dir = mask_dir
+        self.image_extension = image_extension
+        self.mask_extension = mask_extension
+        self.mask_suffix = mask_suffix
+
+        # Determine data source
+        if image_dir and mask_dir:
+            # Directory-based loading
+            self.data_source = "local_dirs"
+            if not os.path.isdir(image_dir):
+                raise ValueError(f"image_dir must be a valid directory: {image_dir}")
+            if not os.path.isdir(mask_dir):
+                raise ValueError(f"mask_dir must be a valid directory: {mask_dir}")
+        elif data_dir and label_file:
+            # CSV-based loading
+            self.data_source = "csv"
+            if not os.path.isdir(data_dir):
+                raise ValueError(f"data_dir must be a valid directory: {data_dir}")
+        elif dataset_name:
+            # Remote HF dataset
+            self.data_source = "remote_hf"
+        else:
+            raise ValueError(
+                "Must provide either:\n"
+                "  1. image_dir + mask_dir (for directory-based loading), or\n"
+                "  2. data_dir + label_file (for CSV-based loading), or\n"
+                "  3. dataset_name (for HuggingFace Hub)"
+            )
+
+    def _load_split(
+        self,
+        split: str = "train",
+        transform: Optional[Any] = None,
+        balance: bool = False
+    ):
+        """Load a segmentation dataset split."""
+        from src.data.isic_loader import ISICSegRawSplit, ISICSegRawSplitLocal
+
+        print(f"Loading {split} split from: {self.data_source}")
+
+        if self.data_source == "local_dirs":
+            # Directory-based loading
+            wrapper = ISICSegRawSplitLocal(
+                image_dir=self.image_dir,
+                mask_dir=self.mask_dir,
+                image_extension=self.image_extension,
+                mask_extension=self.mask_extension,
+                mask_suffix=self.mask_suffix,
+                transform=transform,
+                filter_fn=self.filter_fn,
+                keep_indices=self.keep_indices,
+            )
+        elif self.data_source == "csv":
+            # CSV-based loading
+            wrapper = ISICSegRawSplit(
+                data_dir=self.data_dir,
+                label_file=self.label_file,
+                image_column=self.image_column,
+                mask_column=self.mask_column,
+                transform=transform,
+            )
+        elif self.data_source == "remote_hf":
+            # Remote HF dataset (would need ISICSegRawSplit to support HF datasets)
+            raise NotImplementedError(
+                "Remote HuggingFace segmentation datasets not yet supported. "
+                "Use local_dirs or csv mode instead."
+            )
+        else:
+            raise ValueError(f"Unknown data source: {self.data_source}")
+
+        dataset = wrapper
+
+        print(f"Dataset loaded: {len(dataset)} samples")
+        return dataset
+
     def setup(self, _stage: Optional[str] = None):
         """Initialize datasets using ISICSegRawSplit for segmentation."""
         print(f"\n{'='*60}")
         print(f"Setting up ISIC Segmentation DataModule")
-        print(f" Dataset: {self.repo_id or self.data_dir}")
+        print(f"  Data source: {self.data_source}")
+        if self.data_source == "local_dirs":
+            print(f"  Image dir: {self.image_dir}")
+            print(f"  Mask dir: {self.mask_dir}")
+        elif self.data_source == "csv":
+            print(f"  Data dir: {self.data_dir}")
+            print(f"  Label file: {self.label_file}")
+        print(f"  Image size: {self.image_size}")
         print(f"{'='*60}\n")
 
-        val_test_transform = SegmentationTransform() 
+        # Create segmentation transforms
+        val_test_transform = SegmentationTransform(target_size=self.image_size)
         train_transform = self.transform if self.transform is not None else val_test_transform
-        
+
         print("Loading training set...")
         self.train_set = self._load_split(
             split="train",
-            transform=train_transform,
-            balance=False 
+            transform=train_transform
         )
-        print(f"  ✓ {len(self.train_set)} training samples\n")
-        
-        print("Loading validation set...")
-        try:
-            self.val_set = self._load_split(
-                split="validation",
-                transform=val_test_transform,
-                balance=False
+        print(f"  ✓ {len(self.train_set)} training samples\n")
+
+        # For directory-based loading, we only have one dataset
+        # Split it into train/val if needed
+        if self.data_source == "local_dirs":
+            print("Splitting dataset into train/val...")
+            total = len(self.train_set)
+            n_val = max(1, int(total * VAL_SPLIT_RATIO))
+            n_train = total - n_val
+
+            g = torch.Generator().manual_seed(self.split_seed)
+            idx_train, idx_val = random_split(
+                range(total), [n_train, n_val], generator=g
             )
-            print(f"  ✓ {len(self.val_set)} validation samples\n")
-        except Exception:
-            print(f"  No validation split found. Consider defining a 'validation' split in your data source.")
-            self.val_set = None # Or implement the Subset logic similar to the classification DM
-            
-        print("Loading test set...")
-        try:
-            self.test_set = self._load_split(
-                split="test",
-                transform=val_test_transform,
-                balance=False
-            )
-            print(f" ✓ {len(self.test_set)} test samples\n")
-        except Exception:
-            print(f" No test split found\n")
+
+            self.val_set = Subset(self.train_set, idx_val.indices)
+            self.train_set = Subset(self.train_set, idx_train.indices)
+
+            print(f"  ✓ Split: {n_train} train, {n_val} val\n")
             self.test_set = None
-        
+        else:
+            # For CSV or HF datasets, try to load separate splits
+            print("Loading validation set...")
+            try:
+                self.val_set = self._load_split(
+                    split="validation",
+                    transform=val_test_transform
+                )
+                print(f"  ✓ {len(self.val_set)} validation samples\n")
+            except Exception:
+                print(f"  No validation split found, splitting from training...")
+
+                total = len(self.train_set)
+                n_val = max(1, int(total * VAL_SPLIT_RATIO))
+                n_train = total - n_val
+
+                g = torch.Generator().manual_seed(self.split_seed)
+                idx_train, idx_val = random_split(
+                    range(total), [n_train, n_val], generator=g
+                )
+
+                self.val_set = Subset(self.train_set, idx_val.indices)
+                self.train_set = Subset(self.train_set, idx_train.indices)
+
+                print(f"  ✓ Split: {n_train} train, {n_val} val\n")
+
+            print("Loading test set...")
+            try:
+                self.test_set = self._load_split(
+                    split="test",
+                    transform=val_test_transform
+                )
+                print(f"  ✓ {len(self.test_set)} test samples\n")
+            except Exception:
+                print(f"  No test split found\n")
+                self.test_set = None
+
         print(f"{'='*60}")
         print(f"DataModule setup complete!")
-        print(f" Train: {len(self.train_set)} samples")
-        print(f" Val: {len(self.val_set) if self.val_set else '0'} samples")
+        print(f"  Train: {len(self.train_set)} samples")
+        print(f"  Val: {len(self.val_set)} samples")
         if self.test_set:
-            print(f" Test: {len(self.test_set)} samples")
+            print(f"  Test: {len(self.test_set)} samples")
         print(f"{'='*60}\n")

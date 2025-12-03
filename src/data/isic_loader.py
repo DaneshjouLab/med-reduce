@@ -338,11 +338,11 @@ class ISICSegRawSplit(Dataset):
             return example
 
         self.ds = raw_ds.map(map_files, remove_columns=[image_column, mask_column])
-        
+
         # 3. Cast both columns to the HF Image feature (for PIL decoding)
         self.ds = self.ds.cast_column('image', HFImageFeature())
         self.ds = self.ds.cast_column('mask', HFImageFeature())
-        
+
         self.transform = transform
         self._indices = list(range(len(self.ds))) # Simple index
 
@@ -363,3 +363,132 @@ class ISICSegRawSplit(Dataset):
 
         # Return the two main components for segmentation models
         return {"pixel_values": image, "mask_target": mask}
+
+
+class ISICSegRawSplitLocal(Dataset):
+    """
+    Local directory-based segmentation dataset.
+
+    Expects two directories:
+    - image_dir: containing images (e.g., img1.jpg, img2.jpg)
+    - mask_dir: containing corresponding masks (e.g., img1_segmentation.png, img2_segmentation.png)
+
+    Parameters
+    ----------
+    image_dir : str
+        Directory containing the images
+    mask_dir : str
+        Directory containing the corresponding masks
+    image_extension : str
+        File extension for images (default: '.jpg')
+    mask_extension : str
+        File extension for masks (default: '.png')
+    mask_suffix : str
+        Suffix to append to image filename to get mask filename (default: '_segmentation')
+        e.g., if image is 'ISIC_0000000.jpg' and mask_suffix='_segmentation',
+        it will look for 'ISIC_0000000_segmentation.png'
+    transform : Optional[callable]
+        Transform that takes (image, mask) and returns (transformed_image, transformed_mask)
+    """
+
+    def __init__(
+        self,
+        *,
+        image_dir: str,
+        mask_dir: str,
+        image_extension: str = ".jpg",
+        mask_extension: str = ".png",
+        mask_suffix: str = "_segmentation",
+        transform: Optional[Any] = None,
+        filter_fn: Optional[Any] = None,
+        keep_indices: Optional[Sequence[int]] = None,
+    ):
+        self.image_dir = image_dir
+        self.mask_dir = mask_dir
+        self.image_extension = image_extension
+        self.mask_extension = mask_extension
+        self.mask_suffix = mask_suffix
+        self.transform = transform
+
+        # Get all image files
+        if not os.path.exists(image_dir):
+            raise FileNotFoundError(f"Image directory not found: {image_dir}")
+        if not os.path.exists(mask_dir):
+            raise FileNotFoundError(f"Mask directory not found: {mask_dir}")
+
+        # List all image files
+        all_files = os.listdir(image_dir)
+        image_files = [f for f in all_files if f.endswith(image_extension)]
+
+        # Create dataset as list of (image_path, mask_path) tuples
+        data_pairs = []
+        for img_file in image_files:
+            # Get base name without extension
+            base_name = os.path.splitext(img_file)[0]
+
+            # Construct mask filename
+            mask_file = f"{base_name}{mask_suffix}{mask_extension}"
+
+            img_path = os.path.join(image_dir, img_file)
+            mask_path = os.path.join(mask_dir, mask_file)
+
+            # Only add if mask exists
+            if os.path.exists(mask_path):
+                data_pairs.append({
+                    'image': img_path,
+                    'mask': mask_path,
+                    'image_id': base_name
+                })
+
+        if len(data_pairs) == 0:
+            raise ValueError(
+                f"No matching image-mask pairs found.\n"
+                f"Image dir: {image_dir}\n"
+                f"Mask dir: {mask_dir}\n"
+                f"Expected mask pattern: {{image_name}}{mask_suffix}{mask_extension}"
+            )
+
+        # Convert to HF Dataset
+        self.ds = Dataset.from_list(data_pairs)
+
+        # Cast to Image features for automatic PIL loading
+        self.ds = self.ds.cast_column('image', HFImageFeature())
+        self.ds = self.ds.cast_column('mask', HFImageFeature())
+
+        # Apply filter_fn if provided
+        if filter_fn:
+            idx = [i for i, row in enumerate(self.ds) if filter_fn(row)]
+        else:
+            idx = list(range(len(self.ds)))
+
+        # Apply keep_indices if provided
+        if keep_indices is not None:
+            keep = set(int(k) for k in keep_indices)
+            idx = [i for i in idx if i in keep]
+
+        if len(idx) != len(self.ds):
+            self.ds = self.ds.select(idx)
+
+        self._indices = list(range(len(self.ds)))
+
+    def __len__(self) -> int:
+        return len(self._indices)
+
+    def __getitem__(self, idx: int) -> Dict[str, Any]:
+        real_idx = self._indices[idx]
+        item = self.ds[real_idx]
+
+        image = _to_pil(item['image'])
+        mask = _to_pil(item['mask'])
+
+        if self.transform is not None:
+            image, mask = self.transform(image, mask)
+
+        return {"pixel_values": image, "mask_target": mask}
+
+    def __getitems__(self, indices):
+        return [self.__getitem__(idx) for idx in indices]
+
+    @property
+    def hf_dataset(self):
+        return self.ds
