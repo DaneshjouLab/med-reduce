@@ -166,7 +166,7 @@ def run_final_probing(
             f"domain={domain}",
             f"data.image_size={resolution}",
             "train.hyperparam_search.enabled=false",
-            f"+train.hyperparam_search.load_from_file={hyperparam_file}",
+            f"++train.hyperparam_search.load_from_file={hyperparam_file}",
             f"logging.run_name={model_key}_{domain}_{resolution}px_final",
         ]
 
