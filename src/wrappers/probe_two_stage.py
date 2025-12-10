@@ -103,12 +103,10 @@ class ProbeTwoStageWrapper:
         )
 
         self.k_folds = int(getattr(cfg.train, "k_folds", 5))
-        self.loss_fn = cross_entropy_loss(
-            label_smoothing=float(getattr(cfg.loss, "label_smoothing", 0.0)),
-            class_weight=None,
-            ignore_index=int(getattr(cfg.loss, "ignore_index", -100)),
-            reduction=str(getattr(cfg.loss, "reduction", "mean")),
-        )
+
+        # Class weights will be computed from training data later
+        self.class_weights = None
+        self.loss_fn = None  # Will be created after computing class weights
 
         self.wandb = WandbLogger(
             project=getattr(cfg.logging, "project", "two-stage-probe"),
@@ -160,6 +158,38 @@ class ProbeTwoStageWrapper:
         log.info(f"  Domain: {metadata.get('domain')}")
 
         return hyperparams
+
+    def _compute_class_weights(self, train_labels: torch.Tensor) -> torch.Tensor:
+        """
+        Compute class weights for balanced loss function.
+
+        Uses inverse frequency: weight_i = n_samples / (n_classes * count_i)
+
+        Args:
+            train_labels: Training labels
+
+        Returns:
+            Tensor of class weights
+        """
+        train_labels_np = train_labels.cpu().numpy()
+        unique_classes, class_counts = np.unique(train_labels_np, return_counts=True)
+        n_samples = len(train_labels_np)
+        n_classes = len(unique_classes)
+
+        class_weights = n_samples / (n_classes * class_counts)
+
+        class_weights_tensor = torch.tensor(class_weights, dtype=torch.float32, device=self.device)
+
+        log.info(f"\n{'='*60}")
+        log.info("Class Weight Computation")
+        log.info(f"{'='*60}")
+        log.info(f"Training set size: {n_samples}")
+        log.info(f"Number of classes: {n_classes}")
+        for cls, count, weight in zip(unique_classes, class_counts, class_weights):
+            log.info(f"  Class {cls}: {count} samples ({count/n_samples*100:.1f}%) -> weight: {weight:.4f}")
+        log.info(f"{'='*60}\n")
+
+        return class_weights_tensor
 
     def _setup_splits(self) -> Dict[str, np.ndarray]:
         """
@@ -378,9 +408,12 @@ class ProbeTwoStageWrapper:
                 trial_cfg, classifier.parameters()
             )
 
+            train_fold_labels = train_labels[train_fold_indices]
+            fold_class_weights = self._compute_class_weights(train_fold_labels)
+
             loss_fn = cross_entropy_loss(
                 label_smoothing=float(getattr(trial_cfg.loss, "label_smoothing", 0.0)),
-                class_weight=None,
+                class_weight=fold_class_weights,
                 ignore_index=-100,
                 reduction="mean",
             )
@@ -626,6 +659,16 @@ class ProbeTwoStageWrapper:
         train_embeddings, train_labels = all_embeddings["train"]
         test_embeddings, test_labels = all_embeddings["test"]
 
+        log.info("Computing class weights from training data...")
+        self.class_weights = self._compute_class_weights(train_labels)
+
+        self.loss_fn = cross_entropy_loss(
+            label_smoothing=float(getattr(self.cfg.loss, "label_smoothing", 0.0)),
+            class_weight=self.class_weights,
+            ignore_index=int(getattr(self.cfg.loss, "ignore_index", -100)),
+            reduction=str(getattr(self.cfg.loss, "reduction", "mean")),
+        )
+
         if self.hyperparam_search_enabled:
             best_params, _ = self._run_hyperparam_search(
                 train_embeddings=train_embeddings,
@@ -633,9 +676,10 @@ class ProbeTwoStageWrapper:
             )
 
             self.cfg = self._apply_hyperparams_to_cfg(best_params)
+            # Recreate loss function with updated label smoothing and class weights
             self.loss_fn = cross_entropy_loss(
                 label_smoothing=float(getattr(self.cfg.loss, "label_smoothing", 0.0)),
-                class_weight=None,
+                class_weight=self.class_weights,
                 ignore_index=-100,
                 reduction="mean",
             )
@@ -645,7 +689,7 @@ class ProbeTwoStageWrapper:
             self.cfg = self._apply_hyperparams_to_cfg(self.pretuned_hyperparams)
             self.loss_fn = cross_entropy_loss(
                 label_smoothing=float(getattr(self.cfg.loss, "label_smoothing", 0.0)),
-                class_weight=None,
+                class_weight=self.class_weights,
                 ignore_index=-100,
                 reduction="mean",
             )

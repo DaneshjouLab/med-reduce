@@ -53,19 +53,7 @@ SIF_STORE="/scratch/users/$USER/simg"
     # Run the script
     echo 'INFO: Starting Hydra run...'
     export HYDRA_FULL_ERROR=1 
-    python -m src.cli.run_experiments --config configs/config_local.yaml
-
-    CONFIG_FILE="configs/config_local.yaml"
-    CACHE_DIR="./cache/teacher_embeddings"
-    FULL_RESOLUTION=224
-
-    python -m src.cli.cache_teacher_embeddings \
-    --config "$CONFIG_FILE" \
-    --cache-dir "$CACHE_DIR" \
-    --full-resolution $FULL_RESOLUTION \
-    --batch-size 256 \
-    --num-workers 8 \
-    --splits train
+    python -m src.cli.run_multiresolution_probe --domain dermatology --model vit --tune-hyperparams --resolutions 512 256 128 64
     
     echo 'INFO: Job finished successfully.'
   "

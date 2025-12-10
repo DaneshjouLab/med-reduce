@@ -251,7 +251,7 @@ def _build_datamodule(cfg: DictConfig) -> BaseDataModule:
 # ---------------------------------------------------------------------------
 
 
-@hydra.main(config_path="../../configs", config_name="config_segmentation", version_base=None)
+@hydra.main(config_path="../../configs", config_name="probe_two_stage", version_base=None)
 def main(cfg: DictConfig):
     """Main training CLI entry point."""
     OmegaConf.set_struct(cfg, False)

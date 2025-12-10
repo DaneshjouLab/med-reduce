@@ -120,7 +120,6 @@ def train_probe_on_embeddings(
 
         train_loss = running_loss / max(n_seen, 1)
 
-        # Validation
         val_loss, val_acc = _run_validation_on_embeddings(
             classifier=classifier,
             loaders=loaders,
@@ -144,7 +143,6 @@ def train_probe_on_embeddings(
             log=log,
         )
 
-        # Update best model
         current_metric = val_loss if metric_key.endswith("loss") else val_acc
         is_better = (
             (current_metric < best_metric) if metric_key.endswith("loss")
