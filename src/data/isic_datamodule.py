@@ -96,6 +96,12 @@ class ISICDataModule(BaseDataModule):
         self.local_image_id_column = local_image_id_column
         self.local_label_column = local_label_column
         self.local_image_extension = local_image_extension
+
+        if self.data_source == "remote_hf":
+            self.dataset_identifier = dataset_name.replace("/", "_")
+        else:
+            self.dataset_identifier = os.path.basename(data_dir)
+
     def _load_split(
         self,
         split: str,

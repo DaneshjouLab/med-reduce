@@ -43,13 +43,13 @@ def _accuracy(logits: torch.Tensor, targets: torch.Tensor) -> float:
     return correct / max(total, 1)
 
 
-def _maybe_scheduler_step(scheduler_meta: Dict[str, Any], scheduler, *, on: str):
+def _maybe_scheduler_step(scheduler_meta: Dict[str, Any], scheduler, *, on: str, metric=None):
     """Step scheduler if meta says so. `on` ∈ {'batch','epoch','val'}."""
     step_when = str(scheduler_meta.get("step_per", "epoch"))
     if step_when == on:
-        if "monitor" in scheduler_meta:
-            # e.g., ReduceLROnPlateau
-            scheduler.step(scheduler_meta["monitor"])
+        if "monitor" in scheduler_meta or metric is not None:
+            metric_value = metric if metric is not None else scheduler_meta.get("monitor")
+            scheduler.step(metric_value)
         else:
             scheduler.step()
 

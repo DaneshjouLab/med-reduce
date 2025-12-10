@@ -7,6 +7,7 @@ import random
 import copy
 import os
 import json
+from omegaconf import OmegaConf
 from src.wrappers.finetune_cv import FinetuneCVWrapper, log
 
 
@@ -171,24 +172,35 @@ class FinetuneRandomSearchWrapper:
         
         return best_params, results
 
+    def _to_serializable(self, obj: Any) -> Any:
+        """Convert OmegaConf objects to regular Python objects for JSON serialization."""
+        if OmegaConf.is_config(obj):
+            return OmegaConf.to_container(obj, resolve=True)
+        elif isinstance(obj, dict):
+            return {k: self._to_serializable(v) for k, v in obj.items()}
+        elif isinstance(obj, (list, tuple)):
+            return [self._to_serializable(item) for item in obj]
+        else:
+            return obj
+
     def _save_results(self, results: List[Dict[str, Any]], best_result: Dict[str, Any]):
         """Save search results to JSON file."""
         output = {
             "search_config": {
-                "param_grid": self.param_grid,
+                "param_grid": self._to_serializable(self.param_grid),
                 "n_samples": self.n_samples,
                 "use_cv": self.use_cv,
                 "search_subset_frac": self.search_subset_frac,
                 "k_folds": self.original_k_folds if self.use_cv else 1,
             },
-            "best_result": best_result,
-            "all_results": results,
+            "best_result": self._to_serializable(best_result),
+            "all_results": self._to_serializable(results),
         }
-        
+
         output_path = os.path.join(self.search_dir, "search_results.json")
         with open(output_path, "w") as f:
             json.dump(output, f, indent=2)
-        
+
         log.info(f"Search results saved to {output_path}")
 
 

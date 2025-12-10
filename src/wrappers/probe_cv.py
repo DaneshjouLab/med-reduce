@@ -18,6 +18,7 @@ import random
 import itertools
 from torch.utils.data import Subset, DataLoader
 from sklearn.model_selection import KFold
+from omegaconf import OmegaConf
 
 # pylint: disable=import-error
 from src.engines.linear_probe_engine import train_probe
@@ -494,11 +495,22 @@ class ProbeCVWrapper:
 
         return best_params, results
 
+    def _to_serializable(self, obj: Any) -> Any:
+        """Convert OmegaConf objects to regular Python objects for JSON serialization."""
+        if OmegaConf.is_config(obj):
+            return OmegaConf.to_container(obj, resolve=True)
+        elif isinstance(obj, dict):
+            return {k: self._to_serializable(v) for k, v in obj.items()}
+        elif isinstance(obj, (list, tuple)):
+            return [self._to_serializable(item) for item in obj]
+        else:
+            return obj
+
     def _save_hyperparam_results(self, results: List[Dict[str, Any]], best_result: Dict[str, Any]):
         """Save hyperparameter search results to JSON file."""
         output = {
             "search_config": {
-                "param_grid": self.param_grid,
+                "param_grid": self._to_serializable(self.param_grid),
                 "k_folds": self.k_folds,
                 "resolution": getattr(self.cfg.data, "image_size", None),
                 "domain": getattr(self.cfg, "domain", None),
@@ -506,8 +518,8 @@ class ProbeCVWrapper:
                 "strategy": "5-fold_cv_per_config",
                 "note": "Each config evaluated with full 5-fold cross-validation.",
             },
-            "best_result": best_result,
-            "all_results": results,
+            "best_result": self._to_serializable(best_result),
+            "all_results": self._to_serializable(results),
         }
 
         # Save full results
@@ -519,7 +531,7 @@ class ProbeCVWrapper:
 
         # Save best hyperparameters in a separate file for easy reuse
         best_params_output = {
-            "best_hyperparameters": best_result["params"],
+            "best_hyperparameters": self._to_serializable(best_result["params"]),
             "validation_metric": {
                 "mean": best_result["mean_metric"],
                 "std": best_result["std_metric"],

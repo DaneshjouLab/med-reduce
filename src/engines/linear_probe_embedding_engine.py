@@ -129,7 +129,8 @@ def train_probe_on_embeddings(
         )
 
         if sched is not None:
-            _maybe_scheduler_step(sched_meta, sched, on="epoch", metric=val_loss)
+            metric_for_scheduler = val_loss if metric_key.endswith("loss") else val_acc
+            _maybe_scheduler_step(sched_meta, sched, on="epoch", metric=metric_for_scheduler)
 
         cur_lr = optimizer.param_groups[0]["lr"]
         _update_history_and_log(

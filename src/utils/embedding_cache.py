@@ -170,10 +170,20 @@ class EmbeddingCache:
             embedding_path
         )
 
+        # Convert model_info to plain dict if it's a DictConfig (from Hydra/OmegaConf)
+        try:
+            from omegaconf import OmegaConf, DictConfig
+            if isinstance(model_info, DictConfig):
+                model_info_dict = OmegaConf.to_container(model_info, resolve=True)
+            else:
+                model_info_dict = dict(model_info) if hasattr(model_info, '__iter__') else {}
+        except ImportError:
+            model_info_dict = dict(model_info) if hasattr(model_info, '__iter__') else {}
+
         metadata = {
             "dataset": self.dataset_name,
             "model": self.model_name,
-            "model_info": model_info,
+            "model_info": model_info_dict,
             "resolution": resolution,
             "split": split,
             "num_samples": len(embeddings),

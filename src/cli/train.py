@@ -247,6 +247,23 @@ def _build_datamodule(cfg: DictConfig) -> BaseDataModule:
 
 
 # ---------------------------------------------------------------------------
+# Helper functions
+# ---------------------------------------------------------------------------
+
+
+def _to_serializable(obj: Any) -> Any:
+    """Convert OmegaConf objects to regular Python objects for JSON serialization."""
+    if OmegaConf.is_config(obj):
+        return OmegaConf.to_container(obj, resolve=True)
+    elif isinstance(obj, dict):
+        return {k: _to_serializable(v) for k, v in obj.items()}
+    elif isinstance(obj, (list, tuple)):
+        return [_to_serializable(item) for item in obj]
+    else:
+        return obj
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -372,11 +389,11 @@ def main(cfg: DictConfig):
                 with open(search_results_path, "w", encoding="utf-8") as f:
                     # Convert to serializable format
                     serializable_results = {
-                        "best_params": best_params,
+                        "best_params": _to_serializable(best_params),
                         "results": [
                             {
                                 "trial": r.get("trial"),
-                                "params": r.get("params"),
+                                "params": _to_serializable(r.get("params")),
                                 "mean_metric": float(r.get("mean_metric", 0)),
                                 "std_metric": float(r.get("std_metric", 0)),
                                 "fold_metrics": [float(m) for m in r.get("fold_metrics", [])],
@@ -411,20 +428,20 @@ def main(cfg: DictConfig):
     # Save final metrics
     if _is_rank_zero():
         metrics = metrics or {}
-        
+
         # Include best params if search was run
         if run_hyperparam_search:
-            metrics['best_hyperparams'] = best_params
+            metrics['best_hyperparams'] = _to_serializable(best_params)
             metrics['search_config'] = {
                 'n_samples': n_samples,
                 'subset_frac': search_subset_frac,
                 'use_cv': use_cv_for_search,
-                'param_grid': param_grid,
+                'param_grid': _to_serializable(param_grid),
             }
-        
+
         final_metrics_path = run_dir / "final_metrics.json"
         with open(final_metrics_path, "w", encoding="utf-8") as f:
-            json.dump(metrics, f, indent=2)
+            json.dump(_to_serializable(metrics), f, indent=2)
         
         print(f"\n✅ Training complete! Final metrics written to {final_metrics_path}\n", flush=True)
         

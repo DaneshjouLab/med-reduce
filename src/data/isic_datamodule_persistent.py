@@ -240,6 +240,8 @@ class ISICDataModulePersistent(BaseDataModule):
         dataset_size = len(full_dataset)
         log.info(f"  ✓ Full dataset: {dataset_size} samples\n")
 
+        self.full_dataset = full_dataset
+
         stratify_labels = self._get_labels_for_stratification(full_dataset)
 
         if not self.split_manager.exists():

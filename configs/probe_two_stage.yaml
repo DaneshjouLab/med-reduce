@@ -77,7 +77,7 @@ train:
     min_lr: 1e-6
 
   hyperparam_search:
-    enabled: false  # Set to true for hyperparameter tuning at highest resolution
+    enabled: true  # Set to true for hyperparameter tuning at highest resolution
     use_cv: true
 
     # Grid search parameters

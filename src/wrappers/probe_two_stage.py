@@ -38,6 +38,7 @@ import hydra
 import json
 import copy
 import itertools
+import traceback
 from torch.utils.data import DataLoader
 from pathlib import Path
 from omegaconf import OmegaConf
@@ -202,8 +203,16 @@ class ProbeTwoStageWrapper:
         log.info("(A) Data Loading & Split Definition")
         log.info(f"{'='*60}\n")
 
-        full_dataset = self.dm.train_set
+        # Use the full dataset that was already loaded and balanced by the datamodule
+        # ISICDataModulePersistent stores this as self.full_dataset
+        if hasattr(self.dm, 'full_dataset'):
+            full_dataset = self.dm.full_dataset
+        else:
+            log.warning("⚠️  Using dm.train_set as full_dataset (may cause issues if already subsetted)")
+            full_dataset = self.dm.train_set
+
         dataset_size = len(full_dataset)
+        log.info(f"Full dataset size: {dataset_size}")
 
         stratify_labels = None
         if hasattr(full_dataset, 'targets'):
@@ -252,8 +261,13 @@ class ProbeTwoStageWrapper:
 
         log.info(f"🔄 Extracting {split_name} embeddings at {resolution}px...")
 
-        full_dataset = self.dm.train_set if split_name in ["train", "val"] else self.dm.test_set
         from torch.utils.data import Subset
+        if hasattr(self.dm, 'full_dataset'):
+            full_dataset = self.dm.full_dataset
+        else:
+            log.warning("⚠️  full_dataset not found, using train_set")
+            full_dataset = self.dm.train_set
+
         subset = Subset(full_dataset, split_indices)
 
         dataloader = DataLoader(
@@ -367,6 +381,8 @@ class ProbeTwoStageWrapper:
             train_embeddings: Training embeddings
             train_labels: Training labels
             cv_folds: List of (train_indices, val_indices) for each fold
+                     These are ABSOLUTE indices into the original dataset.
+                     Need to be converted to RELATIVE indices for embeddings.
 
         Returns:
             Tuple of (mean_metric, std_metric)
@@ -375,14 +391,22 @@ class ProbeTwoStageWrapper:
 
         fold_metrics = []
 
+        splits = self.split_manager.load_splits()
+        train_indices = splits["train"]
+
+        abs_to_rel = {abs_idx: rel_idx for rel_idx, abs_idx in enumerate(train_indices)}
+
         for fold, (train_fold_indices, val_fold_indices) in enumerate(cv_folds):
             log.info(f"  Fold {fold+1}/{len(cv_folds)}")
 
+            train_fold_rel = np.array([abs_to_rel[idx] for idx in train_fold_indices])
+            val_fold_rel = np.array([abs_to_rel[idx] for idx in val_fold_indices])
+
             train_dataset = SubsetEmbeddingDataset(
-                train_embeddings, train_labels, torch.from_numpy(train_fold_indices)
+                train_embeddings, train_labels, torch.from_numpy(train_fold_rel)
             )
             val_dataset = SubsetEmbeddingDataset(
-                train_embeddings, train_labels, torch.from_numpy(val_fold_indices)
+                train_embeddings, train_labels, torch.from_numpy(val_fold_rel)
             )
 
             loaders = {
@@ -408,7 +432,7 @@ class ProbeTwoStageWrapper:
                 trial_cfg, classifier.parameters()
             )
 
-            train_fold_labels = train_labels[train_fold_indices]
+            train_fold_labels = train_labels[train_fold_rel]
             fold_class_weights = self._compute_class_weights(train_fold_labels)
 
             loss_fn = cross_entropy_loss(
@@ -457,8 +481,24 @@ class ProbeTwoStageWrapper:
         log.info(f"(D1) Hyperparameter Tuning at {self.current_resolution}px")
         log.info(f"{'='*60}\n")
 
+        # Validate input embeddings and labels
+        log.info(f"Validating inputs...")
+        log.info(f"  Train embeddings shape: {train_embeddings.shape}")
+        log.info(f"  Train labels shape: {train_labels.shape}")
+        log.info(f"  Train embeddings device: {train_embeddings.device}")
+        log.info(f"  Train labels device: {train_labels.device}")
+        log.info(f"  Train labels dtype: {train_labels.dtype}")
+        log.info(f"  Unique labels: {torch.unique(train_labels).tolist()}")
+
+        assert train_embeddings.shape[0] == train_labels.shape[0], \
+            f"Mismatch: {train_embeddings.shape[0]} embeddings vs {train_labels.shape[0]} labels"
+
         splits = self.split_manager.load_splits()
         train_indices = splits["train"]
+
+        log.info(f"  Number of train indices: {len(train_indices)}")
+        assert len(train_indices) == train_embeddings.shape[0], \
+            f"Mismatch: {len(train_indices)} train indices vs {train_embeddings.shape[0]} embeddings"
 
         stratify_labels = None
         full_dataset = self.dm.train_set
@@ -503,13 +543,16 @@ class ProbeTwoStageWrapper:
                 log.info(f"✓ Trial {i}: {mean_metric:.4f} ± {std_metric:.4f}")
 
             except Exception as e:
+                error_details = traceback.format_exc()
                 log.error(f"✗ Trial {i} failed: {e}")
+                log.error(f"Traceback:\n{error_details}")
                 result_entry = {
                     "trial": i,
                     "params": params,
                     "mean_metric": float('-inf'),
                     "std_metric": 0.0,
                     "error": str(e),
+                    "traceback": error_details,
                 }
                 results.append(result_entry)
 
@@ -518,7 +561,15 @@ class ProbeTwoStageWrapper:
         valid_results = [r for r in results if r["mean_metric"] != float('-inf')]
 
         if not valid_results:
-            raise RuntimeError("All hyperparameter trials failed!")
+            error_summary = "\n".join([
+                f"  Trial {r['trial']}: {r['params']} -> {r.get('error', 'Unknown error')}"
+                for r in results if 'error' in r
+            ])
+            raise RuntimeError(
+                f"All hyperparameter trials failed!\n"
+                f"Total trials: {len(results)}\n"
+                f"Errors:\n{error_summary}"
+            )
 
         best_result = sorted(valid_results, key=lambda x: x["mean_metric"], reverse=reverse)[0]
         best_params = best_result["params"]
@@ -533,18 +584,29 @@ class ProbeTwoStageWrapper:
 
         return best_params, results
 
+    def _to_serializable(self, obj: Any) -> Any:
+        """Convert OmegaConf objects to regular Python objects for JSON serialization."""
+        if OmegaConf.is_config(obj):
+            return OmegaConf.to_container(obj, resolve=True)
+        elif isinstance(obj, dict):
+            return {k: self._to_serializable(v) for k, v in obj.items()}
+        elif isinstance(obj, (list, tuple)):
+            return [self._to_serializable(item) for item in obj]
+        else:
+            return obj
+
     def _save_hyperparam_results(self, results: List[Dict[str, Any]], best_result: Dict[str, Any]):
         """Save hyperparameter search results."""
         output = {
             "search_config": {
-                "param_grid": self.param_grid,
+                "param_grid": self._to_serializable(self.param_grid),
                 "k_folds": self.k_folds,
                 "resolution": self.current_resolution,
                 "domain": self.domain,
                 "model": self.model_name,
             },
-            "best_result": best_result,
-            "all_results": results,
+            "best_result": self._to_serializable(best_result),
+            "all_results": self._to_serializable(results),
         }
 
         output_path = os.path.join(self.search_dir, "hyperparam_search_results.json")
@@ -552,7 +614,7 @@ class ProbeTwoStageWrapper:
             json.dump(output, f, indent=2)
 
         best_params_output = {
-            "best_hyperparameters": best_result["params"],
+            "best_hyperparameters": self._to_serializable(best_result["params"]),
             "validation_metric": {
                 "mean": best_result["mean_metric"],
                 "std": best_result["std_metric"],
