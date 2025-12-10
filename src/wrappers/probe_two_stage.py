@@ -40,6 +40,7 @@ import copy
 import itertools
 from torch.utils.data import DataLoader
 from pathlib import Path
+from omegaconf import OmegaConf
 
 # pylint: disable=import-error
 from src.engines.linear_probe_embedding_engine import train_probe_on_embeddings
@@ -82,8 +83,7 @@ class ProbeTwoStageWrapper:
         self.dm = hydra.utils.instantiate(cfg.datamodule, full_cfg=cfg)
         self.dm.setup("fit")
 
-        # Dataset info
-        self.dataset_name = getattr(cfg.datamodule, "dataset_name", "unknown")
+        self.dataset_name = self.dm.dataset_identifier
         self.model_info = cfg.model
         self.model_name = self.model_info.get("name", "dinov3")
 

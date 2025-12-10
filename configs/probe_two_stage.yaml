@@ -21,14 +21,27 @@ split_dir: /scratch/groups/roxanad/users/sonnet/compressed_perception/splits
 embedding_cache_dir: /scratch/groups/roxanad/users/sonnet/compressed_perception/cache/embeddings
 
 datamodule:
-  _target_: src.data.datamodule.BaseDataModule
-  dataset_name: "isic"
-  data_dir: /scratch/groups/roxanad/users/sonnet/compressed_perception/data/isic
+  _target_: src.data.isic_datamodule_persistent.ISICDataModulePersistent
+  dataset_name: null  # Set to null for local data
+  data_dir: /scratch/groups/roxanad/datasets/isic/challenges/2017/ISIC-2017_Training_Data/ISIC-2017_Training_Data
   batch_size: 256
   num_workers: 8
   pin_memory: true
   persistent_workers: false
   prefetch_factor: 2
+  split_dir: /scratch/groups/roxanad/users/sonnet/compressed_perception/splits
+  use_val_split: false  # Use train/test splits, create val from train
+  train_ratio: 0.8
+
+  # Local dataset configuration
+  local_label_file: /scratch/groups/roxanad/datasets/isic/challenges/2017/ISIC-2017_Training_Part3_GroundTruth.csv
+  local_image_id_column: image_id 
+  local_label_column: melanoma
+  local_image_extension: .jpg
+
+  filtered_classes: ["0.0", "1.0"]
+  balance_data: true
+  num_train_images: 10000
 
 data:
   image_size: 512  # Resolution R for this experiment

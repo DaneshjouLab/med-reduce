@@ -26,9 +26,9 @@ class BaseDataModule:
 
     def __init__(
         self,
-        cfg: Any,
-        dataset_name: str,
-        data_dir: str,
+        cfg: Any = None,  # Made optional to support Hydra instantiation
+        dataset_name: str = None,
+        data_dir: str = None,
         *,
         num_workers: int = 8,
         batch_size: int = 32,
@@ -41,7 +41,7 @@ class BaseDataModule:
         model_type: str = "vit",
         persistent_workers: bool = False,
         prefetch_factor: int = 2,
-        **kwargs, 
+        **kwargs,
     ): 
         """
         Initialize the DataModule.

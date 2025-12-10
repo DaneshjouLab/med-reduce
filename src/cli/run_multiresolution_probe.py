@@ -28,8 +28,6 @@ DOMAIN_CONFIG = {
     "dermatology": {
         "highest_resolution": 512,
         "default_resolutions": [512, 256, 128, 64],
-        "dataset": "isic",
-        "data_dir": "./data/isic",
     },
 }
 
@@ -55,8 +53,8 @@ def run_hyperparameter_tuning(
 
     domain_cfg = DOMAIN_CONFIG[domain]
     highest_res = domain_cfg["highest_resolution"]
-    dataset = domain_cfg["dataset"]
-    data_dir = domain_cfg["data_dir"]
+    dataset = domain_cfg.get("dataset")
+    data_dir = domain_cfg.get("data_dir")
 
     print(f"\n{'='*80}")
     print(f"HYPERPARAMETER TUNING: {domain.upper()} at {highest_res}px with {model_key.upper()}")
@@ -68,11 +66,14 @@ def run_hyperparameter_tuning(
         f"--config-name={config_path}",
         f"domain={domain}",
         f"data.image_size={highest_res}",
-        f"datamodule.dataset_name={dataset}",
-        f"datamodule.data_dir={data_dir}",
         "train.hyperparam_search.enabled=true",
         f"logging.run_name=hyperparam_tune_{model_key}_{domain}_{highest_res}px",
     ]
+
+    if dataset is not None:
+        cmd.append(f"datamodule.dataset_name={dataset}")
+    if data_dir is not None:
+        cmd.append(f"datamodule.data_dir={data_dir}")
 
     # Add model configuration overrides
     for key, value in MODEL_CONFIGS[model_key].items():
@@ -114,8 +115,8 @@ def run_final_probing(
         raise ValueError(f"Unknown model: {model_key}. Choose from {list(MODEL_CONFIGS.keys())}")
 
     domain_cfg = DOMAIN_CONFIG[domain]
-    dataset = domain_cfg["dataset"]
-    data_dir = domain_cfg["data_dir"]
+    dataset = domain_cfg.get("dataset")
+    data_dir = domain_cfg.get("data_dir")
 
     if hyperparam_file is None:
         hyperparam_file = "./runs/probe_two_stage/hyperparam_search/best_hyperparameters.json"
@@ -144,12 +145,15 @@ def run_final_probing(
             f"--config-name={config_path}",
             f"domain={domain}",
             f"data.image_size={resolution}",
-            f"datamodule.dataset_name={dataset}",
-            f"datamodule.data_dir={data_dir}",
             "train.hyperparam_search.enabled=false",
             f"train.hyperparam_search.load_from_file={hyperparam_file}",
             f"logging.run_name={model_key}_{domain}_{resolution}px_final",
         ]
+
+        if dataset is not None:
+            cmd.append(f"datamodule.dataset_name={dataset}")
+        if data_dir is not None:
+            cmd.append(f"datamodule.data_dir={data_dir}")
 
         # Add model configuration overrides
         for key, value in MODEL_CONFIGS[model_key].items():
