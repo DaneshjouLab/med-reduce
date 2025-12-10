@@ -10,20 +10,20 @@
 
 # Runtime configuration
 runtime:
-  run_dir: "./runs/probe_two_stage"
+  run_dir: /scratch/groups/roxanad/users/sonnet/compressed_perception/runs/probe_two_stage
 
 domain: "dermatology"  # Options (eventually): dermatology, radiology, pathology
 
 # Split configuration
-split_dir: "./splits"
+split_dir: /scratch/groups/roxanad/users/sonnet/compressed_perception/splits
 
 # Embedding cache configuration
-embedding_cache_dir: "./cache/embeddings"
+embedding_cache_dir: /scratch/groups/roxanad/users/sonnet/compressed_perception/cache/embeddings
 
 datamodule:
   _target_: src.data.datamodule.BaseDataModule
   dataset_name: "isic"
-  data_dir: "./data/isic"
+  data_dir: /scratch/groups/roxanad/users/sonnet/compressed_perception/data/isic
   batch_size: 256
   num_workers: 8
   pin_memory: true

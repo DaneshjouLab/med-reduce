@@ -64,7 +64,7 @@ def run_hyperparameter_tuning(
 
     # Build command with model overrides
     cmd = [
-        "python", "-m", "src.wrappers.probe_two_stage",
+        "python", "-m", "src.cli.probe_two_stage",
         f"--config-name={config_path}",
         f"domain={domain}",
         f"data.image_size={highest_res}",
@@ -80,15 +80,14 @@ def run_hyperparameter_tuning(
 
     print(f"Running: {' '.join(cmd)}\n")
 
-    # Run
-    result = subprocess.run(cmd, check=False)
+    result = subprocess.run(cmd, check=False, capture_output=False, text=True)
 
     if result.returncode != 0:
         print(f"\n❌ Hyperparameter tuning failed for {domain} with {model_key}")
         sys.exit(1)
 
     print(f"\n✅ Hyperparameter tuning completed for {domain} with {model_key}")
-    print(f"   Results saved to: ./runs/probe_two_stage/hyperparam_search/best_hyperparameters.json")
+    print(f"   Check logs above for the absolute path to best_hyperparameters.json")
 
 
 def run_final_probing(
@@ -118,7 +117,6 @@ def run_final_probing(
     dataset = domain_cfg["dataset"]
     data_dir = domain_cfg["data_dir"]
 
-    # Default hyperparameter file location
     if hyperparam_file is None:
         hyperparam_file = "./runs/probe_two_stage/hyperparam_search/best_hyperparameters.json"
 
@@ -142,7 +140,7 @@ def run_final_probing(
 
         # Build command
         cmd = [
-            "python", "-m", "src.wrappers.probe_two_stage",
+            "python", "-m", "src.cli.probe_two_stage",
             f"--config-name={config_path}",
             f"domain={domain}",
             f"data.image_size={resolution}",

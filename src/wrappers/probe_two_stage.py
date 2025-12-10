@@ -568,8 +568,11 @@ class ProbeTwoStageWrapper:
         with open(best_params_path, "w") as f:
             json.dump(best_params_output, f, indent=2)
 
-        log.info(f"💾 Results saved to {output_path}")
-        log.info(f"💾 Best params saved to {best_params_path}")
+        abs_output_path = os.path.abspath(output_path)
+        abs_best_params_path = os.path.abspath(best_params_path)
+
+        log.info(f"💾 Results saved to {abs_output_path}")
+        log.info(f"💾 Best params saved to {abs_best_params_path}")
 
     def _train_final_probe(
         self,
