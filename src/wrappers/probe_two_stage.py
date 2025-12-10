@@ -105,6 +105,8 @@ class ProbeTwoStageWrapper:
 
         self.k_folds = int(getattr(cfg.train, "k_folds", 5))
 
+        self.force_recompute = getattr(cfg.datamodule, "force_recompute_embeddings", False)
+
         # Class weights will be computed from training data later
         self.class_weights = None
         self.loss_fn = None  # Will be created after computing class weights
@@ -718,7 +720,7 @@ class ProbeTwoStageWrapper:
         all_embeddings = self._extract_all_embeddings(
             resolution=self.current_resolution,
             splits=splits,
-            force_recompute=False,
+            force_recompute=self.force_recompute,
         )
 
         train_embeddings, train_labels = all_embeddings["train"]

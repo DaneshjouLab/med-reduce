@@ -5,6 +5,7 @@ import subprocess
 import sys
 from pathlib import Path
 from typing import List
+from omegaconf import OmegaConf
 
 
 # Model configurations
@@ -119,7 +120,26 @@ def run_final_probing(
     data_dir = domain_cfg.get("data_dir")
 
     if hyperparam_file is None:
-        hyperparam_file = "./runs/probe_two_stage/hyperparam_search/best_hyperparameters.json"
+        project_root = Path(__file__).parent.parent.parent
+        final_config_path = config_path
+
+        if not final_config_path.startswith("configs/"):
+            final_config_path = f"configs/{final_config_path}"
+
+        if not final_config_path.endswith(".yaml"):
+            final_config_path = f"{final_config_path}.yaml"
+        
+        resolved_config_path = project_root / final_config_path
+        config = OmegaConf.load(resolved_config_path)
+
+        # Check if hyperparam_search.load_from_file is specified
+        hyperparam_file = config.train.hyperparam_search.get('load_from_file')
+        if not hyperparam_file:
+            run_dir = config.runtime.get('run_dir', './runs/probe_two_stage')
+            hyperparam_file = f"{run_dir}/hyperparam_search/best_hyperparameters.json"
+
+        # Resolve hyperparam_file relative to project root
+        hyperparam_file = str((project_root / hyperparam_file).resolve())
 
     # Check if hyperparameter file exists
     if not Path(hyperparam_file).exists():
@@ -146,7 +166,7 @@ def run_final_probing(
             f"domain={domain}",
             f"data.image_size={resolution}",
             "train.hyperparam_search.enabled=false",
-            f"train.hyperparam_search.load_from_file={hyperparam_file}",
+            f"+train.hyperparam_search.load_from_file={hyperparam_file}",
             f"logging.run_name={model_key}_{domain}_{resolution}px_final",
         ]
 

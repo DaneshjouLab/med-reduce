@@ -23,7 +23,7 @@ embedding_cache_dir: /scratch/groups/roxanad/users/sonnet/compressed_perception/
 datamodule:
   _target_: src.data.isic_datamodule_persistent.ISICDataModulePersistent
   dataset_name: null  # Set to null for local data
-  data_dir: /scratch/groups/roxanad/datasets/isic/challenges/2017/ISIC-2017_Training_Data/ISIC-2017_Training_Data
+  data_dir: /scratch/groups/roxanad/datasets/isic/challenges/2017/merged_isic_2017_data/images
   batch_size: 256
   num_workers: 8
   pin_memory: true
@@ -34,7 +34,7 @@ datamodule:
   train_ratio: 0.8
 
   # Local dataset configuration
-  local_label_file: /scratch/groups/roxanad/datasets/isic/challenges/2017/ISIC-2017_Training_Part3_GroundTruth.csv
+  local_label_file: /scratch/groups/roxanad/datasets/isic/challenges/2017/merged_isic_2017_data/merged_ground_truth_part3.csv
   local_image_id_column: image_id 
   local_label_column: melanoma
   local_image_extension: .jpg
@@ -42,6 +42,8 @@ datamodule:
   filtered_classes: ["0.0", "1.0"]
   balance_data: true
   num_train_images: 10000
+
+  force_recompute_embeddings: true
 
 data:
   image_size: 512  # Resolution R for this experiment
@@ -88,8 +90,7 @@ train:
       # Uncomment for segmentation tasks:
       # decoder_dropout: [0.0, 0.1, 0.3]
 
-    # Optional: Load pre-tuned hyperparameters from high-resolution search
-    # load_from_file: "./runs/probe_two_stage/hyperparam_search/best_hyperparameters.json"
+    load_from_file: "/scratch/groups/roxanad/users/sonnet/compressed_perception/runs/probe_two_stage/hyperparam_search/best_hyperparameters.json"
 
 loss:
   label_smoothing: 0.0
