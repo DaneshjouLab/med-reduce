@@ -64,6 +64,7 @@ class ISICDataModulePersistent(BaseDataModule):
         split_dir: str = "./splits",
         use_val_split: bool = False,  # If True, create train/val/test. Otherwise train/test.
         train_ratio: float = 0.8,
+        force_recompute_embeddings: bool = False,  # Force recomputation of embeddings even if cached
         **kwargs
     ):
         self.full_cfg = full_cfg
@@ -92,6 +93,7 @@ class ISICDataModulePersistent(BaseDataModule):
 
         self.use_val_split = use_val_split
         self.train_ratio = train_ratio
+        self.force_recompute_embeddings = force_recompute_embeddings
 
         if dataset_name and not os.path.isdir(str(dataset_name)):
             self.data_source = "remote_hf"
@@ -156,7 +158,7 @@ class ISICDataModulePersistent(BaseDataModule):
 
         return wrapper
 
-    def _get_labels_for_stratification(self, dataset) -> Optional[np.ndarray]:
+    def get_labels_for_stratification(self, dataset) -> Optional[np.ndarray]:
         """Extract labels from dataset for stratified splitting."""
         try:
             if hasattr(dataset, 'ds'):
@@ -201,6 +203,8 @@ class ISICDataModulePersistent(BaseDataModule):
             if self.num_train_images:
                 log.info(f"  Num train images: {self.num_train_images}")
         log.info(f"  Image size: {self.image_size}")
+        if self.force_recompute_embeddings:
+            log.info(f"  Force recompute: {self.force_recompute_embeddings} (will regenerate splits & embeddings)")
         log.info(f"{'='*60}\n")
 
         val_test_transform = transforms.Compose([
@@ -242,7 +246,13 @@ class ISICDataModulePersistent(BaseDataModule):
 
         self.full_dataset = full_dataset
 
-        stratify_labels = self._get_labels_for_stratification(full_dataset)
+        stratify_labels = self.get_labels_for_stratification(full_dataset)
+
+        # Clear existing splits if force_recompute_embeddings is enabled
+        if self.force_recompute_embeddings and self.split_manager.exists():
+            log.info("🔄 force_recompute_embeddings=True: Clearing existing splits...")
+            self.split_manager.clear_splits()
+            self.split_manager.dataset_dir.mkdir(parents=True, exist_ok=True)
 
         if not self.split_manager.exists():
             log.info("📊 Creating new persistent splits...")
@@ -262,7 +272,7 @@ class ISICDataModulePersistent(BaseDataModule):
                     f"⚠️  Split size mismatch! "
                     f"Expected {dataset_size} samples, but splits contain {total_split_samples}. "
                     f"This may be due to different balancing settings. "
-                    f"Consider clearing splits with split_manager.clear_splits()"
+                    f"Set force_recompute_embeddings=true to regenerate splits."
                 )
 
         self.train_set = Subset(full_dataset, splits["train"])
@@ -321,6 +331,7 @@ class ISICSegDataModulePersistent(BaseDataModule):
         split_dir: str = "./splits",
         use_val_split: bool = False,
         train_ratio: float = 0.8,
+        force_recompute_embeddings: bool = False,  # Force recomputation of embeddings even if cached
         **kwargs
     ):
         self.full_cfg = full_cfg
@@ -350,6 +361,7 @@ class ISICSegDataModulePersistent(BaseDataModule):
 
         self.use_val_split = use_val_split
         self.train_ratio = train_ratio
+        self.force_recompute_embeddings = force_recompute_embeddings
 
         if image_dir and mask_dir:
             self.data_source = "local_dirs"
@@ -411,6 +423,12 @@ class ISICSegDataModulePersistent(BaseDataModule):
         full_dataset = self._load_full_dataset(transform=train_transform)
         dataset_size = len(full_dataset)
         log.info(f"  ✓ Full dataset: {dataset_size} samples\n")
+
+        # Clear existing splits if force_recompute_embeddings is enabled
+        if self.force_recompute_embeddings and self.split_manager.exists():
+            log.info("🔄 force_recompute_embeddings=True: Clearing existing splits...")
+            self.split_manager.clear_splits()
+            self.split_manager.dataset_dir.mkdir(parents=True, exist_ok=True)
 
         if not self.split_manager.exists():
             log.info("📊 Creating new persistent splits...")

@@ -107,7 +107,6 @@ class ProbeTwoStageWrapper:
 
         self.force_recompute = getattr(cfg.datamodule, "force_recompute_embeddings", False)
 
-        # Class weights will be computed from training data later
         self.class_weights = None
         self.loss_fn = None  # Will be created after computing class weights
 
@@ -205,8 +204,6 @@ class ProbeTwoStageWrapper:
         log.info("(A) Data Loading & Split Definition")
         log.info(f"{'='*60}\n")
 
-        # Use the full dataset that was already loaded and balanced by the datamodule
-        # ISICDataModulePersistent stores this as self.full_dataset
         if hasattr(self.dm, 'full_dataset'):
             full_dataset = self.dm.full_dataset
         else:
@@ -216,11 +213,7 @@ class ProbeTwoStageWrapper:
         dataset_size = len(full_dataset)
         log.info(f"Full dataset size: {dataset_size}")
 
-        stratify_labels = None
-        if hasattr(full_dataset, 'targets'):
-            stratify_labels = np.array(full_dataset.targets)
-        elif hasattr(full_dataset, 'labels'):
-            stratify_labels = np.array(full_dataset.labels)
+        stratify_labels = self.dm.get_labels_for_stratification(full_dataset)
 
         if not self.split_manager.exists():
             log.info("Creating new splits...")
@@ -502,12 +495,8 @@ class ProbeTwoStageWrapper:
         assert len(train_indices) == train_embeddings.shape[0], \
             f"Mismatch: {len(train_indices)} train indices vs {train_embeddings.shape[0]} embeddings"
 
-        stratify_labels = None
-        full_dataset = self.dm.train_set
-        if hasattr(full_dataset, 'targets'):
-            stratify_labels = np.array(full_dataset.targets)
-        elif hasattr(full_dataset, 'labels'):
-            stratify_labels = np.array(full_dataset.labels)
+        full_dataset = self.dm.full_dataset if hasattr(self.dm, 'full_dataset') else self.dm.train_set
+        stratify_labels = self.dm.get_labels_for_stratification(full_dataset)
 
         cv_folds = self.split_manager.create_cv_folds(
             train_indices=train_indices,

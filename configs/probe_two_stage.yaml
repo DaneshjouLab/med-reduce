@@ -40,7 +40,7 @@ datamodule:
   local_image_extension: .jpg
 
   filtered_classes: ["0.0", "1.0"]
-  balance_data: true
+  balance_data: false
   num_train_images: 10000
 
   force_recompute_embeddings: true
