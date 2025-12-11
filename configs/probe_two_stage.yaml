@@ -65,7 +65,7 @@ train:
   mixed_precision: true
   grad_clip: null
   log_interval: 50
-  metric_key: "val_acc"
+  metric_key: "val_auroc"
 
   optimizer:
     type: "adamw"

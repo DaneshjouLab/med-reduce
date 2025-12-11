@@ -85,14 +85,22 @@ def main():
         print(f"Phases: {', '.join(df['phase'].unique())}")
 
         print(f"\n{'='*60}")
-        print("ACCURACY METRICS")
+        print("PERFORMANCE METRICS")
         print(f"{'='*60}\n")
 
-        print(f"Top-1 Accuracy:")
-        print(f"  Range:  {df['top1_accuracy'].min():.2f}% - {df['top1_accuracy'].max():.2f}%")
-        print(f"  Mean:   {df['top1_accuracy'].mean():.2f}%")
-        print(f"  Median: {df['top1_accuracy'].median():.2f}%")
-        print(f"  Std:    {df['top1_accuracy'].std():.2f}%")
+        if 'val_auroc' in df.columns and df['val_auroc'].notna().any():
+            auroc_df = df.dropna(subset=['val_auroc'])
+            print(f"Validation AUROC (recommended for imbalanced datasets):")
+            print(f"  Range:  {auroc_df['val_auroc'].min():.4f} - {auroc_df['val_auroc'].max():.4f}")
+            print(f"  Mean:   {auroc_df['val_auroc'].mean():.4f}")
+            print(f"  Median: {auroc_df['val_auroc'].median():.4f}")
+            print(f"  Std:    {auroc_df['val_auroc'].std():.4f}")
+        else:
+            print(f"Top-1 Accuracy:")
+            print(f"  Range:  {df['top1_accuracy'].min():.2f}% - {df['top1_accuracy'].max():.2f}%")
+            print(f"  Mean:   {df['top1_accuracy'].mean():.2f}%")
+            print(f"  Median: {df['top1_accuracy'].median():.2f}%")
+            print(f"  Std:    {df['top1_accuracy'].std():.2f}%")
 
         print(f"\n{'='*60}")
         print("EFFICIENCY METRICS")
@@ -132,11 +140,16 @@ def main():
 
     # Find Pareto-optimal models
     print(f"\n{'='*60}")
-    print("PARETO-OPTIMAL MODELS (Accuracy vs. FLOPs)")
+
+    use_auroc = 'val_auroc' in df.columns and df['val_auroc'].notna().any()
+    accuracy_metric = "val_auroc" if use_auroc else "top1_accuracy"
+    metric_name = "AUROC" if use_auroc else "Accuracy"
+
+    print(f"PARETO-OPTIMAL MODELS ({metric_name} vs. FLOPs)")
     print(f"{'='*60}\n")
 
     pareto_df = collector.get_pareto_frontier(
-        accuracy_key="top1_accuracy",
+        accuracy_key=accuracy_metric,
         efficiency_key="flops_giga",
         minimize_efficiency=True
     )
@@ -144,10 +157,16 @@ def main():
     if not pareto_df.empty:
         print(f"Found {len(pareto_df)} Pareto-optimal models:\n")
         for idx, row in pareto_df.iterrows():
-            print(f"  • {row['model_name']:<30} "
-                  f"Acc: {row['top1_accuracy']:>6.2f}%  "
-                  f"FLOPs: {row['flops_giga']:>6.2f}G  "
-                  f"Latency: {row['inference_latency_ms']:>6.2f}ms")
+            if use_auroc:
+                print(f"  • {row['model_name']:<30} "
+                      f"AUROC: {row['val_auroc']:>6.4f}  "
+                      f"FLOPs: {row['flops_giga']:>6.2f}G  "
+                      f"Latency: {row['inference_latency_ms']:>6.2f}ms")
+            else:
+                print(f"  • {row['model_name']:<30} "
+                      f"Acc: {row['top1_accuracy']:>6.2f}%  "
+                      f"FLOPs: {row['flops_giga']:>6.2f}G  "
+                      f"Latency: {row['inference_latency_ms']:>6.2f}ms")
     else:
         print("No Pareto-optimal models found (need at least 2 models)")
 
@@ -156,10 +175,16 @@ def main():
     print("BEST MODELS BY CRITERIA")
     print(f"{'='*60}\n")
 
-    best_acc_idx = df['top1_accuracy'].idxmax()
-    best_acc = df.loc[best_acc_idx]
-    print(f"🎯 Highest Accuracy:")
-    print(f"   {best_acc['model_name']}: {best_acc['top1_accuracy']:.2f}%")
+    if use_auroc:
+        best_metric_idx = df['val_auroc'].idxmax()
+        best_metric = df.loc[best_metric_idx]
+        print(f"🎯 Highest AUROC:")
+        print(f"   {best_metric['model_name']}: {best_metric['val_auroc']:.4f}")
+    else:
+        best_acc_idx = df['top1_accuracy'].idxmax()
+        best_acc = df.loc[best_acc_idx]
+        print(f"🎯 Highest Accuracy:")
+        print(f"   {best_acc['model_name']}: {best_acc['top1_accuracy']:.2f}%")
 
     best_flops_idx = df['flops_giga'].idxmin()
     best_flops = df.loc[best_flops_idx]

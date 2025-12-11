@@ -58,6 +58,7 @@ class ExperimentMetrics:
     top5_accuracy: Optional[float] = None
     f1_score: Optional[float] = None
     auc_score: Optional[float] = None
+    val_auroc: Optional[float] = None
     training_time_hours: Optional[float] = None
 
     # Model size metrics
@@ -251,6 +252,17 @@ class MetricsCollector:
             },
             "timestamp": datetime.now().isoformat()
         }
+
+        if 'val_auroc' in df.columns and df['val_auroc'].notna().any():
+            auroc_scores = df['val_auroc'].dropna()
+            summary["auroc_stats"] = {
+                "min": float(auroc_scores.min()),
+                "max": float(auroc_scores.max()),
+                "mean": float(auroc_scores.mean()),
+                "std": float(auroc_scores.std()),
+                "best_model": df.loc[auroc_scores.idxmax(), 'model_name'],
+                "best_score": float(auroc_scores.max())
+            }
 
         # Add AET statistics if available
         if 'aet_score' in df.columns and df['aet_score'].notna().any():

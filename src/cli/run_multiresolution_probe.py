@@ -68,7 +68,7 @@ def run_hyperparameter_tuning(
         f"domain={domain}",
         f"data.image_size={highest_res}",
         "train.hyperparam_search.enabled=true",
-        f"logging.run_name=hyperparam_tune_{model_key}_{domain}_{highest_res}px",
+        f"logging.run_name={model_key}_{domain}_{highest_res}px_R*search",
     ]
 
     if dataset is not None:
@@ -167,7 +167,7 @@ def run_final_probing(
             f"data.image_size={resolution}",
             "train.hyperparam_search.enabled=false",
             f"++train.hyperparam_search.load_from_file={hyperparam_file}",
-            f"logging.run_name={model_key}_{domain}_{resolution}px_final",
+            f"logging.run_name={model_key}_{domain}_{resolution}px_eval",
         ]
 
         if dataset is not None:

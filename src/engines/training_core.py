@@ -118,6 +118,7 @@ def _update_history_and_log(  # pylint: disable=too-many-arguments
     val_loss: float,
     val_acc: float,
     cur_lr: float,
+    val_auroc: Optional[float] = None,
     wandb_logger: Optional[Any] = None,
     log: Optional[Any] = None,
 ) -> None:
@@ -130,6 +131,7 @@ def _update_history_and_log(  # pylint: disable=too-many-arguments
         val_loss: Validation loss for current epoch.
         val_acc: Validation accuracy for current epoch.
         cur_lr: Current learning rate.
+        val_auroc: Optional validation AUROC for current epoch.
         wandb_logger: Optional wandb logger instance.
         log: Optional logger instance.
     """
@@ -137,29 +139,43 @@ def _update_history_and_log(  # pylint: disable=too-many-arguments
     history["train_loss"].append(train_loss)
     history["val_loss"].append(val_loss)
     history["val_acc"].append(val_acc)
+    if val_auroc is not None and "val_auroc" in history:
+        history["val_auroc"].append(val_auroc)
     history["lr"].append(cur_lr)
 
     # Log to wandb if available
     if wandb_logger:
-        wandb_logger.log(
-            {
-                "epoch": epoch,
-                "train/loss_epoch": train_loss,
-                "val/loss": val_loss,
-                "val/acc": val_acc,
-                "lr": cur_lr,
-            }
-        )
+        log_dict = {
+            "epoch": epoch,
+            "train/loss_epoch": train_loss,
+            "val/loss": val_loss,
+            "val/acc": val_acc,
+            "lr": cur_lr,
+        }
+        if val_auroc is not None:
+            log_dict["val/auroc"] = val_auroc
+        wandb_logger.log(log_dict)
 
     # Log to console if logger is available
     if log:
-        log.info(
-            "Epoch %d | train_loss=%.4f | val_loss=%.4f | val_acc=%.4f | lr=%.2e",
-            epoch,
-            train_loss,
-            val_loss,
-            val_acc,
-            cur_lr,
+        if val_auroc is not None:
+            log.info(
+                "Epoch %d | train_loss=%.4f | val_loss=%.4f | val_acc=%.4f | val_auroc=%.4f | lr=%.2e",
+                epoch,
+                train_loss,
+                val_loss,
+                val_acc,
+                val_auroc,
+                cur_lr,
+            )
+        else:
+            log.info(
+                "Epoch %d | train_loss=%.4f | val_loss=%.4f | val_acc=%.4f | lr=%.2e",
+                epoch,
+                train_loss,
+                val_loss,
+                val_acc,
+                cur_lr,
         )
 
 

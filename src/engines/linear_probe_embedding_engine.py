@@ -16,6 +16,8 @@ from typing import Dict, Any, Tuple, Optional
 import math
 import torch
 from torch import nn
+import numpy as np
+from sklearn.metrics import roc_auc_score
 
 try:
     from torch.amp import autocast
@@ -75,7 +77,7 @@ def train_probe_on_embeddings(
     best_metric = -math.inf if not metric_key.endswith("loss") else math.inf
     best_state_dict = None
 
-    history = {"train_loss": [], "val_loss": [], "val_acc": [], "lr": []}
+    history = {"train_loss": [], "val_loss": [], "val_acc": [], "val_auroc": [], "lr": []}
 
     for epoch in range(1, epochs + 1):
         classifier.train()
@@ -120,7 +122,7 @@ def train_probe_on_embeddings(
 
         train_loss = running_loss / max(n_seen, 1)
 
-        val_loss, val_acc = _run_validation_on_embeddings(
+        val_loss, val_acc, val_auroc = _run_validation_on_embeddings(
             classifier=classifier,
             loaders=loaders,
             loss_fn=loss_fn,
@@ -129,7 +131,12 @@ def train_probe_on_embeddings(
         )
 
         if sched is not None:
-            metric_for_scheduler = val_loss if metric_key.endswith("loss") else val_acc
+            if metric_key.endswith("loss"):
+                metric_for_scheduler = val_loss
+            elif metric_key == "val_auroc":
+                metric_for_scheduler = val_auroc
+            else:
+                metric_for_scheduler = val_acc
             _maybe_scheduler_step(sched_meta, sched, on="epoch", metric=metric_for_scheduler)
 
         cur_lr = optimizer.param_groups[0]["lr"]
@@ -139,12 +146,18 @@ def train_probe_on_embeddings(
             train_loss=train_loss,
             val_loss=val_loss,
             val_acc=val_acc,
+            val_auroc=val_auroc,
             cur_lr=cur_lr,
             wandb_logger=wandb_logger,
             log=log,
         )
 
-        current_metric = val_loss if metric_key.endswith("loss") else val_acc
+        if metric_key.endswith("loss"):
+            current_metric = val_loss
+        elif metric_key == "val_auroc":
+            current_metric = val_auroc
+        else:
+            current_metric = val_acc
         is_better = (
             (current_metric < best_metric) if metric_key.endswith("loss")
             else (current_metric > best_metric)
@@ -170,12 +183,15 @@ def _run_validation_on_embeddings(
     loss_fn,
     device: torch.device,
     mixed_precision: bool = True,
-) -> Tuple[float, float]:
+) -> Tuple[float, float, float]:
     classifier.eval()
 
     val_loss = 0.0
     val_correct = 0
     val_total = 0
+
+    all_labels = []
+    all_probs = []
 
     with torch.no_grad():
         for batch in loaders["val"]:
@@ -192,7 +208,23 @@ def _run_validation_on_embeddings(
             val_correct += (preds == labels).sum().item()
             val_total += labels.size(0)
 
+            probs = torch.softmax(logits, dim=1)
+            all_labels.append(labels.cpu().numpy())
+            all_probs.append(probs.cpu().numpy())
+
     val_loss = val_loss / max(val_total, 1)
     val_acc = val_correct / max(val_total, 1)
 
-    return val_loss, val_acc
+    all_labels = np.concatenate(all_labels)
+    all_probs = np.concatenate(all_probs)
+
+    try:
+        if len(np.unique(all_labels)) == 2:
+            val_auroc = roc_auc_score(all_labels, all_probs[:, 1])
+        else:
+            val_auroc = roc_auc_score(all_labels, all_probs, multi_class='ovr', average='macro')
+    except ValueError:
+        log.warning("Could not compute AUROC - only one class present in validation set")
+        val_auroc = 0.0
+
+    return val_loss, val_acc, val_auroc
