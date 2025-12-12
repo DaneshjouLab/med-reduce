@@ -1,23 +1,8 @@
-# This source file is part of the Daneshjou Lab projects
-#
-# SPDX-FileCopyrightText: 2025 Stanford University and the project authors (see AUTHORS.md)
-#
-# SPDX-License-Identifier: MIT
-
-"""
-Classification loss functions for model training.
-
-This module provides common loss functions used for classification tasks,
-including cross-entropy loss with various options like label smoothing
-and class weighting.
-"""
-
 # src/losses/classification.py
 # -*- coding: utf-8 -*-
 from typing import Optional
-# pylint: disable=import-error
 import torch.nn.functional as F
-from torch import Tensor  # pylint: disable=import-error
+from torch import Tensor
 
 
 def cross_entropy_loss(

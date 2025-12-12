@@ -1,9 +1,3 @@
-# This source file is part of the Daneshjou Lab projects
-#
-# SPDX-FileCopyrightText: 2025 Stanford University and the project authors (see AUTHORS.md)
-#
-# SPDX-License-Identifier: MIT
-
 # src/wrappers/probe.py
 # -*- coding: utf-8 -*-
 """Linear probing wrapper for training classification heads on frozen backbones."""
@@ -17,7 +11,7 @@ from torch.utils.data import DataLoader
 from hydra.utils import instantiate
 
 # pylint: disable=import-error
-from src.utils.logging_core import setup_logging, get_logger, WandbLogger
+from src.utils.logging import setup_logging, get_logger, WandbLogger
 from src.utils.optim import make_optimizer_and_scheduler
 from src.losses.classification import cross_entropy_loss
 from src.models.factory import (

@@ -22,7 +22,6 @@ class BaseDataModule:
     Subclasses must implement the setup() method to load their specific datasets.
     Examples: ISICDataModule, ISICSegDataModule, etc.
     """
-    # pylint: disable=too-many-instance-attributes
 
     def __init__(
         self,
@@ -72,7 +71,7 @@ class BaseDataModule:
         self.test_set = None
 
     # ------------------------------------------------------------------
-    def setup(self, _stage: Optional[str] = None):
+    def setup(self, stage: Optional[str] = None):
         """
         Initialize datasets. Must be overridden by subclasses.
 

@@ -1,14 +1,4 @@
-# This source file is part of the Daneshjou Lab projects
-#
-# SPDX-FileCopyrightText: 2025 Stanford University
-# SPDX-License-Identifier: MIT
-
-# -*- coding: utf-8 -*-
-"""Fine-tuning wrapper for end-to-end optimization."""
-from __future__ import annotations
-from typing import Any, Dict
-
-import os
+from typing import Dict, Any
 import torch
 from torch.utils.data import DataLoader
 from hydra.utils import instantiate

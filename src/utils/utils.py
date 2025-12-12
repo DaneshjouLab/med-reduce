@@ -1,10 +1,3 @@
-# This source file is part of the Daneshjou Lab projects
-#
-# SPDX-FileCopyrightText: 2025 Stanford University and the project authors (see AUTHORS.md)
-#
-# SPDX-License-Identifier: MIT
-
-# pylint: disable=all
 """General utilities for environment, GPU, and I/O operations."""
 import os
 import json

@@ -1,8 +1,3 @@
-# This source file is part of the Daneshjou Lab projects
-#
-# SPDX-FileCopyrightText: 2025 Stanford University and the project authors (see AUTHORS.md)
-# SPDX-License-Identifier: MIT
-
 # src/cli/train.py
 # -*- coding: utf-8 -*-
 # pylint: disable=import-error, broad-exception-caught
@@ -15,7 +10,7 @@ import json
 import random
 import logging
 from pathlib import Path
-from typing import Dict, Any, Optional, Tuple, Union
+from typing import Dict, Any
 
 import torch
 import numpy as np
@@ -43,23 +38,23 @@ logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("train")
 
 
-# ---------------------------------------------------------------------------
-# Helper functions
-# ---------------------------------------------------------------------------
-
-
 def _is_rank_zero() -> bool:
+    # Works for both torchrun (DDP) and single process
     local_rank = int(os.environ.get("LOCAL_RANK", "0"))
     return local_rank == 0
 
 
 def _select_device(cfg: DictConfig) -> torch.device:
-    if "train" in cfg and "device" in cfg.train and cfg.train.device:
-        return torch.device(cfg.train.device)
-    return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    # Honor cfg.train.device if present; otherwise auto
+    if "device" in cfg.train and cfg.train.device:
+        dev = cfg.train.device
+        return torch.device(dev)
+    if torch.cuda.is_available():
+        return torch.device("cuda")
+    return torch.device("cpu")
 
 
-def _seed_everything(seed: int, deterministic: bool = False) -> None:
+def _seed_everything(seed: int, deterministic: bool = False):
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
@@ -71,23 +66,22 @@ def _seed_everything(seed: int, deterministic: bool = False) -> None:
         torch.backends.cudnn.benchmark = True
 
 
-def _save_resolved_config(cfg: DictConfig, run_dir: Path) -> None:
+def _save_resolved_config(cfg: DictConfig, run_dir: Path):
     if not _is_rank_zero():
         return
     run_dir.mkdir(parents=True, exist_ok=True)
-    with open(run_dir / "resolved_config.yaml", "w", encoding="utf-8") as f:
+    with open(run_dir / "resolved_config.yaml", "w") as f:
         OmegaConf.save(config=cfg, f=f.name)
 
 
-def _print_run_header(cfg: DictConfig, run_dir: Path, device: torch.device) -> None:
+def _print_run_header(cfg: DictConfig, run_dir: Path, device: torch.device):
     if not _is_rank_zero():
         return
-    model_name = getattr(cfg.model, "name", getattr(cfg.model, "type", "N/A"))
     banner = (
         f"\n=== TRAIN START ===\n"
         f"mode       : {cfg.train.mode}\n"
         f"dataset    : {cfg.dataset.name}\n"
-        f"model      : {model_name}\n"
+        f"model      : {getattr(cfg.model, 'name', 'N/A')}\n"
         f"device     : {device}\n"
         f"seed       : {cfg.seed}\n"
         f"run_dir    : {str(run_dir)}\n"
@@ -97,10 +91,10 @@ def _print_run_header(cfg: DictConfig, run_dir: Path, device: torch.device) -> N
 
 
 def _dispatch_wrapper(cfg: DictConfig) -> Dict[str, Any]:
-    mode = str(cfg.train.mode).lower()
+    mode = cfg.train.mode.lower()
     if mode == "probe":
         return probe_wrapper.run(cfg)
-    if mode == "finetune":
+    elif mode == "finetune":
         return finetune_wrapper.run(cfg)
     # if mode == "distill":
     #     return distill_wrapper.run(cfg)
@@ -282,14 +276,11 @@ def main(cfg: DictConfig):
     # Hydra creates a unique directory for each run (outputs/YYYY-MM-DD/HH-MM-SS by default)
     run_dir = Path(hydra.core.hydra_config.HydraConfig.get().runtime.output_dir)
 
-    # Device & seeding
+    # ---- Device & seeding
     device = _select_device(cfg)
-    _seed_everything(
-        seed=int(cfg.seed),
-        deterministic=bool(getattr(cfg.train, "deterministic", False)),
-    )
+    _seed_everything(seed=int(cfg.seed), deterministic=getattr(cfg.train, "deterministic", False))
 
-    # Attach runtime info used by wrappers/engines
+    # ---- Optional: attach runtime info for wrappers/engines
     cfg.runtime = {
         "device": str(device),
         "start_time": time.strftime("%Y-%m-%d %H:%M:%S"),
@@ -419,13 +410,14 @@ def main(cfg: DictConfig):
             print("\n⚠️ Training interrupted by user.", flush=True)
         raise
     except Exception as e:
+        # Surface a readable error at rank zero; still propagate for proper exit codes
         if _is_rank_zero():
             print(f"\n❌ Training failed: {e}\n", flush=True)
             import traceback
             traceback.print_exc()
         raise
 
-    # Save final metrics
+    # ---- Persist final metrics
     if _is_rank_zero():
         metrics = metrics or {}
 
@@ -460,5 +452,5 @@ def main(cfg: DictConfig):
         print("", flush=True)  # Final newline
 
 if __name__ == "__main__":
-    # pylint: disable=no-value-for-parameter
+    # Support `python -m src.cli.train train=probe dataset=isic2019`
     sys.exit(main())

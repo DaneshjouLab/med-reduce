@@ -1,21 +1,12 @@
-# This source file is part of the Daneshjou Lab projects
-#
-# SPDX-FileCopyrightText: 2025 Stanford University and the project authors (see AUTHORS.md)
-#
-# SPDX-License-Identifier: MIT
-
 # src/models/factory.py
 # -*- coding: utf-8 -*-
 """Unified model factory: HF vision models (ViT/DINOv2), optional timm,
    plus matching preprocessors and helpers (freeze_backbone, save_model)."""
 
-from __future__ import annotations
 from typing import Dict, Any
 
 import os
-import json
-import torch
-from torch import nn
+import torch.nn as nn
 from PIL import Image
 
 # --- Hugging Face ---
@@ -30,10 +21,10 @@ from transformers import (
 try:
     import timm  # type: ignore
     _TIMM_AVAILABLE = True
-except ImportError:
+except Exception:
     _TIMM_AVAILABLE = False
 
-# --- Project constants (optional) ---
+# --- Project constants (small change from your code: avoid importing configs directly) ---
 try:
     from src.utils.constants import HF_MODELS  # e.g., {"vit", "dinov2"}
 except ImportError:
@@ -41,26 +32,18 @@ except ImportError:
 
 from src.models.dinov3 import DINOv3ForImageClassification, DINOv3Config
 
-# --- Pillow resampling constant (handles both new and old Pillow versions) ---
-try:
-    # Pillow ≥9.1 uses Image.Resampling
-    RESAMPLING_LANCZOS = Image.Resampling.LANCZOS  # type: ignore[attr-defined]
-except AttributeError:
-    # Pillow <9.1 fallback; use getattr to avoid pylint false positives
-    RESAMPLING_LANCZOS = getattr(Image, "LANCZOS", None) or getattr(Image, "BICUBIC", None)
-
 
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
-def create_model(model_info: Dict[str, Any], resolution: int = 224) -> nn.Module:
+def create_model(model_info: Dict[str, Any], resolution: int = 224):
     """
     Factory function to create models based on type.
 
     Args:
-        model_info: {"type": "vit"|"dinov2"|"timm", "model_id": str, "config": {...}}
-        resolution: input image resolution (passed to HF heads when supported)
+        model_info: {"type": "vit"|"dinov2"|("timm"), "model_id": str, "config": {...}}
+        resolution: input image resolution
 
     Returns:
         nn.Module
@@ -74,16 +57,16 @@ def create_model(model_info: Dict[str, Any], resolution: int = 224) -> nn.Module
         return ViTForImageClassification.from_pretrained(
             model_id,
             num_labels=config["num_labels"],
-            ignore_mismatched_sizes=bool(config.get("ignore_mismatched_sizes", True)),
+            ignore_mismatched_sizes=config.get("ignore_mismatched_sizes", True),
             image_size=resolution,
         )
 
     # --- HuggingFace DINOv2 (AutoModel) ---
-    if model_type == "dinov2":
+    elif model_type == "dinov2":
         return AutoModelForImageClassification.from_pretrained(
             model_id,
             num_labels=config["num_labels"],
-            ignore_mismatched_sizes=bool(config.get("ignore_mismatched_sizes", True)),
+            ignore_mismatched_sizes=config.get("ignore_mismatched_sizes", True),
             image_size=resolution,
         )
 
@@ -104,9 +87,11 @@ def create_model(model_info: Dict[str, Any], resolution: int = 224) -> nn.Module
             raise RuntimeError("timm is not installed but model_type='timm' was requested.")
         num_classes = int(config.get("num_labels", 1000))
         pretrained = bool(config.get("pretrained", True))
+        # If you need image_size-specific config, many timm models accept it via `img_size`
         return timm.create_model(model_id, pretrained=pretrained, num_classes=num_classes)
 
-    raise ValueError(f"Unknown model type: {model_type}")
+    else:
+        raise ValueError(f"Unknown model type: {model_type}")
 
 
 def create_preprocessor(model_info: Dict[str, Any], resolution: int = 224):
@@ -128,21 +113,19 @@ def create_preprocessor(model_info: Dict[str, Any], resolution: int = 224):
             model_id,
             size=resolution,
             do_resize=True,
-            resample=RESAMPLING_LANCZOS,
+            resample=Image.LANCZOS,
             do_normalize=True,
-            # ImageNet normalization statistics [red, green, blue]
             image_mean=[0.485, 0.456, 0.406],
             image_std=[0.229, 0.224, 0.225],
         )
 
-    if model_type == "dinov2":
+    elif model_type == "dinov2":
         return AutoImageProcessor.from_pretrained(
             model_id,
             size=resolution,
             do_resize=True,
-            resample=RESAMPLING_LANCZOS,
+            resample=Image.LANCZOS,
             do_normalize=True,
-            # ImageNet normalization statistics [red, green, blue]
             image_mean=[0.485, 0.456, 0.406],
             image_std=[0.229, 0.224, 0.225],
         )
@@ -154,17 +137,18 @@ def create_preprocessor(model_info: Dict[str, Any], resolution: int = 224):
         # timm uses torchvision transforms; return None and build transforms in your datamodule
         return None
 
-    raise ValueError(f"Unknown model type: {model_type}")
+    else:
+        raise ValueError(f"Unknown model type: {model_type}")
 
 
-def freeze_backbone(model: nn.Module, model_type: str) -> None:
+def freeze_backbone(model: nn.Module, model_type: str):
     """
     Freeze backbone parameters for transfer learning.
     For HF classifiers, keep 'classifier' or 'head' trainable; freeze the rest.
 
     Args:
         model: nn.Module
-        model_type: 'vit' | 'dinov2' | 'timm'
+        model_type: 'vit' | 'dinov2' | ('timm' if you wire it similarly)
     """
     if model_type in HF_MODELS:
         for name, param in model.named_parameters():
@@ -173,25 +157,18 @@ def freeze_backbone(model: nn.Module, model_type: str) -> None:
                 param.requires_grad = True
             else:
                 param.requires_grad = False
-        return
-
-    if model_type == "timm":
+    elif model_type == "timm":
+        # Optional: implement project-specific rules (e.g., freeze all except last classifier)
         for name, param in model.named_parameters():
             if ("classifier" in name) or ("fc" in name) or ("head" in name):
                 param.requires_grad = True
             else:
                 param.requires_grad = False
-        return
+    else:
+        raise ValueError(f"Unsupported model_type: {model_type}")
 
-    raise ValueError(f"Unsupported model_type: {model_type}")
 
-
-def save_model(
-    model: nn.Module,
-    model_info: Dict[str, Any],
-    save_dir: str,
-    preprocessor=None
-) -> None:
+def save_model(model: nn.Module, model_info: Dict[str, Any], save_dir: str, preprocessor=None):
     """
     Save model based on its type.
 
@@ -208,23 +185,22 @@ def save_model(
         model.save_pretrained(save_dir)
         if preprocessor is not None:
             preprocessor.save_pretrained(save_dir)
-        return
-
-    if model_type == "timm":
+    elif model_type == "timm":
         # Torch-style checkpoint for timm models
+        import torch
         ckpt_path = os.path.join(save_dir, "pytorch_model.bin")
         torch.save(model.state_dict(), ckpt_path)
         # Minimal config export
-        with open(os.path.join(save_dir, "config.json"), "w", encoding="utf-8") as f:
+        with open(os.path.join(save_dir, "config.json"), "w") as f:
+            import json
             json.dump(
                 {
                     "model_type": "timm",
-                    "model_id": model_info.get("model_id"),
+                    "model_id": model_info["model_id"],
                     "num_labels": model_info.get("config", {}).get("num_labels", None),
                 },
                 f,
                 indent=2,
             )
-        return
-
-    raise ValueError(f"Unsupported model_type: {model_type}")
+    else:
+        raise ValueError(f"Unsupported model_type: {model_type}")

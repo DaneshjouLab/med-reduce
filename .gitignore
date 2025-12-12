@@ -1,14 +1,7 @@
-# This source file is part of the Daneshjou Lab projects
-#
-# SPDX-FileCopyrightText: 2025 Stanford University and the project authors (see AUTHORS.md)
-#
-# SPDX-License-Identifier: MIT
-
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
 *$py.class
-.python-version
 
 # C extensions
 *.so
@@ -216,3 +209,6 @@ __marimo__/
 **/.DS_Store
 
 *.claude
+
+.DS_Store
+config.yaml

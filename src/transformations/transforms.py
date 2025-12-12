@@ -1,11 +1,4 @@
-# This source file is part of the Daneshjou Lab projects
-#
-# SPDX-FileCopyrightText: 2025 Stanford University and the project authors (see AUTHORS.md)
-#
-# SPDX-License-Identifier: MIT
-
 """Image transformation utilities."""
-# Standard library imports
 import io
 from typing import Optional, Tuple
 
@@ -15,41 +8,40 @@ from PIL import Image, ImageFilter  # pylint: disable=import-error
 from torchvision import transforms
 
 class ResolutionReductionTransform:  # pylint: disable=too-few-public-methods
-    """Reduce image resolution by factor or target resolution."""
+    """Reduce spatial resolution of images."""
 
-    def __init__(
-        self,
-        reduction_factor: Optional[float] = None,
-        target_resolution: Optional[Tuple[int, int]] = None,
-        restore_original_size: bool = False,
-    ):
+    def __init__(self, reduction_factor: Optional[float] = None):
+        """
+        Args:
+            reduction_factor: Factor to reduce resolution by (0.1-1.0).
+                            For example, 0.5 reduces to half resolution.
+                            If None, random factor is used.
+        """
         self.reduction_factor = reduction_factor
-        self.target_resolution = target_resolution
-        self.restore_original_size = restore_original_size
 
     def __call__(self, img: Image.Image) -> Image.Image:
-        ow, oh = img.size
-
-        if self.target_resolution is not None:
-            nw, nh = self.target_resolution
+        """Apply resolution reduction."""
+        if self.reduction_factor is None:
+            # Random reduction factor between 0.2 and 0.8
+            reduction_factor = np.random.uniform(0.2, 0.8)
         else:
-            factor = (
-                np.random.uniform(0.2, 0.8)
-                if self.reduction_factor is None
-                else self.reduction_factor
-            )
-            factor = max(0.1, min(1.0, factor))
-            nw, nh = max(1, int(ow * factor)), max(1, int(oh * factor))
+            reduction_factor = self.reduction_factor
 
-        # Downsample
-        reduced = img.resize((nw, nh), Image.Resampling.LANCZOS)
+        # Clamp reduction factor to valid range
+        reduction_factor = max(0.1, min(1.0, reduction_factor))
 
-        # Either return the reduced image as-is, or restore to original size
-        if self.restore_original_size:
-            return reduced.resize((ow, oh), Image.Resampling.LANCZOS)
-        return reduced
+        # Calculate new size
+        original_width, original_height = img.size
+        new_width = int(original_width * reduction_factor)
+        new_height = int(original_height * reduction_factor)
 
+        # Ensure minimum size of 1x1
+        new_width = max(1, new_width)
+        new_height = max(1, new_height)
 
+        # Downsample and then upsample back to original size
+        downsampled = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
+        return downsampled.resize((original_width, original_height), Image.Resampling.LANCZOS)
 
 class JPEGCompressionTransform:  # pylint: disable=too-few-public-methods
     """Apply JPEG compression to images."""
@@ -95,7 +87,7 @@ class GaussianBlurTransform:  # pylint: disable=too-few-public-methods
 
         return img.filter(ImageFilter.GaussianBlur(radius=radius))
 
-class ColorQuantizationTransform:  # pylint: disable=too-few-public-methods
+class ColorQuantizationTransform:
     """Reduce color palette of images."""
 
     def __init__(self, n_colors: Optional[int] = None):

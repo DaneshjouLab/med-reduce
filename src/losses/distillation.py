@@ -1,23 +1,8 @@
-# This source file is part of the Daneshjou Lab projects
-#
-# SPDX-FileCopyrightText: 2025 Stanford University and the project authors (see AUTHORS.md)
-#
-# SPDX-License-Identifier: MIT
-
-"""
-Knowledge distillation loss functions.
-
-This module provides various loss functions used in knowledge distillation,
-including cosine embedding loss, KL divergence, and hybrid distillation loss
-for transferring knowledge from teacher to student models.
-"""
-
 # src/losses/distillation.py
 # -*- coding: utf-8 -*-
 from typing import Dict
-# pylint: disable=import-error
 import torch.nn.functional as F
-from torch import Tensor  # pylint: disable=import-error
+from torch import Tensor
 
 
 def cosine_loss(reduction: str = "mean"):
@@ -32,7 +17,7 @@ def cosine_loss(reduction: str = "mean"):
         loss = 1.0 - sim  # minimize (1 - cos)
         if reduction == "mean":
             return loss.mean()
-        if reduction == "sum":
+        elif reduction == "sum":
             return loss.sum()
         return loss
     return _loss
@@ -42,14 +27,14 @@ def kl_divergence_loss(temperature: float = 1.0, reduction: str = "batchmean"):
     """
     KL divergence on logits with temperature scaling (Hinton et al., 2015).
     """
-    temp = float(temperature)
-    temp_squared = temp * temp
+    T = float(temperature)
+    T2 = T * T
 
     def _loss(s_logits: Tensor, t_logits: Tensor) -> Tensor:
-        log_p_s = F.log_softmax(s_logits / temp, dim=-1)
-        p_t = F.softmax(t_logits / temp, dim=-1)
+        log_p_s = F.log_softmax(s_logits / T, dim=-1)
+        p_t = F.softmax(t_logits / T, dim=-1)
         kl = F.kl_div(log_p_s, p_t, reduction=reduction)
-        return kl * temp_squared
+        return kl * T2
     return _loss
 
 
