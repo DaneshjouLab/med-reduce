@@ -330,11 +330,43 @@ class ProbeTwoStageWrapper:
 
     def _create_linear_classifier(self, embedding_dim: int, num_classes: int) -> torch.nn.Module:
         """Create a simple linear classifier for embeddings."""
+        # Safely read dropout rate from model config which may be an OmegaConf DictConfig
+        # or a plain dict/object
+        dropout_source = self.cfg.model.get("config", {}) if hasattr(self.cfg, "model") else {}
+        dropout_rate = float(self._cfg_get(dropout_source, "dropout_rate", 0.1))
+
         return torch.nn.Sequential(
             torch.nn.LayerNorm(embedding_dim),
-            torch.nn.Dropout(float(getattr(self.cfg.model.get("config", {}), "dropout_rate", 0.1))),
+            torch.nn.Dropout(dropout_rate),
             torch.nn.Linear(embedding_dim, num_classes),
         ).to(self.device)
+
+    def _cfg_get(self, section: Any, key: str, default: Any = None) -> Any:
+        """Safe config getter that handles DictConfig, dict or objects with attributes.
+
+        This avoids AttributeError when a config section is a plain dict (which does not
+        support attribute access) or an OmegaConf DictConfig (which may support both).
+        """
+        if section is None:
+            return default
+
+        # OmegaConf's DictConfig acts like a mapping but also supports attribute access.
+        try:
+            # dict-like access
+            if isinstance(section, dict):
+                return section.get(key, default)
+        except Exception:
+            pass
+
+        # Try attribute access (works for DictConfig or simple objects)
+        try:
+            return getattr(section, key, default)
+        except Exception:
+            # Fallback to mapping-style get if present
+            try:
+                return section.get(key, default)  # type: ignore[attr-defined]
+            except Exception:
+                return default
 
     def _apply_hyperparams_to_cfg(self, params: Dict[str, Any]) -> Any:
         """Apply hyperparameters to config."""

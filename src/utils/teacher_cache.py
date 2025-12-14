@@ -209,7 +209,7 @@ class TeacherEmbeddingCache:
             max_samples=max_samples,
         )
 
-        # Save to cache
+        # Save to cache (keep legacy per-file layout for compatibility)
         log.info(f"Saving {len(embeddings)} embeddings to cache...")
         torch.save(embeddings, cache_path / "embeddings.pt")
         torch.save(labels, cache_path / "labels.pt")
@@ -227,6 +227,25 @@ class TeacherEmbeddingCache:
         }
         with open(cache_path / "metadata.json", "w") as f:
             json.dump(metadata, f, indent=2)
+
+        # Also save an atomic single-file cache dict for easier loading and
+        # stronger consistency (new code should prefer cache.pt but we keep
+        # per-file artifacts for backward compatibility).
+        try:
+            cache_dict = {
+                "embeddings": embeddings,
+                "labels": labels,
+                "sample_ids": sample_ids,
+                "metadata": metadata,
+            }
+            tmp_path = cache_path / "cache.pt.tmp"
+            dest_path = cache_path / "cache.pt"
+            torch.save(cache_dict, tmp_path)
+            # Atomic replace
+            os.replace(str(tmp_path), str(dest_path))
+            log.info(f"Saved single-file cache to {dest_path}")
+        except Exception as e:  # pragma: no cover - best-effort enhancement
+            log.warning(f"Failed to write single-file cache.pt: {e}")
 
         log.info(f"✓ Teacher embeddings cached successfully at {cache_path}")
         log.info(f"  - Samples: {len(embeddings)}")
@@ -266,6 +285,28 @@ class TeacherEmbeddingCache:
 
         log.info(f"Loading teacher embeddings from {cache_path}")
 
+        # Prefer the single-file atomic cache if present
+        cache_pt = cache_path / "cache.pt"
+        if cache_pt.exists():
+            try:
+                data = torch.load(cache_pt, map_location=target_device)
+                embeddings = data.get("embeddings")
+                labels = data.get("labels")
+                sample_ids = data.get("sample_ids")
+                metadata = data.get("metadata", {})
+
+                log.info(f"✓ Loaded {len(embeddings) if embeddings is not None else 'unknown'} teacher embeddings from cache.pt")
+
+                return {
+                    "embeddings": embeddings,
+                    "labels": labels,
+                    "sample_ids": sample_ids,
+                    "metadata": metadata,
+                }
+            except Exception as e:  # pragma: no cover - fallback behavior
+                log.warning(f"Failed to load cache.pt ({e}), falling back to per-file layout")
+
+        # Fallback to legacy per-file layout
         embeddings = torch.load(cache_path / "embeddings.pt", map_location=target_device)
         labels = torch.load(cache_path / "labels.pt", map_location=target_device)
         sample_ids = torch.load(cache_path / "sample_ids.pt", map_location=target_device)

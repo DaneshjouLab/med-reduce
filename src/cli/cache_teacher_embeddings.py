@@ -22,10 +22,7 @@ The script will:
 
 from __future__ import annotations
 import argparse
-import os
-from pathlib import Path
 import torch
-import hydra
 from omegaconf import DictConfig, OmegaConf
 
 from src.utils.teacher_cache import TeacherEmbeddingCache, create_clean_image_dataloader
