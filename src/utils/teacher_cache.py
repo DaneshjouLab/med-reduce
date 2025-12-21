@@ -41,7 +41,9 @@ class TeacherEmbeddingCache:
             ├── metadata.json         # Cache metadata (model, resolution, etc.)
             ├── embeddings.pt         # Tensor of all embeddings [N, D]
             ├── labels.pt             # Tensor of all labels [N]
-            └── sample_ids.pt         # Tensor of sample indices [N]
+            ├── image_ids.json        # List of unique image identifiers [N]
+            ├── sample_ids.pt         # Legacy: Tensor of sample indices (for backward compat)
+            └── cache.pt              # Single-file atomic cache (preferred for loading)
     """
 
     def __init__(
@@ -84,15 +86,27 @@ class TeacherEmbeddingCache:
     def exists(self, dataset_name: str, split: str = "train") -> bool:
         """Check if embeddings are already cached for this dataset."""
         cache_path = self._get_cache_path(dataset_name, split)
-        required_files = ["embeddings.pt", "labels.pt", "sample_ids.pt", "metadata.json"]
-        return all((cache_path / f).exists() for f in required_files)
+
+        has_new_format = (
+            (cache_path / "embeddings.pt").exists() and
+            (cache_path / "labels.pt").exists() and
+            (cache_path / "image_ids.json").exists() and
+            (cache_path / "metadata.json").exists()
+        )
+        has_legacy_format = (
+            (cache_path / "embeddings.pt").exists() and
+            (cache_path / "labels.pt").exists() and
+            (cache_path / "sample_ids.pt").exists() and
+            (cache_path / "metadata.json").exists()
+        )
+        return has_new_format or has_legacy_format
 
     def _extract_teacher_embeddings(
         self,
         model: torch.nn.Module,
         dataloader: DataLoader,
         max_samples: Optional[int] = None,
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> Tuple[torch.Tensor, torch.Tensor, list]:
         """
         Extract embeddings from teacher model.
 
@@ -102,12 +116,15 @@ class TeacherEmbeddingCache:
             max_samples: Optional limit on number of samples
 
         Returns:
-            Tuple of (embeddings, labels, sample_ids)
+            Tuple of (embeddings, labels, image_ids)
+            - embeddings: Tensor [N, D] of teacher embeddings
+            - labels: Tensor [N] of labels
+            - image_ids: List[str] of unique image identifiers
         """
         model.eval()
         embeddings = []
         labels = []
-        sample_ids = []
+        image_ids = []
 
         with torch.no_grad():
             for batch_idx, batch in enumerate(tqdm(dataloader, desc="Extracting teacher embeddings")):
@@ -115,8 +132,10 @@ class TeacherEmbeddingCache:
                 if isinstance(batch, dict):
                     pixel_values = batch['pixel_values'].to(self.device)
                     batch_labels = batch['label'].to(self.device)
+                    batch_image_ids = batch.get('image_id', None)
                 else:
                     pixel_values, batch_labels = batch[0].to(self.device), batch[1].to(self.device)
+                    batch_image_ids = None
 
                 # Get embeddings before classifier
                 if hasattr(model, 'backbone'):
@@ -142,11 +161,21 @@ class TeacherEmbeddingCache:
                 embeddings.append(emb.cpu())
                 labels.append(batch_labels.cpu())
 
-                # Track sample IDs (global index in dataset)
+                # Extract image IDs if available, otherwise use fallback indices
                 batch_size = emb.shape[0]
-                start_idx = batch_idx * dataloader.batch_size
-                batch_sample_ids = torch.arange(start_idx, start_idx + batch_size)
-                sample_ids.append(batch_sample_ids)
+                if batch_image_ids is not None:
+                    if isinstance(batch_image_ids, torch.Tensor):
+                        batch_image_ids = batch_image_ids.tolist()
+                    image_ids.extend([str(img_id) for img_id in batch_image_ids])
+                else:
+                    start_idx = batch_idx * dataloader.batch_size
+                    fallback_ids = [f"sample_{start_idx + i}" for i in range(batch_size)]
+                    image_ids.extend(fallback_ids)
+                    if batch_idx == 0:
+                        log.warning(
+                            "No 'image_id' field found in batch. Using fallback sequential IDs. "
+                            "For proper distillation, ensure your dataset returns 'image_id' in each sample."
+                        )
 
                 # Early stop if max_samples reached
                 if max_samples and len(embeddings) * emb.shape[0] >= max_samples:
@@ -154,14 +183,13 @@ class TeacherEmbeddingCache:
 
         embeddings = torch.cat(embeddings, dim=0)
         labels = torch.cat(labels, dim=0)
-        sample_ids = torch.cat(sample_ids, dim=0)
 
         if max_samples:
             embeddings = embeddings[:max_samples]
             labels = labels[:max_samples]
-            sample_ids = sample_ids[:max_samples]
+            image_ids = image_ids[:max_samples]
 
-        return embeddings, labels, sample_ids
+        return embeddings, labels, image_ids
 
     def cache_embeddings(
         self,
@@ -213,7 +241,15 @@ class TeacherEmbeddingCache:
         log.info(f"Saving {len(embeddings)} embeddings to cache...")
         torch.save(embeddings, cache_path / "embeddings.pt")
         torch.save(labels, cache_path / "labels.pt")
-        torch.save(sample_ids, cache_path / "sample_ids.pt")
+
+        with open(cache_path / "image_ids.json", "w") as f:
+            json.dump(sample_ids, f)
+
+        try:
+            numeric_ids = [int(x.split('_')[-1]) if isinstance(x, str) and x.startswith('sample_') else hash(x) for x in sample_ids]
+            torch.save(torch.tensor(numeric_ids), cache_path / "sample_ids.pt")
+        except:
+            torch.save(torch.zeros(len(sample_ids), dtype=torch.long), cache_path / "sample_ids.pt")
 
         # Save metadata
         metadata = {
@@ -228,14 +264,11 @@ class TeacherEmbeddingCache:
         with open(cache_path / "metadata.json", "w") as f:
             json.dump(metadata, f, indent=2)
 
-        # Also save an atomic single-file cache dict for easier loading and
-        # stronger consistency (new code should prefer cache.pt but we keep
-        # per-file artifacts for backward compatibility).
         try:
             cache_dict = {
                 "embeddings": embeddings,
                 "labels": labels,
-                "sample_ids": sample_ids,
+                "image_ids": sample_ids,
                 "metadata": metadata,
             }
             tmp_path = cache_path / "cache.pt.tmp"
@@ -262,7 +295,7 @@ class TeacherEmbeddingCache:
         dataset_name: str,
         split: str = "train",
         device: Optional[torch.device] = None,
-    ) -> Dict[str, torch.Tensor]:
+    ) -> Dict[str, Any]:
         """
         Load cached teacher embeddings.
 
@@ -272,7 +305,11 @@ class TeacherEmbeddingCache:
             device: Device to load tensors to (default: same as cache device)
 
         Returns:
-            Dictionary with keys: embeddings, labels, sample_ids, metadata
+            Dictionary with keys:
+            - embeddings: Tensor [N, D] of teacher embeddings
+            - labels: Tensor [N] of labels
+            - image_ids: List[str] of unique image identifiers
+            - metadata: Dict with cache metadata
         """
         if not self.exists(dataset_name, split):
             raise FileNotFoundError(
@@ -289,10 +326,10 @@ class TeacherEmbeddingCache:
         cache_pt = cache_path / "cache.pt"
         if cache_pt.exists():
             try:
-                data = torch.load(cache_pt, map_location=target_device)
+                data = torch.load(cache_pt, map_location=target_device, weights_only=False)
                 embeddings = data.get("embeddings")
                 labels = data.get("labels")
-                sample_ids = data.get("sample_ids")
+                image_ids = data.get("image_ids")
                 metadata = data.get("metadata", {})
 
                 log.info(f"✓ Loaded {len(embeddings) if embeddings is not None else 'unknown'} teacher embeddings from cache.pt")
@@ -300,7 +337,7 @@ class TeacherEmbeddingCache:
                 return {
                     "embeddings": embeddings,
                     "labels": labels,
-                    "sample_ids": sample_ids,
+                    "image_ids": image_ids,
                     "metadata": metadata,
                 }
             except Exception as e:  # pragma: no cover - fallback behavior
@@ -309,7 +346,18 @@ class TeacherEmbeddingCache:
         # Fallback to legacy per-file layout
         embeddings = torch.load(cache_path / "embeddings.pt", map_location=target_device)
         labels = torch.load(cache_path / "labels.pt", map_location=target_device)
-        sample_ids = torch.load(cache_path / "sample_ids.pt", map_location=target_device)
+
+        image_ids_json = cache_path / "image_ids.json"
+        if image_ids_json.exists():
+            with open(image_ids_json, "r") as f:
+                image_ids = json.load(f)
+        else:
+            sample_ids = torch.load(cache_path / "sample_ids.pt", map_location="cpu")
+            image_ids = [f"sample_{int(idx)}" for idx in sample_ids.tolist()]
+            log.warning(
+                "Loaded legacy sample_ids.pt. For proper distillation, "
+                "consider regenerating the cache with actual image IDs."
+            )
 
         with open(cache_path / "metadata.json", "r") as f:
             metadata = json.load(f)
@@ -319,9 +367,79 @@ class TeacherEmbeddingCache:
         return {
             "embeddings": embeddings,
             "labels": labels,
-            "sample_ids": sample_ids,
+            "image_ids": image_ids,
             "metadata": metadata,
         }
+
+
+class TeacherEmbeddingLookup:
+    """
+    Efficient lookup table for teacher embeddings by image_id.
+
+    Use this during distillation training to quickly retrieve teacher embeddings
+    for each batch based on image IDs.
+
+    Example:
+        cache = TeacherEmbeddingCache(...)
+        data = cache.load_embeddings("isic2019", "train")
+        lookup = TeacherEmbeddingLookup(data)
+
+        # During training:
+        for batch in dataloader:
+            image_ids = batch['image_id']
+            teacher_embs = lookup.get_embeddings(image_ids)
+            # Use teacher_embs for distillation loss
+    """
+
+    def __init__(self, cache_data: Dict[str, Any]):
+        """
+        Initialize lookup table from cached data.
+
+        Args:
+            cache_data: Dictionary returned by TeacherEmbeddingCache.load_embeddings()
+        """
+        self.embeddings = cache_data['embeddings']
+        self.labels = cache_data['labels']
+        self.image_ids = cache_data['image_ids']
+
+        # Build lookup dict: image_id -> index
+        self.id_to_idx = {img_id: idx for idx, img_id in enumerate(self.image_ids)}
+
+        log.info(f"Built embedding lookup table with {len(self.id_to_idx)} entries")
+
+    def get_embeddings(self, image_ids: list) -> torch.Tensor:
+        """
+        Get teacher embeddings for a list of image IDs.
+
+        Args:
+            image_ids: List of image identifiers (strings)
+
+        Returns:
+            Tensor [B, D] of teacher embeddings
+
+        Raises:
+            KeyError: If any image_id is not found in the cache
+        """
+        indices = []
+        for img_id in image_ids:
+            if img_id not in self.id_to_idx:
+                raise KeyError(
+                    f"Image ID '{img_id}' not found in teacher embedding cache. "
+                    f"Available IDs: {len(self.id_to_idx)}. "
+                    "Ensure the same dataset is used for caching and training."
+                )
+            indices.append(self.id_to_idx[img_id])
+
+        return self.embeddings[indices]
+
+    def get_labels(self, image_ids: list) -> torch.Tensor:
+        """Get labels for a list of image IDs."""
+        indices = [self.id_to_idx[img_id] for img_id in image_ids]
+        return self.labels[indices]
+
+    def __len__(self) -> int:
+        """Return number of cached embeddings."""
+        return len(self.image_ids)
 
 
 def create_clean_image_dataloader(

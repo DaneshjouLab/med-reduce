@@ -148,17 +148,26 @@ class ISICHFRawSplit(Dataset):
         row = self.ds[idx]
         img = row[self.image_column]
         label = row[self.label_column]
-        
+
         if isinstance(label, (list, tuple)):
             label = label[0]
-        
+
         if not isinstance(img, Image.Image):
             img = _to_pil(img)
 
         if self.transform:
             img = self.transform(img)
 
-        return {"pixel_values": img, "label": int(label)}
+        # Try to get image_id if available in the dataset
+        image_id = None
+        if 'image_id' in row:
+            image_id = row['image_id']
+
+        result = {"pixel_values": img, "label": int(label)}
+        if image_id is not None:
+            result["image_id"] = str(image_id)
+
+        return result
     
     def __getitems__(self, indices):
         return [self.__getitem__(idx) for idx in indices]
@@ -252,6 +261,9 @@ class ISICHFRawSplitLocal(Dataset):
             image_id = example[image_id_column]
             example["image"] = os.path.join(data_dir, f"{image_id}{image_extension}")
 
+            if image_id_column != "image_id":
+                example["image_id"] = image_id
+
             # Handle label columns
             if isinstance(label_column, (list, tuple)):
                 # Multi-label case: convert to single integer label
@@ -263,8 +275,10 @@ class ISICHFRawSplitLocal(Dataset):
 
             return example
 
-        # Remove original columns we don't need
-        cols_to_remove = [image_id_column]
+        # Remove original columns we don't need (but keep image_id)
+        cols_to_remove = []
+        if image_id_column != "image_id":
+            cols_to_remove.append(image_id_column)
         if isinstance(label_column, (list, tuple)):
             cols_to_remove.extend(label_column)
         elif label_column != "label":
@@ -305,7 +319,12 @@ class ISICHFRawSplitLocal(Dataset):
         if self.transform:
             image = self.transform(image)
 
-        return {"pixel_values": image, "label": label}
+        # Include image_id if available in the dataset
+        result = {"pixel_values": image, "label": label}
+        if 'image_id' in item:
+            result["image_id"] = str(item['image_id'])
+
+        return result
 
     def __getitems__(self, indices):
         return [self.__getitem__(idx) for idx in indices]
