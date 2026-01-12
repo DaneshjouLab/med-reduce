@@ -1,79 +1,178 @@
-# Finetuning Pretrained Models for Compressed Dermatology Image Analysis
+**Reduced Perception** is a research codebase for studying accuracy–efficiency trade-offs in vision models under controlled input degradations (e.g. resolution reduction). The repository supports linear probing, two-stage probing, distillation, and systematic multi-resolution experiments with full metric tracking and post-hoc analysis.
 
-This project explores how compressed and degraded dermatology images (from the ISIC 2019 dataset) affect classification performance using pretrained vision models. It compares fine-tuning vs. linear probing across multiple JPEG quality levels.
+The design emphasizes:
+- **On-the-fly (lazy) input transformations** for clean experimental control
+- **Reproducibility** via Hydra configs, saved seeds, and resolved configs
+- **Clear separation** between training, data handling, and evaluation
 
-![System architecture diagram](<./CS231N Poster.png>)
+---
 
-## Project Goals
+## Repository Overview
 
-- Evaluate model robustness to image compression (JPEG 90/50/20)
-- Compare pretrained models: ViT, DINOv2, and SimCLR
-- Benchmark fine-tuning vs. linear probing
-- Analyze FLOPs, GPU memory, and classification accuracy
+At a high level, the workflow is:
 
-## Models
+```
+configs → CLI (train) → DataModule → Models → Engines → Metrics → Analysis
+```
 
-- `ViT`: Vision Transformer from Hugging Face
-- `DINOv2`: Self-supervised ViT from Meta
-- `SimCLR`: Contrastive ResNet50 trained with linear classifier
-
-## Metrics Tracked
-
-- Accuracy, F1 Score, AUC
-- FLOPs (GFLOPs)
-- GPU memory usage
-- Training and evaluation time
-
-## Project Structure
 
 ```
 reduced-perception/
-├── configs/
-│   └── example_config.yaml          # Configs for job submissions
 │
-├── scripts/                         # Lightweight utility or shell scripts
-│   ├── download_unpack_isic2019.sh  # Downloads and unpacks ISIC data
-│   └── submit_from_config.sh        # SLURM submission helper
+├── configs/                           # Hydra configuration files
+│   ├── config_feature_detection.yaml # Config for feature detection tasks
+│   ├── config_local.yaml             # Local / developer-specific overrides
+│   ├── config_segmentation.yaml      # Config for segmentation experiments
+│   └── probe_two_stage.yaml          # Main config for two-stage probing pipeline
 │
-├── jobs/                            # SLURM-related job definitions
-│   └── job_template.slurm
+├── examples/                          # Standalone example scripts
+│   ├── analyze_experiment_results.py # Post-hoc analysis of metrics & plots
+│   └── load_checkpoint_example.py    # Example: loading a trained checkpoint
 │
-├── src/                             # Source code, logically grouped
-│   ├── __init__.py
-│   ├── finetune/                    # Fine-tuning workflows
-│   │   └── baseline_finetuning.py
-│   ├── evaluation/                  # Evaluation + plotting
-│   │   └── evaluate_isic_results.py
-│   └── models/                      # Model-related scripts
-│       ├── model_comparison.py      # Config file with constant strings
-│       ├── model_comparison.py
-│       └── model_comparison_2.py
-
+├── jobs/                              # Container / job execution scripts
+│   ├── slim_container.sh             # Lightweight container build/run
+│   └── train_container.sh            # Training entrypoint for containers / HPC
 │
-├── results/                         # Auto-generated results
-│   ├── plots/                       # Accuracy/f1/AUC plots
-│   └── logs/                        # Training logs or SLURM outputs
+├── scripts/                           # One-off utilities and sanity checks
+│   ├── merge_isic2017.py              # Dataset preparation / merging utility
+│   └── test_transforms.py             # Test image transformations (e.g. resolution)
+│
+├── src/                               # Core library code
+│   │
+│   ├── cli/                           # Command-line entry points (Hydra-driven)
+│   │   ├── cache_teacher_embeddings.py# Precompute & cache teacher embeddings
+│   │   ├── run_experiments.py         # Batch experiment launcher
+│   │   ├── run_multiresolution_probe.py# Sweep over input resolutions
+│   │   ├── run_probe_two_stage.py     # Two-stage probing runner
+│   │   └── train.py                   # MAIN training entry point (dataset → model → engine)
+│   │
+│   ├── data/                          # Data loading & dataset abstractions
+│   │   ├── data_utils.py              # Shared dataset helpers
+│   │   ├── datamodule.py              # BaseDataModule (dataset entry point)
+│   │   ├── dataset_factory.py         # Factory for dataset selection
+│   │   ├── datasets.py                # Dataset definitions
+│   │   ├── embedding_dataset.py       # Dataset backed by cached embeddings
+│   │   ├── isic_datamodule.py          # ISIC datamodule (standard)
+│   │   ├── isic_datamodule_persistent.py# ISIC datamodule with persistent caching
+│   │   ├── isic_feature_loader.py     # Feature-level ISIC loading
+│   │   └── isic_loader.py              # Raw ISIC image loading
+│   │
+│   ├── engines/                       # Training & evaluation engines
+│   │   ├── linear_probe_engine.py     # Linear probe on frozen features
+│   │   ├── linear_probe_embedding_engine.py
+│   │   │                               # Linear probing on cached embeddings
+│   │   └── training_core.py           # Shared training loop logic (epochs, logging)
+│   │
+│   ├── evaluation/                    # Metrics, analysis, visualization
+│   │   ├── analyze_results.py         # Aggregated analysis logic
+│   │   ├── metrics_collector.py       # Collects & persists metrics (JSON / CSV)
+│   │   ├── metrics.py                 # Metric definitions (accuracy, AUROC, etc.)
+│   │   ├── run_umap_analysis.py       # UMAP embedding visualization
+│   │   ├── visualization.py           # Plotting utilities
+│   │   └── visualize_results.py       # High-level result visualization scripts
+│   │
+│   ├── losses/                        # Loss functions
+│   │   ├── __init__.py
+│   │   └── classification.py          # Classification losses
+│   │
+│   ├── models/                        # Model definitions & factories
+│   │   ├── dinov3.py                  # DINOv3 backbone
+│   │   ├── dinov3_feature_detection.py# DINOv3 for feature detection
+│   │   ├── dinov3_segmentation.py     # DINOv3 for segmentation
+│   │   └── factory.py                 # Model factory / registry
+│   │
+│   ├── transformations/               # Input-space transformations
+│   │   ├── __init__.py
+│   │   └── transforms.py              # ResolutionReductionTransform (lazy, on-the-fly)
+│   │
+│   ├── utils/                         # General utilities (logging, helpers)
+│   │
+│   └── wrappers/                      # High-level experiment wrappers
+│       ├── probe_cv.py                # Cross-validation probing
+│       ├── probe_two_stage.py         # Two-stage probing logic
+│       └── __init__.py
 │
 ├── requirements.txt
+├── requirements.txt.licence
 ├── .gitignore
-├── .github
+├── LICENSE
 └── README.md
 ```
 
-## Quick Start
+## Installation
 
-1. Install requirements:
-   ```bash
-   pip install -r requirements.txt
-   ```
+Create a Python environment and install dependencies:
 
-2. Run training:
-   ```bash
-   python train_models.py
-   ```
+```bash
+pip install -r requirements.txt
+```
 
-3. View results
-   We use weights and biases for logging, so output plots can be seen there
+(Optional) For containerized or HPC runs, see scripts in `jobs/`.
+
+---
+
+## Running Training
+
+The main training entry point is:
+
+```bash
+python src/cli/train.py
+```
+
+Training is fully driven by **Hydra configs**. For example:
+
+```bash
+python src/cli/train.py \
+  --config-name probe_two_stage \
+  dataset=isic2019 \
+  train.mode=probe
+```
+
+Hydra will automatically create a unique output directory per run and save:
+- the resolved configuration (`resolved_config.yaml`)
+- final metrics (`final_metrics.json`)
+
+---
+
+## Data & Transformations
+
+- All datasets are constructed via `BaseDataModule` (`src/data/datamodule.py`).
+- Input transformations (e.g. resolution reduction) are **lazy**:
+  - applied on-the-fly in `__getitem__`
+  - never saved to disk
+  - fully specified by the config for reproducibility
+
+This allows systematic comparisons across resolutions without duplicating datasets.
+
+---
+
+## Evaluation & Analysis
+
+After experiments complete, results can be analyzed using:
+
+```bash
+python examples/analyze_experiment_results.py --metrics_dir <path_to_runs>
+```
+
+This supports:
+- summary statistics
+- Pareto frontier analysis
+- AET (Accuracy–Efficiency Trade-off) scores
+- publication-ready plots and tables
+
+---
+
+## Reproducibility
+
+Each run records:
+- resolved Hydra config
+- random seeds
+- metrics and summaries
+
+Together with version-controlled code, this ensures experiments can be fully reproduced.
+
+---
+
 
 ## 📦 Dataset
 
