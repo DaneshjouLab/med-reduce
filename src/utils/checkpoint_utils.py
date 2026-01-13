@@ -36,12 +36,20 @@ def load_checkpoint(
             - metric: best metric value
             - model_config: model configuration
             - cfg: full training configuration
+            - seed: random seed used (if saved)
+            - reproducibility_info: reproducibility metadata (if saved)
             - optimizer_state_dict: optimizer state (if saved)
     """
     if map_location is None and device is not None:
         map_location = str(device)
 
     checkpoint = torch.load(checkpoint_path, map_location=map_location)
+
+    if "seed" in checkpoint:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"Checkpoint was trained with seed: {checkpoint['seed']}")
+
     return checkpoint
 
 

@@ -7,13 +7,11 @@ import os
 import sys
 import time
 import json
-import random
 import logging
 from pathlib import Path
 from typing import Dict, Any
 
 import torch
-import numpy as np
 import hydra  # pylint: disable=import-error
 from omegaconf import DictConfig, OmegaConf  # pylint: disable=import-error
 
@@ -26,6 +24,11 @@ from src.data.datamodule import BaseDataModule  # pylint: disable=import-error
 from src.transformations.transforms import (
     ResolutionReductionTransform,
 )  # pylint: disable=import-error
+from src.utils.reproducibility import (  # pylint: disable=import-error
+    seed_everything,
+    SeedTracker,
+    log_reproducibility_info,
+)
 
 # ---- Optional HF preprocessor (only needed when actually running a HF backbone)
 try:
@@ -52,18 +55,6 @@ def _select_device(cfg: DictConfig) -> torch.device:
     if torch.cuda.is_available():
         return torch.device("cuda")
     return torch.device("cpu")
-
-
-def _seed_everything(seed: int, deterministic: bool = False):
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
-    if deterministic:
-        torch.backends.cudnn.deterministic = True
-        torch.backends.cudnn.benchmark = False
-    else:
-        torch.backends.cudnn.benchmark = True
 
 
 def _save_resolved_config(cfg: DictConfig, run_dir: Path):
@@ -278,7 +269,15 @@ def main(cfg: DictConfig):
 
     # ---- Device & seeding
     device = _select_device(cfg)
-    _seed_everything(seed=int(cfg.seed), deterministic=getattr(cfg.train, "deterministic", False))
+    seed_value = int(cfg.seed)
+    deterministic_mode = getattr(cfg.train, "deterministic", False)
+
+    seed_everything(seed=seed_value, deterministic=deterministic_mode)
+
+    seed_tracker = SeedTracker(base_seed=seed_value)
+    seed_tracker.log_seed("main", seed_value, {"deterministic": deterministic_mode})
+
+    log_reproducibility_info(output_dir=run_dir)
 
     # ---- Optional: attach runtime info for wrappers/engines
     cfg.runtime = {
@@ -287,6 +286,8 @@ def main(cfg: DictConfig):
         "run_dir": str(run_dir),
         "rank_zero": _is_rank_zero(),
         "world_size": int(os.environ.get("WORLD_SIZE", "1")),
+        "seed": seed_value,
+        "seed_tracker": seed_tracker,
     }
 
     # Persist resolved config and print header

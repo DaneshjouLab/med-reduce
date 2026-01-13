@@ -1,5 +1,6 @@
-# src/visualize_results.py
+# src/evaluation/visualize_results.py
 """Visualize robustness results across models and degradations."""
+import argparse
 import json
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -159,12 +160,33 @@ def create_degradation_curves(results_path: str):
 
 # Usage
 if __name__ == "__main__":
-    results_path = "results/results_comprehensive_lr0.0001_bs128_ep3.json"
-    
+    parser = argparse.ArgumentParser(
+        description="Visualize robustness results across models and degradations"
+    )
+    parser.add_argument(
+        "results_path",
+        type=str,
+        help="Path to results JSON file (e.g., results/results_comprehensive.json)"
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=str,
+        default=None,
+        help="Directory to save output figures. If not specified, uses parent directory of results_path"
+    )
+
+    args = parser.parse_args()
+
+    results_path = args.results_path
+
+    # Validate that results file exists
+    if not Path(results_path).exists():
+        raise FileNotFoundError(f"Results file not found: {results_path}")
+
     # Create visualizations
     pivot_df = create_robustness_heatmap(results_path)
     create_degradation_curves(results_path)
-    
+
     # Print summary statistics
     print("\nModel Rankings by Robustness:")
     print("-" * 40)
