@@ -138,46 +138,7 @@ Hydra will automatically create a unique output directory per run and save:
 
 ---
 
-## Data & Transformations
 
-- All datasets are constructed via `BaseDataModule` (`src/data/datamodule.py`).
-- Input transformations (e.g. resolution reduction) are **lazy**:
-  - applied on-the-fly in `__getitem__`
-  - never saved to disk
-  - fully specified by the config for reproducibility
-
-This allows systematic comparisons across resolutions without duplicating datasets.
-
----
-
-## Evaluation & Analysis
-
-After experiments complete, results can be analyzed using:
-
-```bash
-python examples/analyze_experiment_results.py --metrics_dir <path_to_runs>
-```
-
-This supports:
-- summary statistics
-- Pareto frontier analysis
-- AET (Accuracy–Efficiency Trade-off) scores
-- publication-ready plots and tables
-
----
-
-## Reproducibility
-
-Each run records:
-- resolved Hydra config
-- random seeds
-- metrics and summaries
-
-Together with version-controlled code, this ensures experiments can be fully reproduced.
-
----
-
-
-## 📦 Dataset
+## 📦 Datasets
 
 - [ISIC 2019 (Hugging Face)](https://huggingface.co/datasets/MKZuziak/ISIC_2019_224)
