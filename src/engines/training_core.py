@@ -61,6 +61,20 @@ def _evaluate(
     device: torch.device,
     mixed_precision: bool,
 ) -> Tuple[float, float]:
+    """
+    Docstring for _evaluate
+
+    :param model: Description
+    :type model: nn.Module
+    :param loader: Description
+    :param loss_fn: Description
+    :param device: Description
+    :type device: torch.device
+    :param mixed_precision: Description
+    :type mixed_precision: bool
+    :return: Description
+    :rtype: Tuple[float, float]
+    """
     model.eval()
     running_loss, running_acc, n = 0.0, 0.0, 0
     with torch.no_grad():
@@ -307,14 +321,14 @@ def _get_embeddings(
         max_samples: Optional[int] = None, # Include this if you want a limit
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
-        Extracts embeddings (pre-logits) and targets by calling the external 
+        Extracts embeddings (pre-logits) and targets by calling the external
         extract_embeddings utility. Returns Tensors for saving.
         """
         # NOTE: Assuming extract_embeddings is imported or defined locally
         model.eval()
         embeddings = []
         labels = []
-        
+
         with torch.no_grad():
             for batch_idx, batch in enumerate(tqdm(dataloader, desc="Extracting embeddings")):
                 # Handle different batch formats
@@ -323,7 +337,7 @@ def _get_embeddings(
                     batch_labels = batch['label'].to(device)
                 else:
                     pixel_values, batch_labels = batch[0].to(device), batch[1].to(device)
-                
+
                 # Get embeddings before classifier
                 if hasattr(model, 'backbone'):
                     # DINOv3 wrapper
@@ -344,20 +358,20 @@ def _get_embeddings(
                         emb = outputs.hidden_states[-1][:, 0]
                     else:
                         raise ValueError("Cannot extract embeddings from this model")
-                
+
                 embeddings.append(emb.cpu().numpy())
                 labels.append(batch_labels.cpu().numpy())
-                
+
                 # Early stop if max_samples reached
                 if max_samples and len(embeddings) * emb.shape[0] >= max_samples:
                     break
-        
+
         embeddings = np.vstack(embeddings)
         labels = np.concatenate(labels)
-        
+
         if max_samples:
             embeddings = embeddings[:max_samples]
             labels = labels[:max_samples]
-        
+
         # Convert NumPy arrays back to Tensors for torch.save in the training loop
         return torch.from_numpy(embeddings), torch.from_numpy(labels)

@@ -17,7 +17,6 @@ from omegaconf import DictConfig, OmegaConf  # pylint: disable=import-error
 
 # ---- Training wrappers (each provides run(cfg) -> dict of metrics)
 from src.wrappers import probe as probe_wrapper  # pylint: disable=import-error
-from src.wrappers import finetune as finetune_wrapper  # pylint: disable=import-error
 
 # ---- Data pipeline
 from src.data.datamodule import BaseDataModule  # pylint: disable=import-error
@@ -85,14 +84,11 @@ def _dispatch_wrapper(cfg: DictConfig) -> Dict[str, Any]:
     mode = cfg.train.mode.lower()
     if mode == "probe":
         return probe_wrapper.run(cfg)
-    elif mode == "finetune":
-        return finetune_wrapper.run(cfg)
-    # if mode == "distill":
-    #     return distill_wrapper.run(cfg)
+    elif mode == "distill":
+        return distill_wrapper.run(cfg)
     raise ValueError(
-        f"Unknown train.mode='{cfg.train.mode}'. Expected one of: probe | finetune | distill"
+        f"Unknown train.mode='{cfg.train.mode}'. Expected one of: probe | distill"
     )
-
 
 def _ensure_keys(d: DictConfig, keys_defaults: Dict[str, Any]) -> None:
     """Ensure keys exist in DictConfig with defaults (in-place)."""
@@ -299,34 +295,34 @@ def main(cfg: DictConfig):
         # Check if hyperparameter search is enabled from config
         hyperparam_cfg = getattr(cfg.train, "hyperparam_search", None)
         run_hyperparam_search = False
-        
+
         if hyperparam_cfg is not None:
             run_hyperparam_search = getattr(hyperparam_cfg, "enabled", False)
-        
+
         if run_hyperparam_search:
             if _is_rank_zero():
                 print("\n🔍 Starting hyperparameter search...\n", flush=True)
-            
+
             from src.wrappers.finetune_randomsearch import run as run_random_search
-            
+
             # Extract search configuration
             n_samples = getattr(hyperparam_cfg, "n_samples", 15)
             search_subset_frac = getattr(hyperparam_cfg, "subset_frac", 0.3)
             use_cv_for_search = getattr(hyperparam_cfg, "use_cv", False)
             param_grid = getattr(hyperparam_cfg, "param_grid", {})
-            
+
             # Validate param_grid
             if not param_grid:
                 raise ValueError(
                     "hyperparam_search.param_grid must be specified when search is enabled"
                 )
-            
+
             if _is_rank_zero():
                 print(f"  Strategy: {'K-Fold CV' if use_cv_for_search else 'Single Split'}")
                 print(f"  Search data: {search_subset_frac*100:.0f}% of training set")
                 print(f"  Configurations to try: {n_samples}")
                 print(f"  Parameter grid: {param_grid}\n", flush=True)
-            
+
             # Run hyperparameter search
             search_results = run_random_search(
                 cfg=cfg,
@@ -335,46 +331,46 @@ def main(cfg: DictConfig):
                 use_cv=use_cv_for_search,
                 search_subset_frac=search_subset_frac,
             )
-            
+
             # Apply best parameters to config
             best_params = search_results['best_params']
             if _is_rank_zero():
                 print(f"\n🏆 Best hyperparameters found: {best_params}\n", flush=True)
-            
+
             # Update config with best parameters
             if 'lr' in best_params:
                 cfg.train.learning_rate = best_params['lr']
                 if _is_rank_zero():
                     print(f"  ✓ Updated learning_rate: {best_params['lr']}")
-            
+
             if 'weight_decay' in best_params:
                 cfg.train.weight_decay = best_params['weight_decay']
                 if _is_rank_zero():
                     print(f"  ✓ Updated weight_decay: {best_params['weight_decay']}")
-            
+
             if 'batch_size' in best_params:
                 cfg.data.batch_size = best_params['batch_size']
                 if _is_rank_zero():
                     print(f"  ✓ Updated batch_size: {best_params['batch_size']}")
-            
+
             if 'label_smoothing' in best_params:
                 if hasattr(cfg, 'loss'):
                     cfg.loss.label_smoothing = best_params['label_smoothing']
                     if _is_rank_zero():
                         print(f"  ✓ Updated label_smoothing: {best_params['label_smoothing']}")
-            
+
             if 'momentum' in best_params:
                 if hasattr(cfg.train, 'momentum'):
                     cfg.train.momentum = best_params['momentum']
                     if _is_rank_zero():
                         print(f"  ✓ Updated momentum: {best_params['momentum']}")
-            
+
             if 'dropout' in best_params:
                 if hasattr(cfg.model, 'dropout'):
                     cfg.model.dropout = best_params['dropout']
                     if _is_rank_zero():
                         print(f"  ✓ Updated dropout: {best_params['dropout']}")
-            
+
             # Save search results
             if _is_rank_zero():
                 search_results_path = run_dir / "hyperparam_search_results.json"
@@ -395,17 +391,17 @@ def main(cfg: DictConfig):
                     }
                     json.dump(serializable_results, f, indent=2)
                 print(f"\n💾 Search results saved to {search_results_path}\n", flush=True)
-            
+
             # Reset subset_frac to use full data for final training
             cfg.train.subset_frac = 1.0
-            
+
             if _is_rank_zero():
                 print("\n🚀 Running final K-Fold CV with best hyperparameters on full dataset...\n", flush=True)
-        
+
         # Run K-Fold CV (either with searched params or original config)
         from src.wrappers.finetune_cv import run as run_cv
         metrics = run_cv(cfg)
-        
+
     except KeyboardInterrupt:
         if _is_rank_zero():
             print("\n⚠️ Training interrupted by user.", flush=True)
@@ -435,21 +431,21 @@ def main(cfg: DictConfig):
         final_metrics_path = run_dir / "final_metrics.json"
         with open(final_metrics_path, "w", encoding="utf-8") as f:
             json.dump(_to_serializable(metrics), f, indent=2)
-        
+
         print(f"\n✅ Training complete! Final metrics written to {final_metrics_path}\n", flush=True)
-        
+
         # Print summary
         if "mean_metric" in metrics:
             metric_name = getattr(cfg.train, "metric_key", "val_acc")
             print(f"📊 Final {metric_name}: {metrics['mean_metric']:.4f}", flush=True)
             if "std_metric" in metrics:
                 print(f"   Std deviation: {metrics['std_metric']:.4f}", flush=True)
-        
+
         if run_hyperparam_search and "best_hyperparams" in metrics:
             print(f"\n🏆 Best hyperparameters used:", flush=True)
             for param, value in metrics['best_hyperparams'].items():
                 print(f"   {param}: {value}", flush=True)
-        
+
         print("", flush=True)  # Final newline
 
 if __name__ == "__main__":
