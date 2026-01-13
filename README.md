@@ -1,4 +1,8 @@
-**Reduced Perception** is a research codebase for studying accuracy–efficiency trade-offs in vision models under controlled input degradations (e.g. resolution reduction). The repository supports linear probing, two-stage probing, distillation, and systematic multi-resolution experiments with full metric tracking and post-hoc analysis.
+# REDUCE: Representation Transfer Under Perceptual Constraints
+**R**esolution-Aware **E**valuation of **D**eep **U**nderstanding and **C**omputational **E**fficiency
+
+**REDUCE** is a research framework for studying accuracy–efficiency trade-offs in vision models under controlled perceptual degradations, such as systematic input resolution reduction. The framework supports linear probing, two-stage probing, and distillation, enabling consistent, multi-resolution evaluation with comprehensive metric tracking and post-hoc analysis.
+REDUCE introduces a family of models and evaluation protocols designed for efficiency-under-pressure settings, where representational robustness, computational cost, and predictive performance must be jointly optimized and rigorously compared.
 
 The design emphasizes:
 - **On-the-fly (lazy) input transformations** for clean experimental control
