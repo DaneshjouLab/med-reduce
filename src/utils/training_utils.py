@@ -41,3 +41,51 @@ def profile_model(model: torch.nn.Module, resolution: int) -> float:
     except Exception as e:
         print(f"[profile_model] FLOP profiling failed: {e}")
         return -1.0
+
+def calculate_inference_latency(
+    model: torch.nn.Module,
+    resolution: int,
+    warmup_runs: int = 10,
+    bench_runs: int = 100
+) -> float:
+    """
+    Measure actual model inference latency in ms via repeated forward passes.
+    Returns -1 on failure.
+
+    Args:
+        model: PyTorch model to benchmark
+        resolution: Input image resolution (assumes square images)
+        warmup_runs: Number of warmup iterations before timing
+        bench_runs: Number of timed iterations for averaging
+    """
+    try:
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        dummy = torch.randn(1, 3, resolution, resolution, device=device)
+        model = model.to(device)
+        model.eval()
+
+        # Warmup
+        with torch.no_grad():
+            for _ in range(warmup_runs):
+                _ = model(dummy)
+
+        # Synchronize before timing (critical for GPU)
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+
+        # Benchmark
+        import time
+        with torch.no_grad():
+            start = time.perf_counter()
+            for _ in range(bench_runs):
+                _ = model(dummy)
+            if torch.cuda.is_available():
+                torch.cuda.synchronize()
+            end = time.perf_counter()
+
+        avg_latency_ms = ((end - start) / bench_runs) * 1000
+        return float(avg_latency_ms)
+
+    except Exception as e:
+        print(f"[calculate_inference_latency] Latency benchmarking failed: {e}")
+        return -1.0

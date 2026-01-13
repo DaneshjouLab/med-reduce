@@ -6,6 +6,12 @@ from typing import Dict, Any, Optional
 import torch
 
 try:
+    from omegaconf import OmegaConf
+    HAS_OMEGACONF = True
+except ImportError:
+    HAS_OMEGACONF = False
+
+try:
     import pynvml
     pynvml.nvmlInit()
     PYNVML_AVAILABLE = True
@@ -67,11 +73,22 @@ def check_disk_space(required_gb: float = 1.0) -> bool:
         )
     return True
 
+def _to_serializable(obj: Any) -> Any:
+    """Convert OmegaConf objects to regular Python objects for JSON serialization."""
+    if HAS_OMEGACONF and OmegaConf.is_config(obj):
+        return OmegaConf.to_container(obj, resolve=True)
+    elif isinstance(obj, dict):
+        return {k: _to_serializable(v) for k, v in obj.items()}
+    elif isinstance(obj, (list, tuple)):
+        return [_to_serializable(item) for item in obj]
+    else:
+        return obj
+
 def save_results(results: Dict[str, Any], filepath: str):
     """Save results to JSON file."""
     os.makedirs(os.path.dirname(filepath) or ".", exist_ok=True)
     with open(filepath, 'w') as f:
-        json.dump(results, f, indent=4)
+        json.dump(_to_serializable(results), f, indent=4)
     print(f"Results saved to: {filepath}")
 
 def load_json(filepath: str) -> Dict[str, Any]:

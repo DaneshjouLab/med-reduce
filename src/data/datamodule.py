@@ -1,82 +1,160 @@
-# src/data/datamodule.py
-# -*- coding: utf-8 -*-
-from torch.utils.data import DataLoader, random_split
-from typing import Optional
-from .datasets import get_dataset
+# This source file is part of the Daneshjou Lab projects
+#
+# SPDX-FileCopyrightText: 2025 Stanford University and the project authors (see AUTHORS.md)
+#
+# SPDX-License-Identifier: MIT
 
+"""
+DataModule for managing dataset loading, splitting, and dataloader creation.
+Provides a unified interface for working with different datasets.
+"""
+
+# Standard library imports
+from typing import Optional, Any
+
+# Third-party imports
+from torch.utils.data import DataLoader, Subset # pylint: disable=import-error
 
 class BaseDataModule:
     """
-    Dataset-agnostic data module.
+    Base class for data modules providing common dataloader interface.
 
-    Responsibilities:
-    - Instantiate train/val/test datasets using `get_dataset()`.
-    - Build and cache dataloaders.
-    - Apply consistent transforms and batching options across datasets.
+    Subclasses must implement the setup() method to load their specific datasets.
+    Examples: ISICDataModule, ISICSegDataModule, etc.
     """
 
     def __init__(
         self,
-        cfg,
-        dataset_name: str,
-        data_dir: str,
+        cfg: Any = None,  # Made optional to support Hydra instantiation
+        dataset_name: str = None,
+        data_dir: str = None,
+        *,
         num_workers: int = 8,
         batch_size: int = 32,
         pin_memory: bool = True,
         drop_last: bool = False,
+        split_seed: int = 42,
+        preprocessor: Any = None,
+        resolution: int = 224,
+        transform: Any = None,
+        model_type: str = "vit",
+        persistent_workers: bool = False,
+        prefetch_factor: int = 2,
+        **kwargs,
     ):
+        """
+        Initialize the DataModule.
+
+        IMPORTANT: batch_size parameter is kept for backward compatibility,
+        but the datamodule will dynamically read from cfg.data.batch_size
+        at runtime to support hyperparameter optimization.
+        """
         self.cfg = cfg
         self.dataset_name = dataset_name
         self.data_dir = data_dir
         self.num_workers = num_workers
-        self.batch_size = batch_size
+        # Store fallback batch_size, but prefer cfg.data.batch_size at runtime
+        self._fallback_batch_size = batch_size
         self.pin_memory = pin_memory
         self.drop_last = drop_last
+        self.split_seed = split_seed
+
+        # Plumb-through for dataset construction
+        self.preprocessor = preprocessor
+        self._fallback_resolution = resolution
+        self.transform = transform
+        self.model_type = model_type
+
+        self.persistent_workers = persistent_workers
+        self.prefetch_factor = prefetch_factor
+
+        if kwargs:
+            print(f"Warning: Unused config keys passed to DataModule: {list(kwargs.keys())}")
 
         self.train_set = None
         self.val_set = None
         self.test_set = None
 
+    @property
+    def batch_size(self) -> int:
+        """
+        Dynamically read batch_size from cfg.data.batch_size.
+
+        This ensures that hyperparameter optimization updates are reflected
+        in the datamodule without needing to rebuild it.
+
+        Returns:
+            Current batch_size from cfg.data.batch_size, or fallback value
+        """
+        if self.cfg is not None and hasattr(self.cfg, 'data') and hasattr(self.cfg.data, 'batch_size'):
+            return int(self.cfg.data.batch_size)
+        return self._fallback_batch_size
+
+    @property
+    def resolution(self) -> int:
+        """
+        Dynamically read resolution/image_size from cfg.data.image_size.
+
+        This ensures consistency across the codebase - all image sizes
+        come from a single source of truth (cfg.data.image_size).
+
+        Returns:
+            Current image_size from cfg.data.image_size, or fallback value
+        """
+        if self.cfg is not None and hasattr(self.cfg, 'data') and hasattr(self.cfg.data, 'image_size'):
+            return int(self.cfg.data.image_size)
+        return self._fallback_resolution
+
     # ------------------------------------------------------------------
     def setup(self, stage: Optional[str] = None):
         """
-        Called once to initialize datasets.
-        stage: 'fit' | 'validate' | 'test' | None
-        """
-        ds_full = get_dataset(self.dataset_name, self.data_dir, split="train", cfg=self.cfg)
-        n_total = len(ds_full)
-        n_val = int(0.1 * n_total)
-        n_train = n_total - n_val
-        self.train_set, self.val_set = random_split(ds_full, [n_train, n_val])
+        Initialize datasets. Must be overridden by subclasses.
 
-        # test set
-        self.test_set = get_dataset(self.dataset_name, self.data_dir, split="test", cfg=self.cfg)
+        Args:
+            _stage: Current stage of training pipeline (unused but kept for API compatibility)
+
+        Raises:
+            NotImplementedError: This is an abstract method that must be implemented by subclasses
+        """
+        raise NotImplementedError(
+            f"{self.__class__.__name__} must implement setup() method. "
+            "Use a specific datamodule like ISICDataModule instead of BaseDataModule directly."
+        )
 
     # ------------------------------------------------------------------
     def train_dataloader(self):
         return DataLoader(
-            self.train_set,
-            batch_size=self.batch_size,
+            self.train_set, 
+            batch_size=self.batch_size, 
             shuffle=True,
-            num_workers=self.num_workers,
-            pin_memory=self.pin_memory,
+            num_workers=self.num_workers, 
+            pin_memory=self.pin_memory, 
             drop_last=self.drop_last,
+            persistent_workers=self.persistent_workers, 
+            prefetch_factor=self.prefetch_factor        
         )
 
     def val_dataloader(self):
         return DataLoader(
-            self.val_set,
-            batch_size=self.batch_size,
+            self.val_set, 
+            batch_size=self.batch_size, 
             shuffle=False,
-            num_workers=self.num_workers,
+            num_workers=self.num_workers, 
             pin_memory=self.pin_memory,
+            persistent_workers=self.persistent_workers,
+            prefetch_factor=self.prefetch_factor        
         )
 
     def test_dataloader(self):
+        if self.test_set is None:
+            return DataLoader(Subset(self.val_set, []), batch_size=self.batch_size)
+            
         return DataLoader(
-            self.test_set,
-            batch_size=self.batch_size,
+            self.test_set, 
+            batch_size=self.batch_size, 
             shuffle=False,
-            num_workers=self.num_workers,
+            num_workers=self.num_workers, 
             pin_memory=self.pin_memory,
+            persistent_workers=self.persistent_workers, 
+            prefetch_factor=self.prefetch_factor       
         )

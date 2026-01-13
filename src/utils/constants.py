@@ -7,7 +7,7 @@
 # ---------------------------------------------------------------------------
 
 # Hugging Face vision models supported by the unified factory
-HF_MODELS = {"vit", "dinov2"}
+HF_MODELS = {"vit", "dinov2", "dinov3"}
 
 # ---------------------------------------------------------------------------
 # Dataset defaults

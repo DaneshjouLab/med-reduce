@@ -1,0 +1,137 @@
+# Configuration for local ISIC dataset
+# Use this when loading data from local files instead of HuggingFace Hub
+
+# Global settings
+seed: 42
+
+datamodule:
+  _target_: src.data.isic_datamodule.ISICDataModule
+  dataset_name: null  # Set to null for local data
+  data_dir: /scratch/groups/roxanad/datasets/isic/challenges/2017/ISIC-2017_Training_Data/ISIC-2017_Training_Data
+  num_workers: 8
+  persistent_workers: false
+  prefetch_factor: 2
+
+  # Local dataset configuration
+  local_label_file: /scratch/groups/roxanad/datasets/isic/challenges/2017/ISIC-2017_Training_Part3_GroundTruth.csv
+  local_image_id_column: image_id  # Column containing image IDs (e.g., "ISIC_0000000")
+  local_label_column: melanoma # [melanoma, seborrheic_keratosis]  # Can be single string or list of label columns
+  local_image_extension: .jpg
+
+  filtered_classes: ["0.0", "1.0"]  # Strings of class labels
+  balance_data: true
+  num_train_images: 10000
+
+dataset:
+  # --- Mandatory Fields ---
+  name: null  # Not used for local data
+  data_dir: /scratch/groups/roxanad/datasets/isic/challenges/2017/ISIC-2017_Training_Data/ISIC-2017_Training_Data
+  num_workers: 8
+
+  # --- Optional Fields ---
+  pin_memory: True # Speed up data transfer to GPU
+
+  # --- Optional Degradation Group ---
+  degradation:
+    target_resolution: 128
+
+data:
+  batch_size: 256  # HPO will modify this value - datamodules must read from cfg.data.batch_size
+  image_size: 224
+
+# Training configuration
+train:
+  # Core training loop params
+  mode: "probe"
+  epochs: 10
+  grad_clip: 1.0
+  mixed_precision: true
+  deterministic: false
+  log_interval: 50
+  metric_key: "val_acc"
+
+  # Optimizer configuration (used by optim.py)
+  optimizer:
+    name: "adamw"  # Options: "adamw", "sgd"
+    lr: 5e-5
+    weight_decay: 0.001
+    betas: [0.9, 0.999]  # For AdamW
+    eps: 1e-8  # For AdamW
+
+  # Scheduler configuration (used by optim.py)
+  scheduler:
+    name: "cosine"  # Options: "cosine", "step", "plateau", "none"
+    epochs: 5  # Total epochs for scheduler (should match train.epochs)
+    warmup_epochs: 0  # Number of warmup epochs
+    min_lr: 1e-6  # Minimum learning rate for cosine annealing
+
+  # Cross-validation params
+  k_folds: 5  # Use 5-fold CV for hyperparameter tuning
+  subset_frac: 1.0
+  seed: 42
+
+  # Data ablation params
+  proportion_per_transform: 0.2
+
+  # Hyperparameter search configuration
+  hyperparam_search:
+    enabled: true  # Set to true to enable hyperparameter search
+    n_samples: 15  # Number of random hyperparameter combinations to try
+    subset_frac: 0.1  # Use 10% of data for hyperparameter search (faster)
+    use_cv: true  # Use single train/val split for search, then 5-fold CV for best
+    param_grid:
+      lr: [1e-5, 5e-5, 1e-4]
+      weight_decay: [0.001, 0.01]
+      batch_size: [128, 256]
+      label_smoothing: [0.0, 0.1]
+
+# Loss configuration
+loss:
+  label_smoothing: 0.0
+  ignore_index: -100
+  reduction: "mean"
+
+# Logging configuration
+logging:
+  project: "compressed-perception"
+  run_name: "dinov3_probe_local_224_run"
+  wandb_enabled: true
+  save_umap_embeddings: false
+  umap_max_samples: 15
+  save_checkpoints: true  # Save best model checkpoint from each fold
+
+# Distillation configuration (for knowledge distillation training)
+distillation:
+  enabled: false  # Set to true to enable distillation
+
+  # Teacher model configuration
+  teacher_model:
+    name: "dinov3"
+    model_id: "facebook/dinov3-vits16-pretrain-lvd1689m"
+    type: "dinov3"
+
+  # Teacher embedding cache settings
+  use_cached_embeddings: true  # Use pre-cached embeddings (recommended)
+  teacher_cache_dir: "/scratch/groups/roxanad/compressed_perception/cache/teacher_embeddings"  # Where to store/load cached embeddings
+  full_resolution: 224  # Full resolution for teacher embeddings
+
+  # Distillation loss weights
+  alpha: 0.5  # Weight for cosine embedding loss
+  beta: 0.5   # Weight for KL divergence on logits
+  gamma: 0.0  # Weight for CE loss on ground truth (0 = pure distillation)
+  temperature: 2.0  # Temperature for KL divergence
+
+# Runtime configuration
+# Note: Hydra automatically creates outputs/YYYY-MM-DD/HH-MM-SS/
+# No need to manually specify run_dir - it's set by Hydra
+# For custom paths, use Hydra's hydra.run.dir override
+runtime: {}
+
+# --- DINOv3 Model ---
+model:
+  name: "dinov3"
+  model_id: "facebook/dinov3-vits16-pretrain-lvd1689m"
+  type: "dinov3"
+  config:
+    num_labels: 2
+    image_size: 224

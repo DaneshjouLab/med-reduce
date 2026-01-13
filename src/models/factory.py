@@ -27,9 +27,10 @@ except Exception:
 # --- Project constants (small change from your code: avoid importing configs directly) ---
 try:
     from src.utils.constants import HF_MODELS  # e.g., {"vit", "dinov2"}
-except Exception:
-    # Fallback if constants not present yet
-    HF_MODELS = {"vit", "dinov2"}
+except ImportError:
+    HF_MODELS = {"vit", "dinov2", "dinov3"}
+
+from src.models.dinov3 import DINOv3ForImageClassification, DINOv3Config
 
 
 # ---------------------------------------------------------------------------
@@ -69,8 +70,19 @@ def create_model(model_info: Dict[str, Any], resolution: int = 224):
             image_size=resolution,
         )
 
-    # --- Optional timm branch (kept minimal, no breaking changes) ---
-    elif model_type == "timm":
+    if model_type == "dinov3":
+        dinov3_config = DINOv3Config(
+            backbone_model_id=model_id,
+            num_labels=config["num_labels"],
+            hidden_size=config.get("hidden_size", 384),
+            dropout_rate=config.get("dropout_rate", 0.1),
+            use_quantization=config.get("use_quantization", False),
+            use_safetensors=True
+        )
+        return DINOv3ForImageClassification(dinov3_config)
+
+    # --- timm ---
+    if model_type == "timm":
         if not _TIMM_AVAILABLE:
             raise RuntimeError("timm is not installed but model_type='timm' was requested.")
         num_classes = int(config.get("num_labels", 1000))
@@ -118,7 +130,10 @@ def create_preprocessor(model_info: Dict[str, Any], resolution: int = 224):
             image_std=[0.229, 0.224, 0.225],
         )
 
-    elif model_type == "timm":
+    if model_type == "dinov3":
+        return AutoImageProcessor.from_pretrained("facebook/dinov3-vits16-pretrain-lvd1689m")
+
+    if model_type == "timm":
         # timm uses torchvision transforms; return None and build transforms in your datamodule
         return None
 

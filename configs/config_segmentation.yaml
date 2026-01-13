@@ -1,0 +1,114 @@
+# Configuration for ISIC segmentation dataset
+# Use this when training segmentation models on local image/mask directories
+
+# Global settings
+seed: 42
+
+datamodule:
+  _target_: src.data.isic_datamodule.ISICSegDataModule
+
+  # Directory-based loading (recommended for segmentation)
+  # Provide image_dir and mask_dir pointing to your data
+  image_dir: /scratch/groups/roxanad/datasets/isic/challenges/2017/ISIC-2017_Training_Data/ISIC-2017_Training_Data  # Directory containing images (e.g., ISIC_0000000.jpg)
+  mask_dir: /scratch/groups/roxanad/datasets/isic/challenges/2017/ISIC-2017_Test_v2_Part1_GroundTruth/ISIC-2017_Test_v2_Part1_GroundTruth    # Directory containing masks (e.g., ISIC_0000000_segmentation.png)
+
+  # File matching parameters
+  image_extension: .jpg              # Extension for image files
+  mask_extension: .png               # Extension for mask files
+  mask_suffix: _segmentation         # Suffix to append to image name to get mask name
+                                     # e.g., if image is "ISIC_0000000.jpg", mask is "ISIC_0000000_segmentation.png"
+
+  # DataLoader parameters
+  num_workers: 8
+  persistent_workers: false
+  prefetch_factor: 2
+  pin_memory: true
+  drop_last: false
+  split_seed: 42
+
+
+dataset:
+  name: null                         # Not used for segmentation
+  data_dir: null
+  num_workers: 8
+  pin_memory: true
+
+data:
+  batch_size: 16
+  image_size: 256
+
+# Training configuration
+train:
+  # Core training loop params
+  mode: "segmentation"               # Set to "segmentation" for segmentation tasks
+  epochs: 50
+  grad_clip: 1.0
+  mixed_precision: true
+  deterministic: false
+  log_interval: 50
+  metric_key: "val_dice"             # Dice coefficient is common for segmentation
+
+  # Optimizer configuration
+  optimizer:
+    name: "adamw"
+    lr: 1e-4                         # Typical learning rate for segmentation
+    weight_decay: 0.01
+    betas: [0.9, 0.999]
+    eps: 1e-8
+
+  # Scheduler configuration
+  scheduler:
+    name: "cosine"
+    epochs: 50
+    warmup_epochs: 5                 # Warmup helps with segmentation training
+    min_lr: 1e-6
+
+  # Cross-validation params
+  k_folds: 5
+  subset_frac: 1.0
+  seed: 42
+
+  # Hyperparameter search configuration
+  # For segmentation, also tune decoder_dropout
+  hyperparam_search:
+    enabled: false
+    use_cv: true
+    load_from_file: null
+    param_grid:
+      lr: [1e-4, 3e-4, 1e-3]
+      weight_decay: [0.0, 1e-4, 1e-3]
+      batch_size: [8, 16]
+      decoder_dropout: [0.0, 0.1, 0.3]  # Segmentation-specific
+
+# Loss configuration
+loss:
+  # For segmentation, you might use different losses like Dice, Focal, etc.
+  # This is just a placeholder - adjust based on your segmentation model
+  label_smoothing: 0.0
+  ignore_index: -100
+  reduction: "mean"
+
+# Logging configuration
+logging:
+  project: "compressed-perception"
+  run_name: "segmentation_run"
+  wandb_enabled: true
+  save_umap_embeddings: false
+  umap_max_samples: 15
+  save_checkpoints: true
+
+# Distillation configuration
+distillation:
+  enabled: false
+
+# Runtime configuration
+runtime: {}
+
+# Model configuration (example - adjust based on your segmentation model)
+# This is a placeholder - you'll need to configure your actual segmentation model
+model:
+  name: "unet"                       # Example: UNet, DeepLabV3, etc.
+  # Add your segmentation model configuration here
+  config:
+    num_classes: 2                   # Binary segmentation (background + lesion)
+    image_size: 256
