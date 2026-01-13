@@ -19,7 +19,6 @@ datamodule:
                                      # e.g., if image is "ISIC_0000000.jpg", mask is "ISIC_0000000_segmentation.png"
 
   # DataLoader parameters
-  batch_size: 16                     # Smaller batch size for segmentation (memory intensive)
   num_workers: 8
   persistent_workers: false
   prefetch_factor: 2
@@ -27,16 +26,16 @@ datamodule:
   drop_last: false
   split_seed: 42
 
-  # Image size for model input
-  image_size: 256                    # Segmentation models typically use 256x256 or 512x512
 
 dataset:
   name: null                         # Not used for segmentation
   data_dir: null
-  image_size: 256
-  batch_size: 16
   num_workers: 8
   pin_memory: true
+
+data:
+  batch_size: 16
+  image_size: 256
 
 # Training configuration
 train:
@@ -103,8 +102,7 @@ distillation:
   enabled: false
 
 # Runtime configuration
-runtime:
-  run_dir: "./runs/segmentation"
+runtime: {}
 
 # Model configuration (example - adjust based on your segmentation model)
 # This is a placeholder - you'll need to configure your actual segmentation model

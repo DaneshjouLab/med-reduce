@@ -8,17 +8,15 @@ datamodule:
   _target_: src.data.isic_datamodule.ISICDataModule
   dataset_name: null  # Set to null for local data
   data_dir: /scratch/groups/roxanad/datasets/isic/challenges/2017/ISIC-2017_Training_Data/ISIC-2017_Training_Data
-  batch_size: 256
   num_workers: 8
   persistent_workers: false
   prefetch_factor: 2
-  image_size: 224  # Match this to model.config.image_size below
 
   # Local dataset configuration
-  local_label_file: /scratch/groups/roxanad/datasets/isic/challenges/2017/ISIC-2017_Training_Part3_GroundTruth.csv  
+  local_label_file: /scratch/groups/roxanad/datasets/isic/challenges/2017/ISIC-2017_Training_Part3_GroundTruth.csv
   local_image_id_column: image_id  # Column containing image IDs (e.g., "ISIC_0000000")
   local_label_column: melanoma # [melanoma, seborrheic_keratosis]  # Can be single string or list of label columns
-  local_image_extension: .jpg  
+  local_image_extension: .jpg
 
   filtered_classes: ["0.0", "1.0"]  # Strings of class labels
   balance_data: true
@@ -28,8 +26,6 @@ dataset:
   # --- Mandatory Fields ---
   name: null  # Not used for local data
   data_dir: /scratch/groups/roxanad/datasets/isic/challenges/2017/ISIC-2017_Training_Data/ISIC-2017_Training_Data
-  image_size: 224
-  batch_size: 128
   num_workers: 8
 
   # --- Optional Fields ---
@@ -38,6 +34,10 @@ dataset:
   # --- Optional Degradation Group ---
   degradation:
     target_resolution: 128
+
+data:
+  batch_size: 256  # HPO will modify this value - datamodules must read from cfg.data.batch_size
+  image_size: 224
 
 # Training configuration
 train:
@@ -121,9 +121,11 @@ distillation:
   gamma: 0.0  # Weight for CE loss on ground truth (0 = pure distillation)
   temperature: 2.0  # Temperature for KL divergence
 
-# Runtime configuration (will be populated by main())
-runtime:
-  run_dir: "/scratch/groups/roxanad/compressed_perception/runs/probe"    # Output directory
+# Runtime configuration
+# Note: Hydra automatically creates outputs/YYYY-MM-DD/HH-MM-SS/
+# No need to manually specify run_dir - it's set by Hydra
+# For custom paths, use Hydra's hydra.run.dir override
+runtime: {}
 
 # --- DINOv3 Model ---
 model:

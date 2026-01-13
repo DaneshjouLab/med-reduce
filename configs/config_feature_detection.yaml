@@ -21,7 +21,6 @@ datamodule:
                                                 # superpixel is "ISIC_0000000_superpixels.png"
 
   # DataLoader parameters
-  batch_size: 8                                 # Small batch size (feature detection is memory intensive)
   num_workers: 8
   persistent_workers: false
   prefetch_factor: 2
@@ -29,16 +28,17 @@ datamodule:
   drop_last: false
   split_seed: 42
 
-  # Image size for model input
-  image_size: 256                               # Typical size for feature detection
 
 dataset:
   name: null                                    # Not used for feature detection
   data_dir: null
-  image_size: 256
-  batch_size: 8
   num_workers: 8
   pin_memory: true
+
+# Data configuration
+data:
+  batch_size: 8                                 # Small batch size (feature detection is memory intensive)
+  image_size: 256
 
 # Training configuration
 train:
@@ -107,8 +107,7 @@ distillation:
   enabled: false
 
 # Runtime configuration
-runtime:
-  run_dir: "./runs/feature_detection"
+runtime: {}
 
 # Model configuration
 # This is a placeholder - configure based on your feature detection model

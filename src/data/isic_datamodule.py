@@ -50,7 +50,8 @@ class ISICDataModule(BaseDataModule):
         **kwargs # Catch-all for any other parameters from BaseDataModule
     ):
         self.full_cfg = full_cfg
-        self.image_size = image_size
+        # Store fallback but prefer cfg.data.image_size at runtime
+        self._fallback_image_size = image_size
 
         super().__init__(
             cfg=full_cfg,
@@ -155,6 +156,19 @@ class ISICDataModule(BaseDataModule):
         wrapper.ds = dataset
         return wrapper
 
+    @property
+    def image_size(self) -> int:
+        """
+        Dynamically read image_size from cfg.data.image_size.
+
+        This ensures consistency - all image sizes come from cfg.data.image_size.
+
+        Returns:
+            Current image_size from cfg.data.image_size, or fallback value
+        """
+        if self.full_cfg is not None and hasattr(self.full_cfg, 'data') and hasattr(self.full_cfg.data, 'image_size'):
+            return int(self.full_cfg.data.image_size)
+        return self._fallback_image_size
 
     def setup(self, _stage: Optional[str] = None):
         """Initialize datasets using ISICHFRawSplit with balancing."""
@@ -278,7 +292,8 @@ class ISICSegDataModule(BaseDataModule):
         **kwargs
     ):
         self.full_cfg = full_cfg
-        self.image_size = image_size
+        # Store fallback but prefer cfg.data.image_size at runtime
+        self._fallback_image_size = image_size
 
         super().__init__(
             cfg=full_cfg,
@@ -376,6 +391,20 @@ class ISICSegDataModule(BaseDataModule):
 
         print(f"Dataset loaded: {len(dataset)} samples")
         return dataset
+
+    @property
+    def image_size(self) -> int:
+        """
+        Dynamically read image_size from cfg.data.image_size.
+
+        This ensures consistency - all image sizes come from cfg.data.image_size.
+
+        Returns:
+            Current image_size from cfg.data.image_size, or fallback value
+        """
+        if self.full_cfg is not None and hasattr(self.full_cfg, 'data') and hasattr(self.full_cfg.data, 'image_size'):
+            return int(self.full_cfg.data.image_size)
+        return self._fallback_image_size
 
     def setup(self, _stage: Optional[str] = None):
         """Initialize datasets using ISICSegRawSplit for segmentation."""
@@ -500,7 +529,8 @@ class ISICFeatureDataModule(BaseDataModule):
         **kwargs
     ):
         self.full_cfg = full_cfg
-        self.image_size = image_size
+        # Store fallback but prefer cfg.data.image_size at runtime
+        self._fallback_image_size = image_size
 
         super().__init__(
             cfg=full_cfg,
@@ -560,6 +590,20 @@ class ISICFeatureDataModule(BaseDataModule):
 
         print(f"Dataset loaded: {len(dataset)} samples")
         return dataset
+
+    @property
+    def image_size(self) -> int:
+        """
+        Dynamically read image_size from cfg.data.image_size.
+
+        This ensures consistency - all image sizes come from cfg.data.image_size.
+
+        Returns:
+            Current image_size from cfg.data.image_size, or fallback value
+        """
+        if self.full_cfg is not None and hasattr(self.full_cfg, 'data') and hasattr(self.full_cfg.data, 'image_size'):
+            return int(self.full_cfg.data.image_size)
+        return self._fallback_image_size
 
     def setup(self, _stage: Optional[str] = None):
         """Initialize datasets for feature detection."""

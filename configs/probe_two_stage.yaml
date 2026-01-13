@@ -9,8 +9,7 @@
 #     D2: Final training at each resolution R with fixed hyperparameters
 
 # Runtime configuration
-runtime:
-  run_dir: /scratch/groups/roxanad/users/sonnet/compressed_perception/runs/probe_two_stage
+runtime: {}
 
 domain: "dermatology"  # Options (eventually): dermatology, radiology, pathology
 
@@ -24,7 +23,6 @@ datamodule:
   _target_: src.data.isic_datamodule_persistent.ISICDataModulePersistent
   dataset_name: null  # Set to null for local data
   data_dir: /scratch/groups/roxanad/datasets/isic/challenges/2017/merged_isic_2017_data/images
-  batch_size: 256
   num_workers: 8
   pin_memory: true
   persistent_workers: false
@@ -35,7 +33,7 @@ datamodule:
 
   # Local dataset configuration
   local_label_file: /scratch/groups/roxanad/datasets/isic/challenges/2017/merged_isic_2017_data/merged_ground_truth_part3.csv
-  local_image_id_column: image_id 
+  local_image_id_column: image_id
   local_label_column: melanoma
   local_image_extension: .jpg
 

@@ -17,6 +17,7 @@ from omegaconf import DictConfig, OmegaConf  # pylint: disable=import-error
 
 # ---- Training wrappers (each provides run(cfg) -> dict of metrics)
 from src.wrappers import probe as probe_wrapper  # pylint: disable=import-error
+from src.wrappers import segmentation_cv  # pylint: disable=import-error
 
 # ---- Data pipeline
 from src.data.datamodule import BaseDataModule  # pylint: disable=import-error
@@ -86,8 +87,10 @@ def _dispatch_wrapper(cfg: DictConfig) -> Dict[str, Any]:
         return probe_wrapper.run(cfg)
     elif mode == "distill":
         return distill_wrapper.run(cfg)
+    elif mode == "segmentation":
+        return segmentation_cv.run(cfg)
     raise ValueError(
-        f"Unknown train.mode='{cfg.train.mode}'. Expected one of: probe | distill"
+        f"Unknown train.mode='{cfg.train.mode}'. Expected one of: probe | distill | segmentation"
     )
 
 def _ensure_keys(d: DictConfig, keys_defaults: Dict[str, Any]) -> None:

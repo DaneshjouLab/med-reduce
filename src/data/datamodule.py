@@ -41,34 +41,69 @@ class BaseDataModule:
         persistent_workers: bool = False,
         prefetch_factor: int = 2,
         **kwargs,
-    ): 
+    ):
         """
         Initialize the DataModule.
+
+        IMPORTANT: batch_size parameter is kept for backward compatibility,
+        but the datamodule will dynamically read from cfg.data.batch_size
+        at runtime to support hyperparameter optimization.
         """
         self.cfg = cfg
         self.dataset_name = dataset_name
         self.data_dir = data_dir
         self.num_workers = num_workers
-        self.batch_size = batch_size
+        # Store fallback batch_size, but prefer cfg.data.batch_size at runtime
+        self._fallback_batch_size = batch_size
         self.pin_memory = pin_memory
         self.drop_last = drop_last
         self.split_seed = split_seed
 
         # Plumb-through for dataset construction
         self.preprocessor = preprocessor
-        self.resolution = resolution
+        self._fallback_resolution = resolution
         self.transform = transform
         self.model_type = model_type
 
         self.persistent_workers = persistent_workers
         self.prefetch_factor = prefetch_factor
-        
+
         if kwargs:
             print(f"Warning: Unused config keys passed to DataModule: {list(kwargs.keys())}")
 
         self.train_set = None
         self.val_set = None
         self.test_set = None
+
+    @property
+    def batch_size(self) -> int:
+        """
+        Dynamically read batch_size from cfg.data.batch_size.
+
+        This ensures that hyperparameter optimization updates are reflected
+        in the datamodule without needing to rebuild it.
+
+        Returns:
+            Current batch_size from cfg.data.batch_size, or fallback value
+        """
+        if self.cfg is not None and hasattr(self.cfg, 'data') and hasattr(self.cfg.data, 'batch_size'):
+            return int(self.cfg.data.batch_size)
+        return self._fallback_batch_size
+
+    @property
+    def resolution(self) -> int:
+        """
+        Dynamically read resolution/image_size from cfg.data.image_size.
+
+        This ensures consistency across the codebase - all image sizes
+        come from a single source of truth (cfg.data.image_size).
+
+        Returns:
+            Current image_size from cfg.data.image_size, or fallback value
+        """
+        if self.cfg is not None and hasattr(self.cfg, 'data') and hasattr(self.cfg.data, 'image_size'):
+            return int(self.cfg.data.image_size)
+        return self._fallback_resolution
 
     # ------------------------------------------------------------------
     def setup(self, stage: Optional[str] = None):

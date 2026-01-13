@@ -68,7 +68,8 @@ class ISICDataModulePersistent(BaseDataModule):
         **kwargs
     ):
         self.full_cfg = full_cfg
-        self.image_size = image_size
+        # Store fallback but prefer cfg.data.image_size at runtime
+        self._fallback_image_size = image_size
 
         super().__init__(
             cfg=full_cfg,
@@ -190,6 +191,20 @@ class ISICDataModulePersistent(BaseDataModule):
             log.warning(f"Could not extract labels for stratification: {e}")
 
         return None
+
+    @property
+    def image_size(self) -> int:
+        """
+        Dynamically read image_size from cfg.data.image_size.
+
+        This ensures consistency - all image sizes come from cfg.data.image_size.
+
+        Returns:
+            Current image_size from cfg.data.image_size, or fallback value
+        """
+        if self.full_cfg is not None and hasattr(self.full_cfg, 'data') and hasattr(self.full_cfg.data, 'image_size'):
+            return int(self.full_cfg.data.image_size)
+        return self._fallback_image_size
 
     def setup(self, _stage: Optional[str] = None):
         """Initialize datasets with persistent splits."""
@@ -335,7 +350,8 @@ class ISICSegDataModulePersistent(BaseDataModule):
         **kwargs
     ):
         self.full_cfg = full_cfg
-        self.image_size = image_size
+        # Store fallback but prefer cfg.data.image_size at runtime
+        self._fallback_image_size = image_size
 
         super().__init__(
             cfg=full_cfg,
@@ -406,6 +422,20 @@ class ISICSegDataModulePersistent(BaseDataModule):
             raise ValueError(f"Unknown data source: {self.data_source}")
 
         return wrapper
+
+    @property
+    def image_size(self) -> int:
+        """
+        Dynamically read image_size from cfg.data.image_size.
+
+        This ensures consistency - all image sizes come from cfg.data.image_size.
+
+        Returns:
+            Current image_size from cfg.data.image_size, or fallback value
+        """
+        if self.full_cfg is not None and hasattr(self.full_cfg, 'data') and hasattr(self.full_cfg.data, 'image_size'):
+            return int(self.full_cfg.data.image_size)
+        return self._fallback_image_size
 
     def setup(self, _stage: Optional[str] = None):
         """Initialize segmentation datasets with persistent splits."""
