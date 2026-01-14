@@ -346,6 +346,14 @@ class ISICSegDataModule(BaseDataModule):
                 "  3. dataset_name (for HuggingFace Hub)"
             )
 
+        # Set dataset_identifier for logging/tracking
+        if self.data_source == "local_dirs":
+            self.dataset_identifier = os.path.basename(image_dir.rstrip("/\\"))
+        elif self.data_source == "csv":
+            self.dataset_identifier = os.path.basename(data_dir.rstrip("/\\"))
+        else:  # remote_hf
+            self.dataset_identifier = dataset_name.replace("/", "_")
+
     def _load_split(
         self,
         split: str = "train",
@@ -564,6 +572,10 @@ class ISICFeatureDataModule(BaseDataModule):
             raise ValueError(f"superpixel_dir must be a valid directory: {superpixel_dir}")
         if not os.path.isdir(annotation_dir):
             raise ValueError(f"annotation_dir must be a valid directory: {annotation_dir}")
+
+        # Set dataset_identifier for logging/tracking
+        clean_dir = image_dir.rstrip("/\\")
+        self.dataset_identifier = f"isic_feature_{os.path.basename(clean_dir)}"
 
     def _load_split(
         self,

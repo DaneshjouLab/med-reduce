@@ -242,7 +242,7 @@ def main():
     parser.add_argument(
         "--config",
         type=str,
-        default="configs/probe_two_stage.yaml",
+        default="configs/probe_two_stage",
         help="Path to config file",
     )
 

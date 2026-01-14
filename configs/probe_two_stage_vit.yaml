@@ -1,9 +1,9 @@
-# Two-Stage Linear Probing Configuration
+# Two-Stage Linear Probing Configuration - ViT
 #
 # Pipeline:
 # (A) Data loading & split definition - consistent splits across all experiments
 # (B) Image preprocessing - clean images at target resolution
-# (C) Frozen DINOv3 encoder - extract and cache embeddings
+# (C) Frozen ViT encoder - extract and cache embeddings
 # (D) Linear Probing - two-stage process
 #     D1: Hyperparameter tuning at full resolution R* (5-fold CV)
 #     D2: Final training at each resolution R with fixed hyperparameters
@@ -44,17 +44,16 @@ datamodule:
   force_recompute_embeddings: false
 
 data:
-  image_size: 512  # Resolution R for this experiment
+  image_size: 512
   batch_size: 256
 
 model:
-  name: "dinov3"
-  model_id: "facebook/dinov3-vits16-pretrain-lvd1689m"
-  type: "dinov3"
+  name: "vit"
+  model_id: "google/vit-base-patch16-224"  # Options: google/vit-base-patch16-384, google/vit-large-patch16-224
+  type: "vit"
   config:
     num_labels: 2
-    hidden_size: 384
-    dropout_rate: 0.1
+    ignore_mismatched_sizes: true
 
 train:
   epochs: 100
@@ -85,10 +84,8 @@ train:
       lr: [1e-4, 3e-4, 1e-3]
       weight_decay: [0, 1e-4, 1e-3]
       batch_size: [32, 64]
-      # Uncomment for segmentation tasks:
-      # decoder_dropout: [0.0, 0.1, 0.3]
 
-    load_from_file: "/scratch/groups/roxanad/users/sonnet/compressed_perception/runs/probe_two_stage/hyperparam_search/best_hyperparameters.json"
+    load_from_file: "/scratch/groups/roxanad/users/sonnet/compressed_perception/runs/probe_two_stage_vit/hyperparam_search/best_hyperparameters.json"
 
 loss:
   label_smoothing: 0.0
@@ -97,6 +94,6 @@ loss:
 
 logging:
   project: "two-stage-linear-probe"
-  run_name: "dinov3_isic_512px"
+  run_name: "vit_isic_512px"
   wandb_enabled: true
   save_checkpoints: true

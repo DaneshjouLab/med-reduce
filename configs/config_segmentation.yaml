@@ -104,11 +104,15 @@ distillation:
 # Runtime configuration
 runtime: {}
 
-# Model configuration (example - adjust based on your segmentation model)
-# This is a placeholder - you'll need to configure your actual segmentation model
+# Model configuration
 model:
-  name: "unet"                       # Example: UNet, DeepLabV3, etc.
-  # Add your segmentation model configuration here
+  name: "dinov3_segmentation"        # DINOv3 with segmentation head
+  model_id: "facebook/dinov3-vits16-pretrain-lvd1689m"
+  type: "dinov3_segmentation"
+  freeze_backbone: true              # Train only segmentation head (fast, efficient)
   config:
-    num_classes: 2                   # Binary segmentation (background + lesion)
-    image_size: 256
+    num_classes: 1                   # Binary segmentation (1 output channel for lesion)
+    hidden_size: 384                 # DINOv3 small hidden size
+    dropout_rate: 0.1                # Dropout in segmentation head
+    loss_type: "dice_bce"            # Combined Dice + BCE loss
+    dice_weight: 0.5                 # Weight for Dice loss (0.5 = equal weight)
