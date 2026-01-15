@@ -130,8 +130,9 @@ def _update_history_and_log(  # pylint: disable=too-many-arguments
     epoch: int,
     train_loss: float,
     val_loss: float,
-    val_acc: float,
     cur_lr: float,
+    metrics: Optional[Dict[str, float]] = None,
+    val_acc: Optional[float] = None,
     val_auroc: Optional[float] = None,
     wandb_logger: Optional[Any] = None,
     log: Optional[Any] = None,
@@ -143,19 +144,34 @@ def _update_history_and_log(  # pylint: disable=too-many-arguments
         epoch: Current epoch number.
         train_loss: Training loss for current epoch.
         val_loss: Validation loss for current epoch.
-        val_acc: Validation accuracy for current epoch.
         cur_lr: Current learning rate.
-        val_auroc: Optional validation AUROC for current epoch.
+        metrics: Dictionary of validation metrics to log (e.g., {"val_dice": 0.85, "val_iou": 0.72}).
+                 Keys should match the keys in history dict. Preferred over val_acc/val_auroc.
+        val_acc: (Deprecated) Use metrics dict instead. Validation accuracy for current epoch.
+        val_auroc: (Deprecated) Use metrics dict instead. Validation AUROC for current epoch.
         wandb_logger: Optional wandb logger instance.
         log: Optional logger instance.
     """
-    # Update history
+    # Update history for loss and lr
     history["train_loss"].append(train_loss)
     history["val_loss"].append(val_loss)
-    history["val_acc"].append(val_acc)
-    if val_auroc is not None and "val_auroc" in history:
-        history["val_auroc"].append(val_auroc)
     history["lr"].append(cur_lr)
+
+    # Build metrics dict from either new `metrics` param or legacy params
+    all_metrics: Dict[str, float] = {}
+    if metrics is not None:
+        all_metrics.update(metrics)
+    else:
+        # Legacy support: use val_acc and val_auroc if metrics not provided
+        if val_acc is not None:
+            all_metrics["val_acc"] = val_acc
+        if val_auroc is not None:
+            all_metrics["val_auroc"] = val_auroc
+
+    # Update history for each metric
+    for key, value in all_metrics.items():
+        if key in history:
+            history[key].append(value)
 
     # Log to wandb if available
     if wandb_logger:
@@ -163,34 +179,36 @@ def _update_history_and_log(  # pylint: disable=too-many-arguments
             "epoch": epoch,
             "train/loss_epoch": train_loss,
             "val/loss": val_loss,
-            "val/acc": val_acc,
             "lr": cur_lr,
         }
-        if val_auroc is not None:
-            log_dict["val/auroc"] = val_auroc
+        # Add all metrics with val/ prefix for wandb
+        for key, value in all_metrics.items():
+            # Convert val_xxx to val/xxx for wandb naming convention
+            wandb_key = key.replace("val_", "val/") if key.startswith("val_") else f"val/{key}"
+            log_dict[wandb_key] = value
         wandb_logger.log(log_dict)
 
     # Log to console if logger is available
     if log:
-        if val_auroc is not None:
+        metric_parts = [f"{k}={v:.4f}" for k, v in all_metrics.items()]
+        metric_str = " | ".join(metric_parts)
+        if metric_str:
             log.info(
-                "Epoch %d | train_loss=%.4f | val_loss=%.4f | val_acc=%.4f | val_auroc=%.4f | lr=%.2e",
+                "Epoch %d | train_loss=%.4f | val_loss=%.4f | %s | lr=%.2e",
                 epoch,
                 train_loss,
                 val_loss,
-                val_acc,
-                val_auroc,
+                metric_str,
                 cur_lr,
             )
         else:
             log.info(
-                "Epoch %d | train_loss=%.4f | val_loss=%.4f | val_acc=%.4f | lr=%.2e",
+                "Epoch %d | train_loss=%.4f | val_loss=%.4f | lr=%.2e",
                 epoch,
                 train_loss,
                 val_loss,
-                val_acc,
                 cur_lr,
-        )
+            )
 
 
 def _is_metric_better(

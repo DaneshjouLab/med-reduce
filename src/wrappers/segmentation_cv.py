@@ -20,6 +20,7 @@ import os
 import copy
 import json
 import itertools
+import traceback
 import torch
 import numpy as np
 import hydra
@@ -515,6 +516,7 @@ class SegmentationCVWrapper:
 
             except Exception as e:
                 log.error(f"✗ Trial {i} failed: {e}")
+                log.error(f"Full traceback:\n{traceback.format_exc()}")
                 result_entry = {
                     "trial": i,
                     "params": params,
@@ -529,7 +531,9 @@ class SegmentationCVWrapper:
         valid_results = [r for r in results if r["mean_metric"] != float('-inf')]
 
         if not valid_results:
-            raise RuntimeError(f"All hyperparameter trials failed!")
+            errors = [r.get("error", "Unknown error") for r in results if "error" in r]
+            error_summary = "\n".join(f"  Trial {i+1}: {e}" for i, e in enumerate(errors))
+            raise RuntimeError(f"All hyperparameter trials failed!\nErrors:\n{error_summary}")
 
         best_result = sorted(valid_results, key=lambda x: x["mean_metric"], reverse=reverse)[0]
         best_params = best_result["params"]

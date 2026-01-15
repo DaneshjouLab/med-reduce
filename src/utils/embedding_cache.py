@@ -59,6 +59,74 @@ class EmbeddingCache:
         self.dataset_dir = self.cache_dir / dataset_name / model_name
         self.dataset_dir.mkdir(parents=True, exist_ok=True)
 
+    def _extract_embeddings_from_model(self, model: torch.nn.Module, images: torch.Tensor) -> torch.Tensor:
+        """
+        Extract embeddings from different model architectures.
+
+        Handles:
+        - DINOv3: model.backbone (Dinov2Model)
+        - ViT (HuggingFace): model.vit (ViTModel)
+        - Generic models with forward returning embeddings
+
+        Args:
+            model: The encoder model
+            images: Input images tensor
+
+        Returns:
+            Embeddings tensor of shape (batch_size, embedding_dim)
+        """
+        # DINOv3 models have a 'backbone' attribute
+        if hasattr(model, 'backbone'):
+            outputs = model.backbone(pixel_values=images)
+            embeddings = outputs.pooler_output
+            if embeddings is None and hasattr(outputs, 'last_hidden_state'):
+                embeddings = outputs.last_hidden_state[:, 0, :]
+            return embeddings
+
+        # HuggingFace ViT models have a 'vit' attribute
+        if hasattr(model, 'vit'):
+            outputs = model.vit(pixel_values=images)
+            embeddings = outputs.pooler_output
+            if embeddings is None and hasattr(outputs, 'last_hidden_state'):
+                embeddings = outputs.last_hidden_state[:, 0, :]
+            return embeddings
+
+        # HuggingFace DINOv2 models may have different attribute names
+        if hasattr(model, 'dinov2'):
+            outputs = model.dinov2(pixel_values=images)
+            embeddings = outputs.pooler_output
+            if embeddings is None and hasattr(outputs, 'last_hidden_state'):
+                embeddings = outputs.last_hidden_state[:, 0, :]
+            return embeddings
+
+        # Try base_model for other HuggingFace models
+        if hasattr(model, 'base_model'):
+            outputs = model.base_model(pixel_values=images)
+            if hasattr(outputs, 'pooler_output') and outputs.pooler_output is not None:
+                return outputs.pooler_output
+            if hasattr(outputs, 'last_hidden_state'):
+                return outputs.last_hidden_state[:, 0, :]
+
+        # Fallback: call model directly and try to extract embeddings
+        outputs = model(images)
+        if isinstance(outputs, dict):
+            embeddings = outputs.get('pooler_output', outputs.get('last_hidden_state'))
+            if embeddings is not None and embeddings.dim() == 3:
+                embeddings = embeddings[:, 0, :]
+            return embeddings
+        if hasattr(outputs, 'pooler_output') and outputs.pooler_output is not None:
+            return outputs.pooler_output
+        if hasattr(outputs, 'last_hidden_state'):
+            return outputs.last_hidden_state[:, 0, :]
+
+        # If outputs is a tensor, assume it's already embeddings
+        if isinstance(outputs, torch.Tensor):
+            if outputs.dim() == 3:
+                return outputs[:, 0, :]
+            return outputs
+
+        raise ValueError(f"Could not extract embeddings from model type {type(model).__name__}")
+
     def _get_resolution_dir(self, resolution: int) -> Path:
         """Get directory for specific resolution."""
         return self.dataset_dir / f"{resolution}px"
@@ -151,13 +219,7 @@ class EmbeddingCache:
                 images = images.to(self.device)
 
                 with autocast(device_type=self.device.type, enabled=mixed_precision):
-                    if hasattr(model, 'backbone'):
-                        outputs = model.backbone(pixel_values=images)
-                        embeddings = outputs.pooler_output
-                    else:
-                        embeddings = model(images)
-                        if isinstance(embeddings, dict):
-                            embeddings = embeddings.get('pooler_output', embeddings.get('last_hidden_state'))
+                    embeddings = self._extract_embeddings_from_model(model, images)
 
                 all_embeddings.append(embeddings.cpu().float())
                 all_labels.append(labels.cpu().long())

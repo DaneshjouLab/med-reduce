@@ -18,20 +18,16 @@ def main(cfg: DictConfig):
     print("="*80)
     print("\nConfiguration:\n", OmegaConf.to_yaml(cfg), flush=True)
 
-    # Update runtime.run_dir with Hydra's output directory if it's still set to the default
+    # Update runtime.run_dir with Hydra's output directory if not explicitly configured
     hydra_output_dir = Path(hydra.core.hydra_config.HydraConfig.get().runtime.output_dir)
 
-    # If run_dir is set to a server path, keep it; otherwise use Hydra's output dir
-    if hasattr(cfg, 'runtime') and hasattr(cfg.runtime, 'run_dir'):
-        configured_run_dir = str(cfg.runtime.run_dir)
-        # Check if it's a local/relative path or server path
-        if not configured_run_dir.startswith('/scratch'):
-            # Use Hydra's output directory for local runs
-            cfg.runtime.run_dir = str(hydra_output_dir)
-            print(f"\n📁 Using Hydra output directory: {hydra_output_dir}")
+    # Use configured run_dir if it exists and is not empty, otherwise use Hydra's output dir
+    configured_run_dir = cfg.get('runtime', {}).get('run_dir', None)
+
+    if configured_run_dir and str(configured_run_dir).strip() and str(configured_run_dir) != '{}':
+        print(f"\n📁 Using configured run directory: {configured_run_dir}")
     else:
-        # No runtime.run_dir specified, use Hydra's
-        if not hasattr(cfg, 'runtime'):
+        if 'runtime' not in cfg:
             cfg.runtime = {}
         cfg.runtime.run_dir = str(hydra_output_dir)
         print(f"\n📁 Using Hydra output directory: {hydra_output_dir}")

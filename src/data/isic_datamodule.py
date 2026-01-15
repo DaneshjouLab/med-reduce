@@ -414,6 +414,18 @@ class ISICSegDataModule(BaseDataModule):
             return int(self.full_cfg.data.image_size)
         return self._fallback_image_size
 
+    def get_labels_for_stratification(self, dataset) -> Optional[List[int]]:
+        """
+        Extract labels from dataset for stratified splitting.
+
+        For segmentation tasks, stratification is typically not applicable
+        since we don't have discrete class labels per image.
+
+        Returns:
+            None for segmentation tasks (no stratification)
+        """
+        return None
+
     def setup(self, _stage: Optional[str] = None):
         """Initialize datasets using ISICSegRawSplit for segmentation."""
         print(f"\n{'='*60}")
@@ -432,18 +444,18 @@ class ISICSegDataModule(BaseDataModule):
         val_test_transform = SegmentationTransform(target_size=self.image_size)
         train_transform = self.transform if self.transform is not None else val_test_transform
 
-        print("Loading training set...")
-        self.train_set = self._load_split(
+        print("Loading full dataset...")
+        self.full_dataset = self._load_split(
             split="train",
             transform=train_transform
         )
-        print(f"  ✓ {len(self.train_set)} training samples\n")
+        print(f"  ✓ {len(self.full_dataset)} total samples\n")
 
         # For directory-based loading, we only have one dataset
         # Split it into train/val if needed
         if self.data_source == "local_dirs":
             print("Splitting dataset into train/val...")
-            total = len(self.train_set)
+            total = len(self.full_dataset)
             n_val = max(1, int(total * VAL_SPLIT_RATIO))
             n_train = total - n_val
 
@@ -452,13 +464,15 @@ class ISICSegDataModule(BaseDataModule):
                 range(total), [n_train, n_val], generator=g
             )
 
-            self.val_set = Subset(self.train_set, idx_val.indices)
-            self.train_set = Subset(self.train_set, idx_train.indices)
+            self.train_set = Subset(self.full_dataset, idx_train.indices)
+            self.val_set = Subset(self.full_dataset, idx_val.indices)
 
             print(f"  ✓ Split: {n_train} train, {n_val} val\n")
             self.test_set = None
         else:
             # For CSV or HF datasets, try to load separate splits
+            self.train_set = self.full_dataset
+
             print("Loading validation set...")
             try:
                 self.val_set = self._load_split(
@@ -469,7 +483,7 @@ class ISICSegDataModule(BaseDataModule):
             except Exception:
                 print(f"  No validation split found, splitting from training...")
 
-                total = len(self.train_set)
+                total = len(self.full_dataset)
                 n_val = max(1, int(total * VAL_SPLIT_RATIO))
                 n_train = total - n_val
 
@@ -478,8 +492,8 @@ class ISICSegDataModule(BaseDataModule):
                     range(total), [n_train, n_val], generator=g
                 )
 
-                self.val_set = Subset(self.train_set, idx_val.indices)
-                self.train_set = Subset(self.train_set, idx_train.indices)
+                self.train_set = Subset(self.full_dataset, idx_train.indices)
+                self.val_set = Subset(self.full_dataset, idx_val.indices)
 
                 print(f"  ✓ Split: {n_train} train, {n_val} val\n")
 

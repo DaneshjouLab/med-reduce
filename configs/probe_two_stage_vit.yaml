@@ -9,7 +9,8 @@
 #     D2: Final training at each resolution R with fixed hyperparameters
 
 # Runtime configuration
-runtime: {}
+runtime:
+  run_dir: /scratch/groups/roxanad/users/sonnet/compressed_perception/runs/probe_two_stage_vit
 
 domain: "dermatology"  # Options (eventually): dermatology, radiology, pathology
 
@@ -93,7 +94,7 @@ loss:
   reduction: "mean"
 
 logging:
-  project: "two-stage-linear-probe"
+  project: "reduced-perception"
   run_name: "vit_isic_512px"
   wandb_enabled: true
   save_checkpoints: true

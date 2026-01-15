@@ -47,6 +47,7 @@ from omegaconf import OmegaConf
 from src.engines.linear_probe_embedding_engine import train_probe_on_embeddings
 from src.utils.logging_core import setup_logging, get_logger, WandbLogger
 from src.utils.optim import make_optimizer_and_scheduler
+from src.utils.training_utils import profile_model, calculate_inference_latency, get_gpu_memory
 from src.losses.classification import cross_entropy_loss
 from src.models.factory import create_model, freeze_backbone
 from src.utils.embedding_cache import EmbeddingCache
@@ -115,11 +116,28 @@ class ProbeTwoStageWrapper:
             run_name=getattr(cfg.logging, "run_name", "two_stage_run"),
             config=cfg,
             enabled=bool(getattr(cfg.logging, "wandb_enabled", True)),
-            tags=["two-stage", "linear-probe"],
+            tags=["two-stage", "linear-probe", f"{self.current_resolution}px", self.model_name],
         )
+
+        self.wandb.log({
+            "config/resolution": self.current_resolution,
+            "config/model_name": self.model_name,
+            "config/domain": self.domain,
+        })
 
         self.run_dir = getattr(cfg.runtime, "run_dir", "./runs/probe_two_stage")
         os.makedirs(self.run_dir, exist_ok=True)
+
+        # Efficiency metrics storage
+        self.efficiency_metrics = {
+            "resolution": self.current_resolution,
+            "model_name": self.model_name,
+            "domain": self.domain,
+            "encoder_gflops": None,
+            "encoder_latency_ms": None,
+            "embedding_extraction_time_s": None,
+            "peak_gpu_memory_mb": None,
+        }
 
         self.hyperparam_search_enabled = False
         self.pretuned_hyperparams = None
@@ -302,8 +320,10 @@ class ProbeTwoStageWrapper:
         Returns:
             Dict mapping split_name -> (embeddings, labels)
         """
+        import time
+
         log.info(f"\n{'='*60}")
-        log.info(f"(C) Frozen DINOv3 Encoder - Extracting Embeddings at {resolution}px")
+        log.info(f"(C) Frozen Encoder - Extracting Embeddings at {resolution}px")
         log.info(f"{'='*60}\n")
 
         model = create_model(self.model_info, resolution=resolution)
@@ -311,6 +331,30 @@ class ProbeTwoStageWrapper:
         model.eval()
 
         freeze_backbone(model, self.model_info.get("type", "dinov3"))
+
+        # Profile encoder efficiency metrics
+        log.info(f"📊 Profiling encoder efficiency at {resolution}px...")
+
+        encoder_gflops = profile_model(model, resolution)
+        if encoder_gflops > 0:
+            self.efficiency_metrics["encoder_gflops"] = encoder_gflops
+            log.info(f"  Encoder GFLOPs: {encoder_gflops:.2f}")
+        else:
+            log.warning("  Could not compute encoder GFLOPs")
+
+        encoder_latency = calculate_inference_latency(model, resolution)
+        if encoder_latency > 0:
+            self.efficiency_metrics["encoder_latency_ms"] = encoder_latency
+            log.info(f"  Encoder latency: {encoder_latency:.2f} ms")
+        else:
+            log.warning("  Could not compute encoder latency")
+
+        peak_memory = get_gpu_memory()
+        if peak_memory > 0:
+            self.efficiency_metrics["peak_gpu_memory_mb"] = peak_memory
+            log.info(f"  Peak GPU memory: {peak_memory} MB")
+
+        extraction_start = time.time()
 
         all_embeddings = {}
         for split_name, split_indices in splits.items():
@@ -322,6 +366,10 @@ class ProbeTwoStageWrapper:
                 force_recompute=force_recompute,
             )
             all_embeddings[split_name] = (embeddings, labels)
+
+        extraction_time = time.time() - extraction_start
+        self.efficiency_metrics["embedding_extraction_time_s"] = extraction_time
+        log.info(f"  Total embedding extraction time: {extraction_time:.2f}s")
 
         del model
         torch.cuda.empty_cache()
@@ -790,7 +838,82 @@ class ProbeTwoStageWrapper:
             resolution=self.current_resolution,
         )
 
+        self._log_efficiency_metrics()
+
+        self._save_comprehensive_results(result)
+
         return result
+
+    def _log_efficiency_metrics(self):
+        """Log efficiency metrics to wandb."""
+        metrics_to_log = {
+            "efficiency/encoder_gflops": self.efficiency_metrics.get("encoder_gflops"),
+            "efficiency/encoder_latency_ms": self.efficiency_metrics.get("encoder_latency_ms"),
+            "efficiency/embedding_extraction_time_s": self.efficiency_metrics.get("embedding_extraction_time_s"),
+            "efficiency/peak_gpu_memory_mb": self.efficiency_metrics.get("peak_gpu_memory_mb"),
+            "efficiency/resolution": self.current_resolution,
+        }
+
+        metrics_to_log = {k: v for k, v in metrics_to_log.items() if v is not None}
+
+        if metrics_to_log:
+            self.wandb.log(metrics_to_log)
+            log.info(f"\n📊 Efficiency metrics logged to wandb:")
+            for k, v in metrics_to_log.items():
+                log.info(f"  {k}: {v}")
+
+    def _save_comprehensive_results(self, training_result: Dict[str, Any]):
+        """Save comprehensive results including efficiency metrics to JSON."""
+        best_metric = training_result.get("best_metric", None)
+        history = training_result.get("history", {})
+
+        final_val_auroc = history.get("val_auroc", [None])[-1] if history.get("val_auroc") else None
+        final_val_acc = history.get("val_acc", [None])[-1] if history.get("val_acc") else None
+        final_val_loss = history.get("val_loss", [None])[-1] if history.get("val_loss") else None
+
+        comprehensive_results = {
+            "experiment_info": {
+                "resolution": self.current_resolution,
+                "model_name": self.model_name,
+                "domain": self.domain,
+                "dataset": self.dataset_name,
+            },
+            "accuracy_metrics": {
+                "best_metric": best_metric,
+                "metric_key": str(getattr(self.cfg.train, "metric_key", "val_acc")),
+                "final_val_auroc": final_val_auroc,
+                "final_val_acc": final_val_acc,
+                "final_val_loss": final_val_loss,
+            },
+            "efficiency_metrics": self.efficiency_metrics,
+            "hyperparameters": {
+                "lr": float(self.cfg.train.optimizer.lr),
+                "weight_decay": float(self.cfg.train.optimizer.weight_decay),
+                "batch_size": int(self.cfg.data.batch_size),
+                "epochs": int(self.cfg.train.epochs),
+            },
+            "training_history": {
+                "num_epochs": len(history.get("train_loss", [])),
+                "final_train_loss": history.get("train_loss", [None])[-1] if history.get("train_loss") else None,
+            },
+        }
+
+        results_path = os.path.join(self.run_dir, f"results_{self.model_name}_{self.current_resolution}px.json")
+        with open(results_path, "w") as f:
+            json.dump(comprehensive_results, f, indent=2)
+
+        log.info(f"\n💾 Comprehensive results saved to: {os.path.abspath(results_path)}")
+
+        summary_metrics = {
+            "summary/best_metric": best_metric,
+            "summary/final_val_auroc": final_val_auroc,
+            "summary/final_val_acc": final_val_acc,
+            "summary/resolution": self.current_resolution,
+            "summary/encoder_gflops": self.efficiency_metrics.get("encoder_gflops"),
+            "summary/encoder_latency_ms": self.efficiency_metrics.get("encoder_latency_ms"),
+        }
+        summary_metrics = {k: v for k, v in summary_metrics.items() if v is not None}
+        self.wandb.log(summary_metrics)
 
 
 def run(cfg: Any) -> Dict[str, Any]:

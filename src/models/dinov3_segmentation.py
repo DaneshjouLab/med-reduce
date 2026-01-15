@@ -101,16 +101,17 @@ class DINOv3ForSegmentation(PreTrainedModel):
 
         self.num_patches_per_side = config.image_size // config.patch_size
 
-        self.seg_head = nn.Sequential(
-            nn.LayerNorm(config.hidden_size),
-            nn.Dropout(config.dropout_rate),
-            nn.Conv2d(config.hidden_size, config.num_classes, kernel_size=1)
-        )
+        # Layer norm applied before spatial reshape (on [B, num_patches, hidden_size])
+        self.pre_head_norm = nn.LayerNorm(config.hidden_size)
+        self.pre_head_dropout = nn.Dropout(config.dropout_rate)
+
+        # Conv head applied after spatial reshape (on [B, hidden_size, H, W])
+        self.seg_conv = nn.Conv2d(config.hidden_size, config.num_classes, kernel_size=1)
 
         self.dice_loss = DiceLoss()
         self.bce_loss = nn.BCEWithLogitsLoss()
 
-        self._init_weights(self.seg_head)
+        self._init_weights(self.seg_conv)
 
     def _init_weights(self, module):
         """Initialize head weights."""
@@ -145,14 +146,32 @@ class DINOv3ForSegmentation(PreTrainedModel):
         outputs = self.backbone(pixel_values=pixel_values)
 
         # Get patch tokens (exclude CLS token)
-        # Shape: [batch_size, num_patches + 1, hidden_size]
+        # Shape: [batch_size, num_patches + 1, hidden_size] or
+        # Shape: [batch_size, num_patches + 1 + num_register_tokens, hidden_size]
         sequence_output = outputs.last_hidden_state
 
-        # Remove CLS token (first token)
-        patch_tokens = sequence_output[:, 1:, :]  # [B, num_patches, hidden_size]
+        batch_size = sequence_output.size(0)
+        hidden_size = sequence_output.size(2)
 
-        batch_size = patch_tokens.size(0)
-        hidden_size = patch_tokens.size(2)
+        # Compute number of patches dynamically from input image size
+        # handles variable input sizes
+        input_h, input_w = pixel_values.shape[2], pixel_values.shape[3]
+        num_patches_h = input_h // self.config.patch_size
+        num_patches_w = input_w // self.config.patch_size
+        num_patches = num_patches_h * num_patches_w
+
+        # Calculate how many special tokens to remove (CLS + register tokens)
+        # Total sequence length - num_patches = num_special_tokens
+        total_seq_len = sequence_output.size(1)
+        num_special_tokens = total_seq_len - num_patches
+
+        # Remove special tokens (CLS token is first, register tokens follow if present)
+        patch_tokens = sequence_output[:, num_special_tokens:, :]  # [B, num_patches, hidden_size]
+
+        # Apply normalization and dropout before spatial reshape
+        # LayerNorm expects [B, num_patches, hidden_size] with norm over hidden_size
+        patch_tokens = self.pre_head_norm(patch_tokens)
+        patch_tokens = self.pre_head_dropout(patch_tokens)
 
         # Reshape to spatial grid
         # [B, num_patches, hidden_size] -> [B, hidden_size, H_patches, W_patches]
@@ -160,13 +179,13 @@ class DINOv3ForSegmentation(PreTrainedModel):
         patch_tokens = patch_tokens.view(
             batch_size,
             hidden_size,
-            self.num_patches_per_side,
-            self.num_patches_per_side
+            num_patches_h,
+            num_patches_w
         )
 
-        # Apply segmentation head (1x1 conv)
+        # Apply segmentation conv head (1x1 conv)
         # [B, hidden_size, H_patches, W_patches] -> [B, num_classes, H_patches, W_patches]
-        logits = self.seg_head(patch_tokens)
+        logits = self.seg_conv(patch_tokens)
 
         # Upsample to original resolution
         # [B, num_classes, H_patches, W_patches] -> [B, num_classes, H, W]

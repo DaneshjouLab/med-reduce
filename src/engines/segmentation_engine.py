@@ -151,7 +151,7 @@ def train_segmentation(
     best_state_dict = None
     best_epoch = 0
 
-    # Initialize history
+    # Initialize history with proper segmentation metric names
     history = {
         "train_loss": [],
         "val_loss": [],
@@ -229,29 +229,21 @@ def train_segmentation(
         # ========== Logging ==========
         current_lr = optimizer.param_groups[0]["lr"]
 
-        # Log to console and wandb
+        # Log to console and wandb using proper metric names
         _update_history_and_log(
-            history,
-            epoch,
-            avg_train_loss,
-            val_metrics["val_loss"],
-            val_metrics["val_dice"],  # This goes to val_acc in history
-            current_lr,
-            log_interval,
-            wandb_logger,
-            auroc=val_metrics["val_iou"],  # Log IoU as secondary metric
-        )
-
-        # Manually update additional segmentation-specific metrics
-        history["val_iou"].append(val_metrics["val_iou"])
-        history["val_pixel_acc"].append(val_metrics["val_pixel_acc"])
-
-        # Log additional metrics to wandb
-        if wandb_logger and wandb_logger.enabled:
-            wandb_logger.log({
+            history=history,
+            epoch=epoch,
+            train_loss=avg_train_loss,
+            val_loss=val_metrics["val_loss"],
+            cur_lr=current_lr,
+            metrics={
+                "val_dice": val_metrics["val_dice"],
                 "val_iou": val_metrics["val_iou"],
                 "val_pixel_acc": val_metrics["val_pixel_acc"],
-            }, step=epoch)
+            },
+            wandb_logger=wandb_logger,
+            log=log,
+        )
 
         # ========== Track Best Model ==========
         current_metric = val_metrics[metric_key]
