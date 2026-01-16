@@ -145,22 +145,26 @@ def freeze_backbone(model: nn.Module, model_type: str):
     """
     Freeze backbone parameters for transfer learning.
     For HF classifiers, keep 'classifier' or 'head' trainable; freeze the rest.
+    For segmentation models, keep seg_conv, pre_head_norm, pre_head_dropout trainable.
 
     Args:
         model: nn.Module
-        model_type: 'vit' | 'dinov2' | ('timm' if you wire it similarly)
+        model_type: 'vit' | 'dinov2' | 'dinov3' | ('timm' if you wire it similarly)
     """
+    # Patterns for trainable parameters (classification and segmentation heads)
+    trainable_patterns = ("classifier", "head", "seg_conv", "pre_head_norm", "pre_head_dropout")
+
     if model_type in HF_MODELS:
         for name, param in model.named_parameters():
-            # Leave classifier/head trainable, freeze others
-            if ("classifier" in name) or ("head" in name):
+            # Leave classifier/head/segmentation layers trainable, freeze others
+            if any(pattern in name for pattern in trainable_patterns):
                 param.requires_grad = True
             else:
                 param.requires_grad = False
     elif model_type == "timm":
         # Optional: implement project-specific rules (e.g., freeze all except last classifier)
         for name, param in model.named_parameters():
-            if ("classifier" in name) or ("fc" in name) or ("head" in name):
+            if any(pattern in name for pattern in trainable_patterns) or ("fc" in name):
                 param.requires_grad = True
             else:
                 param.requires_grad = False

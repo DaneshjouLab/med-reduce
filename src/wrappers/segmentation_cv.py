@@ -109,60 +109,97 @@ class SegmentationCVWrapper:
         """
         Create segmentation model from config.
 
-        Creates a DINOv3ForSegmentation model with config-specified parameters.
+        Supports both DINOv3ForSegmentation and ViTForSegmentation models.
         Optionally freezes the backbone for faster training (default: freeze).
 
         Returns:
             Initialized model on appropriate device
         """
-        from src.models.dinov3_segmentation import (
-            DINOv3ForSegmentation,
-            DINOv3SegmentationConfig
-        )
-
         model_cfg = self.cfg.model
+        model_type_raw = model_cfg.get("type", "dinov3")
+        # Normalize model type (e.g., "dinov3_segmentation" -> "dinov3", "vit_segmentation" -> "vit")
+        model_type = model_type_raw.replace("_segmentation", "")
 
         # Extract configuration
-        backbone_model_id = model_cfg.get("model_id", "facebook/dinov3-vits16-pretrain-lvd1689m")
         num_classes = model_cfg.config.get("num_classes", 1)
         hidden_size = model_cfg.config.get("hidden_size", 384)
         dropout_rate = model_cfg.config.get("dropout_rate", 0.1)
         loss_type = model_cfg.config.get("loss_type", "dice_bce")
         dice_weight = model_cfg.config.get("dice_weight", 0.5)
+        patch_size = model_cfg.config.get("patch_size", 16)
 
         # Get image size from data config
         image_size = int(getattr(self.cfg.data, "image_size", 256))
 
-        log.info(f"\nCreating segmentation model:")
-        log.info(f"  Backbone: {backbone_model_id}")
-        log.info(f"  Num classes: {num_classes}")
-        log.info(f"  Hidden size: {hidden_size}")
-        log.info(f"  Image size: {image_size}x{image_size}")
-        log.info(f"  Dropout: {dropout_rate}")
-        log.info(f"  Loss type: {loss_type}")
-        log.info(f"  Dice weight: {dice_weight}\n")
+        if model_type == "vit":
+            from src.models.vit_segmentation import (
+                ViTForSegmentation,
+                ViTSegmentationConfig
+            )
 
-        # Create config
-        config = DINOv3SegmentationConfig(
-            backbone_model_id=backbone_model_id,
-            num_classes=num_classes,
-            hidden_size=hidden_size,
-            patch_size=16,
-            image_size=image_size,
-            dropout_rate=dropout_rate,
-            loss_type=loss_type,
-            dice_weight=dice_weight,
-        )
+            backbone_model_id = model_cfg.get("model_id", "google/vit-base-patch16-224")
 
-        # Instantiate model
-        model = DINOv3ForSegmentation(config)
+            log.info(f"\nCreating ViT segmentation model:")
+            log.info(f"  Backbone: {backbone_model_id}")
+            log.info(f"  Num classes: {num_classes}")
+            log.info(f"  Hidden size: {hidden_size}")
+            log.info(f"  Patch size: {patch_size}")
+            log.info(f"  Image size: {image_size}x{image_size}")
+            log.info(f"  Dropout: {dropout_rate}")
+            log.info(f"  Loss type: {loss_type}")
+            log.info(f"  Dice weight: {dice_weight}\n")
+
+            config = ViTSegmentationConfig(
+                backbone_model_id=backbone_model_id,
+                num_classes=num_classes,
+                hidden_size=hidden_size,
+                patch_size=patch_size,
+                image_size=image_size,
+                dropout_rate=dropout_rate,
+                loss_type=loss_type,
+                dice_weight=dice_weight,
+            )
+
+            model = ViTForSegmentation(config)
+
+        else:
+            # Default to DINOv3
+            from src.models.dinov3_segmentation import (
+                DINOv3ForSegmentation,
+                DINOv3SegmentationConfig
+            )
+
+            backbone_model_id = model_cfg.get("model_id", "facebook/dinov3-vits16-pretrain-lvd1689m")
+
+            log.info(f"\nCreating DINOv3 segmentation model:")
+            log.info(f"  Backbone: {backbone_model_id}")
+            log.info(f"  Num classes: {num_classes}")
+            log.info(f"  Hidden size: {hidden_size}")
+            log.info(f"  Patch size: {patch_size}")
+            log.info(f"  Image size: {image_size}x{image_size}")
+            log.info(f"  Dropout: {dropout_rate}")
+            log.info(f"  Loss type: {loss_type}")
+            log.info(f"  Dice weight: {dice_weight}\n")
+
+            config = DINOv3SegmentationConfig(
+                backbone_model_id=backbone_model_id,
+                num_classes=num_classes,
+                hidden_size=hidden_size,
+                patch_size=patch_size,
+                image_size=image_size,
+                dropout_rate=dropout_rate,
+                loss_type=loss_type,
+                dice_weight=dice_weight,
+            )
+
+            model = DINOv3ForSegmentation(config)
 
         # Optionally freeze backbone
         freeze_backbone = getattr(model_cfg, "freeze_backbone", True)
         if freeze_backbone:
             from src.models.factory import freeze_backbone as freeze_fn
-            freeze_fn(model.backbone, "dinov3")
-            log.info("✓ Frozen DINOv3 backbone (training only segmentation head)")
+            freeze_fn(model.backbone, model_type)
+            log.info(f"✓ Frozen {model_type.upper()} backbone (training only segmentation head)")
 
             # Count trainable parameters
             trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
@@ -170,7 +207,7 @@ class SegmentationCVWrapper:
             log.info(f"  Trainable params: {trainable_params:,} / {total_params:,} "
                     f"({100*trainable_params/total_params:.1f}%)\n")
         else:
-            log.info("✓ Training full model (backbone + segmentation head)\n")
+            log.info(f"✓ Training full model ({model_type.upper()} backbone + segmentation head)\n")
 
         return model.to(self.device)
 
