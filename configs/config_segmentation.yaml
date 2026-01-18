@@ -20,8 +20,8 @@ datamodule:
 
   # DataLoader parameters
   num_workers: 8
-  persistent_workers: false
-  prefetch_factor: 2
+  persistent_workers: true
+  prefetch_factor: 4
   pin_memory: true
   drop_last: false
   split_seed: 42

@@ -600,6 +600,7 @@ class ProbeTwoStageWrapper:
             train_indices=train_indices,
             n_folds=self.k_folds,
             stratify_labels=stratify_labels,
+            force_recompute=self.force_recompute,
         )
 
         all_configs = self._get_all_hyperparam_configs()

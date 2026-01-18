@@ -12,7 +12,6 @@ from typing import Dict, Any, Tuple, Optional
 from pathlib import Path
 
 import math
-import copy
 import torch
 from torch import nn
 
@@ -27,7 +26,7 @@ from src.engines.training_core import (
     _create_grad_scaler,
     _update_history_and_log,
 )
-from src.evaluation.segmentation_metrics import compute_segmentation_metrics
+from src.evaluation.segmentation_metrics import RunningSegmentationMetrics
 
 log = get_logger(__name__)
 
@@ -40,6 +39,11 @@ def _run_segmentation_validation(
 ) -> Dict[str, float]:
     """
     Run validation epoch and compute segmentation metrics.
+
+    Optimized implementation that:
+    - Computes metrics incrementally (no memory accumulation)
+    - Keeps tensors on GPU during metric computation
+    - Avoids expensive CPU transfers per batch
 
     Args:
         model: Segmentation model
@@ -56,14 +60,16 @@ def _run_segmentation_validation(
     """
     model.eval()
     running_loss = 0.0
-    all_logits = []
-    all_masks = []
     n_samples = 0
+
+    # Use running metrics accumulator - computes incrementally on GPU
+    # This avoids storing all logits/masks in memory
+    metrics_accumulator = RunningSegmentationMetrics(threshold=0.5, device=device)
 
     with torch.no_grad():
         for batch in val_loader:
-            images = batch["pixel_values"].to(device)
-            masks = batch["mask_target"].to(device)
+            images = batch["pixel_values"].to(device, non_blocking=True)
+            masks = batch["mask_target"].to(device, non_blocking=True)
 
             batch_size = images.size(0)
             n_samples += batch_size
@@ -75,19 +81,14 @@ def _run_segmentation_validation(
 
             running_loss += loss.item() * batch_size
 
-            # Collect predictions and targets for metrics
-            all_logits.append(logits.cpu())
-            all_masks.append(masks.cpu())
+            # Update running metrics on GPU (avoid CPU transfer)
+            metrics_accumulator.update(logits, masks)
 
     # Compute average loss
     val_loss = running_loss / n_samples
 
-    # Concatenate all predictions
-    all_logits = torch.cat(all_logits, dim=0)
-    all_masks = torch.cat(all_masks, dim=0)
-
-    # Compute segmentation metrics
-    metrics = compute_segmentation_metrics(all_logits, all_masks)
+    # Compute final metrics from accumulated statistics
+    metrics = metrics_accumulator.compute()
 
     return {
         "val_loss": val_loss,
@@ -148,7 +149,7 @@ def train_segmentation(
     # Initialize best model tracking
     # Dice/IoU are maximized (higher is better)
     best_metric = -math.inf
-    best_state_dict = None
+    best_checkpoint_path = None
     best_epoch = 0
 
     # Initialize history with proper segmentation metric names
@@ -250,21 +251,25 @@ def train_segmentation(
 
         if current_metric > best_metric:  # Dice/IoU are maximized
             best_metric = current_metric
-            best_state_dict = copy.deepcopy(model.state_dict())
             best_epoch = epoch
 
             log.info(
-                f"  🏆 New best {metric_key}: {best_metric:.4f} at epoch {epoch}"
+                f"  New best {metric_key}: {best_metric:.4f} at epoch {epoch}"
             )
 
-            # Save checkpoint
+            # Save checkpoint directly to disk (avoids expensive deepcopy)
             if save_checkpoints and checkpoint_dir:
                 checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
-                checkpoint_path = checkpoint_dir / f"best_model_dice{best_metric:.4f}.pt"
+                # Remove old best checkpoint to save disk space
+                if best_checkpoint_path is not None and best_checkpoint_path.exists():
+                    best_checkpoint_path.unlink()
 
+                best_checkpoint_path = checkpoint_dir / f"best_model_dice{best_metric:.4f}.pt"
+
+                # Save directly to disk - much faster than deepcopy + later save
                 torch.save({
-                    "model_state_dict": best_state_dict,
+                    "model_state_dict": model.state_dict(),
                     "metric": best_metric,
                     "metric_name": metric_key,
                     "epoch": best_epoch,
@@ -272,15 +277,16 @@ def train_segmentation(
                     "val_dice": val_metrics["val_dice"],
                     "val_iou": val_metrics["val_iou"],
                     "val_pixel_acc": val_metrics["val_pixel_acc"],
-                }, checkpoint_path)
+                }, best_checkpoint_path)
 
-                log.info(f"  💾 Saved checkpoint to {checkpoint_path}")
+                log.info(f"  Saved checkpoint to {best_checkpoint_path}")
 
     # ========== Restore Best Model ==========
-    if best_state_dict is not None:
-        model.load_state_dict(best_state_dict)
+    if best_checkpoint_path is not None and best_checkpoint_path.exists():
+        checkpoint = torch.load(best_checkpoint_path, map_location=device, weights_only=False)
+        model.load_state_dict(checkpoint["model_state_dict"])
         log.info(
-            f"\n✓ Restored best model from epoch {best_epoch} "
+            f"\nRestored best model from epoch {best_epoch} "
             f"with {metric_key}={best_metric:.4f}\n"
         )
 

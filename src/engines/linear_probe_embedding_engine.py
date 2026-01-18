@@ -219,12 +219,19 @@ def _run_validation_on_embeddings(
     all_probs = np.concatenate(all_probs)
 
     try:
-        if len(np.unique(all_labels)) == 2:
-            val_auroc = roc_auc_score(all_labels, all_probs[:, 1])
+        num_classes = all_probs.shape[1]
+        all_class_labels = list(range(num_classes))
+
+        if num_classes == 2:
+            # Binary classification
+            val_auroc = roc_auc_score(all_labels, all_probs[:, 1], labels=all_class_labels)
         else:
-            val_auroc = roc_auc_score(all_labels, all_probs, multi_class='ovr', average='macro')
-    except ValueError:
-        log.warning("Could not compute AUROC - only one class present in validation set")
+            # Multi-class: use OvR with explicit labels to handle missing classes in fold
+            val_auroc = roc_auc_score(
+                all_labels, all_probs, multi_class='ovr', average='macro', labels=all_class_labels
+            )
+    except ValueError as e:
+        log.warning(f"Could not compute AUROC: {e}")
         val_auroc = 0.0
 
     return val_loss, val_acc, val_auroc

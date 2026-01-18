@@ -191,6 +191,7 @@ class SplitManager:
         train_indices: np.ndarray,
         n_folds: int = 5,
         stratify_labels: Optional[np.ndarray] = None,
+        force_recompute: bool = False,
     ) -> List[Tuple[np.ndarray, np.ndarray]]:
         """
         Create and save 5-fold CV splits for hyperparameter tuning.
@@ -199,13 +200,14 @@ class SplitManager:
             train_indices: Indices of training samples
             n_folds: Number of folds (default 5)
             stratify_labels: Optional labels for stratified folding
+            force_recompute: If True, regenerate folds even if cached
 
         Returns:
             List of (train_fold_indices, val_fold_indices) tuples
         """
         cv_path = self._get_cv_path()
 
-        if cv_path.exists():
+        if cv_path.exists() and not force_recompute:
             log.info(f"📥 Loading existing CV folds from {cv_path}")
             return self.load_cv_folds()
 
