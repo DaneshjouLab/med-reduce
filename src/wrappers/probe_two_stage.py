@@ -552,8 +552,20 @@ class ProbeTwoStageWrapper:
 
             fold_metrics.append(result["best_metric"])
 
-        mean_metric = float(np.mean(fold_metrics))
-        std_metric = float(np.std(fold_metrics))
+        # Filter out NaN values (from folds where AUROC couldn't be computed)
+        valid_metrics = [m for m in fold_metrics if not np.isnan(m)]
+        if len(valid_metrics) < len(fold_metrics):
+            log.warning(
+                f"  {len(fold_metrics) - len(valid_metrics)}/{len(fold_metrics)} folds had invalid metrics (NaN), "
+                f"averaging over {len(valid_metrics)} valid folds"
+            )
+
+        if not valid_metrics:
+            log.warning("  All folds had invalid metrics!")
+            return float('nan'), float('nan')
+
+        mean_metric = float(np.mean(valid_metrics))
+        std_metric = float(np.std(valid_metrics))
 
         return mean_metric, std_metric
 

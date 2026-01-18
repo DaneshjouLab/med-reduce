@@ -215,17 +215,27 @@ class SplitManager:
 
         if stratify_labels is not None:
             from sklearn.model_selection import StratifiedKFold
+            train_labels = stratify_labels[train_indices]
+            unique, counts = np.unique(train_labels, return_counts=True)
+            log.info(f"  Using StratifiedKFold with label distribution: {dict(zip(unique.tolist(), counts.tolist()))}")
             kf = StratifiedKFold(n_splits=n_folds, shuffle=True, random_state=self.seed)
-            splits = list(kf.split(train_indices, stratify_labels[train_indices]))
+            splits = list(kf.split(train_indices, train_labels))
         else:
+            log.warning("  ⚠️ stratify_labels is None - using regular KFold (not stratified!)")
             kf = KFold(n_splits=n_folds, shuffle=True, random_state=self.seed)
             splits = list(kf.split(train_indices))
 
         folds = []
-        for train_fold_idx, val_fold_idx in splits:
+        for fold_idx, (train_fold_idx, val_fold_idx) in enumerate(splits):
             train_fold = train_indices[train_fold_idx]
             val_fold = train_indices[val_fold_idx]
             folds.append((train_fold, val_fold))
+
+            # Log class distribution in each fold's validation set
+            if stratify_labels is not None:
+                val_labels = stratify_labels[val_fold]
+                unique, counts = np.unique(val_labels, return_counts=True)
+                log.info(f"  Fold {fold_idx + 1} val set: {len(val_fold)} samples, classes: {dict(zip(unique.tolist(), counts.tolist()))}")
 
         cv_data = {
             "n_folds": n_folds,

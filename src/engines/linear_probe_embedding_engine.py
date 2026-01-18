@@ -158,17 +158,23 @@ def train_probe_on_embeddings(
             current_metric = val_auroc
         else:
             current_metric = val_acc
-        is_better = (
-            (current_metric < best_metric) if metric_key.endswith("loss")
-            else (current_metric > best_metric)
-        )
 
-        if is_better:
-            best_metric = current_metric
-            best_state_dict = {k: v.cpu().clone() for k, v in classifier.state_dict().items()}
+        # Skip NaN metrics when determining best model
+        if not np.isnan(current_metric):
+            is_better = (
+                (current_metric < best_metric) if metric_key.endswith("loss")
+                else (current_metric > best_metric)
+            )
+
+            if is_better:
+                best_metric = current_metric
+                best_state_dict = {k: v.cpu().clone() for k, v in classifier.state_dict().items()}
 
     if best_state_dict is not None:
         classifier.load_state_dict(best_state_dict)
+
+    if best_metric == -math.inf or best_metric == math.inf:
+        best_metric = float('nan')
 
     return {
         "best_metric": best_metric,
@@ -208,7 +214,8 @@ def _run_validation_on_embeddings(
             val_correct += (preds == labels).sum().item()
             val_total += labels.size(0)
 
-            probs = torch.softmax(logits, dim=1)
+            # Convert to float32 before softmax to avoid precision issues with mixed precision
+            probs = torch.softmax(logits.float(), dim=1)
             all_labels.append(labels.cpu().numpy())
             all_probs.append(probs.cpu().numpy())
 
@@ -218,20 +225,43 @@ def _run_validation_on_embeddings(
     all_labels = np.concatenate(all_labels)
     all_probs = np.concatenate(all_probs)
 
-    try:
-        num_classes = all_probs.shape[1]
-        all_class_labels = list(range(num_classes))
+    # Compute AUROC
+    # For multi-class OvR AUROC, we need at least 2 classes in the ground truth.
+    unique_labels_in_val = np.unique(all_labels)
+    num_classes = all_probs.shape[1]
 
-        if num_classes == 2:
-            # Binary classification
-            val_auroc = roc_auc_score(all_labels, all_probs[:, 1], labels=all_class_labels)
-        else:
-            # Multi-class: use OvR with explicit labels to handle missing classes in fold
-            val_auroc = roc_auc_score(
-                all_labels, all_probs, multi_class='ovr', average='macro', labels=all_class_labels
-            )
-    except ValueError as e:
-        log.warning(f"Could not compute AUROC: {e}")
-        val_auroc = 0.0
+    if len(unique_labels_in_val) < 2:
+        log.warning(
+            f"Cannot compute AUROC - only {len(unique_labels_in_val)} class(es) present in validation set "
+            f"(classes: {unique_labels_in_val.tolist()}). Returning NaN to exclude from averaging."
+        )
+        val_auroc = float('nan')
+    else:
+        try:
+            if num_classes == 2:
+                # Binary classification: use probability of positive class
+                val_auroc = roc_auc_score(all_labels, all_probs[:, 1])
+            else:
+                # Multi-class OvR: sklearn requires all classes in labels to have samples
+                # for the default behavior. We compute macro-average only over classes
+                # that are present in this validation set for robustness.
+                # This is the standard approach when not all classes appear in every fold.
+                per_class_auroc = []
+                for cls in unique_labels_in_val:
+                    y_true_binary = (all_labels == cls).astype(int)
+                    y_score_cls = all_probs[:, cls]
+                    try:
+                        cls_auroc = roc_auc_score(y_true_binary, y_score_cls)
+                        per_class_auroc.append(cls_auroc)
+                    except ValueError:
+                        pass
+
+                if per_class_auroc:
+                    val_auroc = float(np.mean(per_class_auroc))
+                else:
+                    val_auroc = float('nan')
+        except ValueError as e:
+            log.warning(f"Could not compute AUROC: {e}")
+            val_auroc = float('nan')
 
     return val_loss, val_acc, val_auroc

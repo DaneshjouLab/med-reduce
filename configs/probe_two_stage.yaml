@@ -44,7 +44,7 @@ datamodule:
   balance_data: false
   num_train_images: 10000
 
-  force_recompute_embeddings: false
+  force_recompute_embeddings: true
 
 data:
   image_size: 512  # Resolution R for this experiment
