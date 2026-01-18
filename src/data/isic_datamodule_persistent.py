@@ -88,7 +88,7 @@ class ISICDataModulePersistent(BaseDataModule):
         self.keep_indices = keep_indices
         self.repo_id = dataset_name
 
-        self.filtered_classes = filtered_classes or ["0", "1"]
+        self.filtered_classes = filtered_classes  # None means no filtering
         self.balance_data = balance_data
         self.num_train_images = num_train_images
 

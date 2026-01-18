@@ -179,7 +179,7 @@ class ProbeTwoStageWrapper:
 
         return hyperparams
 
-    def _compute_class_weights(self, train_labels: torch.Tensor) -> torch.Tensor:
+    def _compute_class_weights(self, train_labels: torch.Tensor, num_classes: int | None = None) -> torch.Tensor:
         """
         Compute class weights for balanced loss function.
 
@@ -187,16 +187,31 @@ class ProbeTwoStageWrapper:
 
         Args:
             train_labels: Training labels
+            num_classes: Total number of classes. If None, inferred from max label + 1.
 
         Returns:
-            Tensor of class weights
+            Tensor of class weights (one per class)
         """
         train_labels_np = train_labels.cpu().numpy()
-        unique_classes, class_counts = np.unique(train_labels_np, return_counts=True)
         n_samples = len(train_labels_np)
-        n_classes = len(unique_classes)
 
-        class_weights = n_samples / (n_classes * class_counts)
+        if num_classes is None:
+            num_classes = int(train_labels_np.max()) + 1
+
+        # Count samples per class (including classes with 0 samples)
+        class_counts = np.zeros(num_classes, dtype=np.float64)
+        unique_classes, counts = np.unique(train_labels_np, return_counts=True)
+        for cls, count in zip(unique_classes, counts):
+            class_counts[cls] = count
+
+        # Compute weights, handling classes with 0 samples
+        class_weights = np.zeros(num_classes, dtype=np.float64)
+        for i in range(num_classes):
+            if class_counts[i] > 0:
+                class_weights[i] = n_samples / (num_classes * class_counts[i])
+            else:
+                # Assign weight of 0 for missing classes (won't affect loss since no samples)
+                class_weights[i] = 0.0
 
         class_weights_tensor = torch.tensor(class_weights, dtype=torch.float32, device=self.device)
 
@@ -204,9 +219,12 @@ class ProbeTwoStageWrapper:
         log.info("Class Weight Computation")
         log.info(f"{'='*60}")
         log.info(f"Training set size: {n_samples}")
-        log.info(f"Number of classes: {n_classes}")
-        for cls, count, weight in zip(unique_classes, class_counts, class_weights):
-            log.info(f"  Class {cls}: {count} samples ({count/n_samples*100:.1f}%) -> weight: {weight:.4f}")
+        log.info(f"Number of classes: {num_classes}")
+        for cls in range(num_classes):
+            count = int(class_counts[cls])
+            weight = class_weights[cls]
+            pct = count / n_samples * 100 if n_samples > 0 else 0
+            log.info(f"  Class {cls}: {count} samples ({pct:.1f}%) -> weight: {weight:.4f}")
         log.info(f"{'='*60}\n")
 
         return class_weights_tensor
@@ -508,7 +526,7 @@ class ProbeTwoStageWrapper:
             )
 
             train_fold_labels = train_labels[train_fold_rel]
-            fold_class_weights = self._compute_class_weights(train_fold_labels)
+            fold_class_weights = self._compute_class_weights(train_fold_labels, num_classes=num_classes)
 
             loss_fn = cross_entropy_loss(
                 label_smoothing=float(getattr(trial_cfg.loss, "label_smoothing", 0.0)),
@@ -795,8 +813,12 @@ class ProbeTwoStageWrapper:
         train_embeddings, train_labels = all_embeddings["train"]
         test_embeddings, test_labels = all_embeddings["test"]
 
+        # Compute num_classes from all labels (train + test) to ensure we capture all classes
+        all_labels = torch.cat([train_labels, test_labels])
+        num_classes = int(all_labels.max().item()) + 1
+
         log.info("Computing class weights from training data...")
-        self.class_weights = self._compute_class_weights(train_labels)
+        self.class_weights = self._compute_class_weights(train_labels, num_classes=num_classes)
 
         self.loss_fn = cross_entropy_loss(
             label_smoothing=float(getattr(self.cfg.loss, "label_smoothing", 0.0)),

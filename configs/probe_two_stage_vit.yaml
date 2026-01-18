@@ -35,10 +35,12 @@ datamodule:
   # Local dataset configuration
   local_label_file: /scratch/groups/roxanad/datasets/isic/challenges/2017/merged_isic_2017_data/merged_ground_truth_part3.csv
   local_image_id_column: image_id
-  local_label_column: melanoma
+  local_label_column:
+    - melanoma
+    - seborrheic_keratosis
   local_image_extension: .jpg
 
-  filtered_classes: ["0.0", "1.0"]
+  filtered_classes: null  # Not used when balance_data is false
   balance_data: false
   num_train_images: 10000
 
@@ -53,7 +55,7 @@ model:
   model_id: "google/vit-base-patch16-224"  # Options: google/vit-base-patch16-384, google/vit-large-patch16-224
   type: "vit"
   config:
-    num_labels: 2
+    num_labels: 3
     ignore_mismatched_sizes: true
 
 train:
