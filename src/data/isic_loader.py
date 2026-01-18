@@ -256,6 +256,9 @@ class ISICHFRawSplitLocal(Dataset):
 
         ds = ds.select(idx)
 
+        # Convert label_column to list if it's a sequence (handles OmegaConf ListConfig)
+        label_cols = list(label_column) if hasattr(label_column, "__iter__") and not isinstance(label_column, str) else label_column
+
         # Map image IDs to full paths and handle labels
         def map_to_full_path(example: Dict[str, Any]):
             image_id = example[image_id_column]
@@ -265,13 +268,22 @@ class ISICHFRawSplitLocal(Dataset):
                 example["image_id"] = image_id
 
             # Handle label columns
-            if isinstance(label_column, (list, tuple)):
+            if isinstance(label_cols, list):
                 # Multi-label case: convert to single integer label
-                label_values = [float(example[col]) for col in label_column]
-                example["label"] = int(np.argmax(label_values))
+                # For ISIC-style labels (melanoma, seborrheic_keratosis):
+                #   - Class 0 (nevus): all columns are 0
+                #   - Class 1+: argmax of columns that are 1, offset by 1
+                # This maps: [0,0] -> 0 (nevus), [1,0] -> 1 (melanoma), [0,1] -> 2 (seb_kera)
+                label_values = [float(example[col]) for col in label_cols]
+                if max(label_values) == 0:
+                    # No positive label -> class 0 (e.g., nevus)
+                    example["label"] = 0
+                else:
+                    # Positive label found -> class index + 1
+                    example["label"] = int(np.argmax(label_values)) + 1
             else:
                 # Single label column
-                example["label"] = int(float(example[label_column]))
+                example["label"] = int(float(example[label_cols]))
 
             return example
 
@@ -279,10 +291,10 @@ class ISICHFRawSplitLocal(Dataset):
         cols_to_remove = []
         if image_id_column != "image_id":
             cols_to_remove.append(image_id_column)
-        if isinstance(label_column, (list, tuple)):
-            cols_to_remove.extend(label_column)
-        elif label_column != "label":
-            cols_to_remove.append(label_column)
+        if isinstance(label_cols, list):
+            cols_to_remove.extend(label_cols)
+        elif label_cols != "label":
+            cols_to_remove.append(label_cols)
 
         cols_to_remove = [c for c in cols_to_remove if c in ds.column_names]
         ds = ds.map(map_to_full_path, remove_columns=cols_to_remove)
@@ -298,8 +310,9 @@ class ISICHFRawSplitLocal(Dataset):
             self.class_names = None
 
         # If we have multi-label columns, create class names from them
-        if isinstance(label_column, (list, tuple)):
-            self.class_names = tuple(label_column)
+        # Class 0 is the "negative" class (e.g., nevus), followed by each label column
+        if isinstance(label_cols, list):
+            self.class_names = ("nevus",) + tuple(label_cols)
 
         self.ds = ds
         self.data_dir = data_dir

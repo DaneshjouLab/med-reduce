@@ -6,6 +6,7 @@ ViT-based semantic segmentation model.
 Provides a segmentation head on top of pre-trained ViT models
 using the same architecture as DINOv3ForSegmentation for consistency.
 """
+import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -111,10 +112,19 @@ class ViTForSegmentation(PreTrainedModel):
         self.config = config
         self.num_classes = config.num_classes
 
+        # Load backbone with support for different image sizes
+        # ignore_mismatched_sizes allows loading pretrained weights even when
+        # the image size differs (position embeddings will be interpolated)
+        # We also override the backbone's image_size config to prevent size validation errors
         self.backbone = AutoModel.from_pretrained(
             config.backbone_model_id,
-            torch_dtype=torch.float32
+            torch_dtype=torch.float32,
+            ignore_mismatched_sizes=True,
+            image_size=config.image_size,  # Override to accept target image size
         )
+
+        # Interpolate position embeddings if image size differs from pretrained
+        self._interpolate_position_embeddings(config.image_size, config.patch_size)
 
         self.num_patches_per_side = config.image_size // config.patch_size
 
@@ -129,6 +139,53 @@ class ViTForSegmentation(PreTrainedModel):
         self.bce_loss = nn.BCEWithLogitsLoss()
 
         self._init_weights(self.seg_conv)
+
+    def _interpolate_position_embeddings(self, target_image_size: int, patch_size: int):
+        """
+        Interpolate position embeddings to support different image sizes.
+
+        The pretrained ViT has position embeddings for a specific image size (e.g., 224x224).
+        This method resizes them to match the target image size.
+        """
+        # Get the current position embeddings
+        pos_embed = self.backbone.embeddings.position_embeddings  # [1, num_patches+1, hidden_size]
+
+        # Original number of patches (excluding CLS token)
+        orig_num_patches = pos_embed.shape[1] - 1
+        orig_size = int(math.sqrt(orig_num_patches))
+
+        # Target number of patches
+        target_num_patches_per_side = target_image_size // patch_size
+        target_num_patches = target_num_patches_per_side ** 2
+
+        if orig_num_patches == target_num_patches:
+            return  # No interpolation needed
+
+        # Separate CLS token and patch embeddings
+        cls_token = pos_embed[:, :1, :]  # [1, 1, hidden_size]
+        patch_pos_embed = pos_embed[:, 1:, :]  # [1, orig_num_patches, hidden_size]
+
+        # Reshape to spatial grid: [1, orig_size, orig_size, hidden_size]
+        patch_pos_embed = patch_pos_embed.reshape(1, orig_size, orig_size, -1)
+        # Permute to [1, hidden_size, orig_size, orig_size] for interpolation
+        patch_pos_embed = patch_pos_embed.permute(0, 3, 1, 2)
+
+        # Interpolate to target size
+        patch_pos_embed = F.interpolate(
+            patch_pos_embed,
+            size=(target_num_patches_per_side, target_num_patches_per_side),
+            mode='bicubic',
+            align_corners=False,
+        )
+
+        # Reshape back: [1, hidden_size, H, W] -> [1, H*W, hidden_size]
+        patch_pos_embed = patch_pos_embed.permute(0, 2, 3, 1).reshape(1, target_num_patches, -1)
+
+        # Concatenate CLS token back
+        new_pos_embed = torch.cat([cls_token, patch_pos_embed], dim=1)
+
+        # Update the position embeddings
+        self.backbone.embeddings.position_embeddings = nn.Parameter(new_pos_embed)
 
     def _init_weights(self, module):
         """Initialize head weights."""

@@ -90,7 +90,7 @@ loss:
 
 # Logging configuration
 logging:
-  project: "compressed-perception"
+  project: "reduced-perception"
   run_name: "vit_segmentation_run"
   wandb_enabled: true
   save_umap_embeddings: false

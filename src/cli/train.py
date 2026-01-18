@@ -126,11 +126,13 @@ def _normalize_dataset_into_data(cfg: DictConfig) -> None:
     if "data" not in cfg or cfg.data is None:
         cfg.data = OmegaConf.create()
 
-    cfg.data.dataset_name = str(ds.get("name"))
+    dataset_name = ds.get("name")
+    # Handle null/None dataset name (e.g., for segmentation mode where datamodule is instantiated via Hydra)
+    cfg.data.dataset_name = str(dataset_name) if dataset_name is not None else None
     cfg.data.data_dir = ds.get("data_dir")  # can be None for HF datasets
-    cfg.data.image_size = int(ds.get("image_size", 224))
+    cfg.data.image_size = int(ds.get("image_size", getattr(cfg.data, "image_size", 224)))
     cfg.data.batch_size = int(
-        ds.get("batch_size", getattr(cfg.train, "batch_size", 64))
+        ds.get("batch_size", getattr(cfg.data, "batch_size", getattr(cfg.train, "batch_size", 64)))
     )
     cfg.data.num_workers = int(ds.get("num_workers", 4))
     cfg.data.pin_memory = bool(ds.get("pin_memory", True))
@@ -144,7 +146,9 @@ def _normalize_dataset_into_data(cfg: DictConfig) -> None:
             cfg.model.config = OmegaConf.create()
         cfg.model.config.num_labels = int(num_classes)
 
-    if not cfg.data.dataset_name:
+    # For segmentation mode, dataset_name can be None (datamodule is configured via Hydra)
+    train_mode = getattr(cfg.train, "mode", "probe").lower()
+    if not cfg.data.dataset_name and train_mode not in ("segmentation",):
         raise ValueError("cfg.dataset.name must be set (e.g., 'isic2019').")
 
 

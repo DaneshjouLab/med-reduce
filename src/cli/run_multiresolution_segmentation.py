@@ -38,12 +38,19 @@ from omegaconf import OmegaConf
 
 
 # Model configurations
-MODELS = ["dinov3"]
+MODELS = ["dinov3", "vit"]
 MODEL_CONFIGS = {
     "dinov3": {
         "model.name": "dinov3_segmentation",
         "model.model_id": "facebook/dinov3-vits16-pretrain-lvd1689m",
         "model.type": "dinov3_segmentation",
+        "model.config.hidden_size": 384,
+    },
+    "vit": {
+        "model.name": "vit_segmentation",
+        "model.model_id": "google/vit-base-patch16-224",
+        "model.type": "vit",
+        "model.config.hidden_size": 768,
     }
 }
 
