@@ -36,6 +36,7 @@ def _run_segmentation_validation(
     val_loader,
     device: torch.device,
     mixed_precision: bool = True,
+    compute_auroc: bool = False,
 ) -> Dict[str, float]:
     """
     Run validation epoch and compute segmentation metrics.
@@ -50,6 +51,7 @@ def _run_segmentation_validation(
         val_loader: Validation data loader
         device: Device to run on
         mixed_precision: Whether to use mixed precision
+        compute_auroc: Whether to compute AUROC (slower, uses more memory)
 
     Returns:
         Dictionary with:
@@ -57,6 +59,7 @@ def _run_segmentation_validation(
             - val_dice: Dice coefficient
             - val_iou: Intersection over Union
             - val_pixel_acc: Pixel accuracy
+            - val_auroc: AUROC (only if compute_auroc=True)
     """
     model.eval()
     running_loss = 0.0
@@ -64,7 +67,9 @@ def _run_segmentation_validation(
 
     # Use running metrics accumulator - computes incrementally on GPU
     # This avoids storing all logits/masks in memory
-    metrics_accumulator = RunningSegmentationMetrics(threshold=0.5, device=device)
+    metrics_accumulator = RunningSegmentationMetrics(
+        threshold=0.5, device=device, compute_auroc=compute_auroc
+    )
 
     with torch.no_grad():
         for batch in val_loader:
@@ -90,12 +95,17 @@ def _run_segmentation_validation(
     # Compute final metrics from accumulated statistics
     metrics = metrics_accumulator.compute()
 
-    return {
+    result = {
         "val_loss": val_loss,
         "val_dice": metrics["dice"],
         "val_iou": metrics["iou"],
         "val_pixel_acc": metrics["pixel_acc"],
     }
+
+    if compute_auroc:
+        result["val_auroc"] = metrics["auroc"]
+
+    return result
 
 
 def train_segmentation(
@@ -113,6 +123,7 @@ def train_segmentation(
     metric_key: str = "val_dice",
     save_checkpoints: bool = True,
     checkpoint_dir: Optional[Path] = None,
+    compute_auroc: bool = False,
 ) -> Dict[str, Any]:
     """
     Train a segmentation model end-to-end.
@@ -131,6 +142,7 @@ def train_segmentation(
         metric_key: Metric to track for best model (default: "val_dice")
         save_checkpoints: Whether to save checkpoints
         checkpoint_dir: Directory to save checkpoints
+        compute_auroc: Whether to compute AUROC during validation
 
     Returns:
         Dictionary with:
@@ -140,6 +152,7 @@ def train_segmentation(
             - final_val_dice: Final Dice score
             - final_val_iou: Final IoU score
             - final_val_pixel_acc: Final pixel accuracy
+            - final_val_auroc: Final AUROC (only if compute_auroc=True)
     """
     model.train()
 
@@ -161,6 +174,8 @@ def train_segmentation(
         "val_pixel_acc": [],
         "lr": []
     }
+    if compute_auroc:
+        history["val_auroc"] = []
 
     log.info(f"\n{'='*60}")
     log.info("Starting Segmentation Training")
@@ -218,7 +233,7 @@ def train_segmentation(
 
         # ========== Validation ==========
         val_metrics = _run_segmentation_validation(
-            model, loaders["val"], device, mixed_precision
+            model, loaders["val"], device, mixed_precision, compute_auroc=compute_auroc
         )
 
         # ========== Scheduler Step ==========
@@ -230,6 +245,15 @@ def train_segmentation(
         # ========== Logging ==========
         current_lr = optimizer.param_groups[0]["lr"]
 
+        # Build metrics dict for logging
+        log_metrics = {
+            "val_dice": val_metrics["val_dice"],
+            "val_iou": val_metrics["val_iou"],
+            "val_pixel_acc": val_metrics["val_pixel_acc"],
+        }
+        if compute_auroc:
+            log_metrics["val_auroc"] = val_metrics["val_auroc"]
+
         # Log to console and wandb using proper metric names
         _update_history_and_log(
             history=history,
@@ -237,11 +261,7 @@ def train_segmentation(
             train_loss=avg_train_loss,
             val_loss=val_metrics["val_loss"],
             cur_lr=current_lr,
-            metrics={
-                "val_dice": val_metrics["val_dice"],
-                "val_iou": val_metrics["val_iou"],
-                "val_pixel_acc": val_metrics["val_pixel_acc"],
-            },
+            metrics=log_metrics,
             wandb_logger=wandb_logger,
             log=log,
         )
@@ -268,7 +288,7 @@ def train_segmentation(
                 best_checkpoint_path = checkpoint_dir / f"best_model_dice{best_metric:.4f}.pt"
 
                 # Save directly to disk - much faster than deepcopy + later save
-                torch.save({
+                checkpoint_data = {
                     "model_state_dict": model.state_dict(),
                     "metric": best_metric,
                     "metric_name": metric_key,
@@ -277,7 +297,10 @@ def train_segmentation(
                     "val_dice": val_metrics["val_dice"],
                     "val_iou": val_metrics["val_iou"],
                     "val_pixel_acc": val_metrics["val_pixel_acc"],
-                }, best_checkpoint_path)
+                }
+                if compute_auroc:
+                    checkpoint_data["val_auroc"] = val_metrics["val_auroc"]
+                torch.save(checkpoint_data, best_checkpoint_path)
 
                 log.info(f"  Saved checkpoint to {best_checkpoint_path}")
 
@@ -291,7 +314,7 @@ def train_segmentation(
         )
 
     # ========== Return Results ==========
-    return {
+    result = {
         "history": history,
         "best_metric": best_metric,
         "best_metric_name": metric_key,
@@ -300,3 +323,6 @@ def train_segmentation(
         "final_val_iou": history["val_iou"][-1] if history["val_iou"] else 0.0,
         "final_val_pixel_acc": history["val_pixel_acc"][-1] if history["val_pixel_acc"] else 0.0,
     }
+    if compute_auroc:
+        result["final_val_auroc"] = history["val_auroc"][-1] if history["val_auroc"] else 0.0
+    return result
