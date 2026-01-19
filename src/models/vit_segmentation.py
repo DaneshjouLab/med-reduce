@@ -1,3 +1,12 @@
+# src/models/vit_segmentation.py
+# -*- coding: utf-8 -*-
+"""
+ViT-based semantic segmentation model.
+
+Provides a segmentation head on top of pre-trained ViT models
+using the same architecture as DINOv3ForSegmentation for consistency.
+"""
+import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -9,7 +18,6 @@ from transformers import (
 )
 from transformers.modeling_outputs import ModelOutput
 from dataclasses import dataclass
-import math
 
 
 @dataclass
@@ -27,15 +35,15 @@ class SegmentationOutput(ModelOutput):
     attentions: Optional[tuple] = None
 
 
-class DINOv3SegmentationConfig(PretrainedConfig):
-    """Config for DINOv3 segmentation model."""
-    model_type = "dinov3_segmentation"
+class ViTSegmentationConfig(PretrainedConfig):
+    """Config for ViT segmentation model."""
+    model_type = "vit_segmentation"
 
     def __init__(
         self,
-        backbone_model_id: str = "facebook/dinov3-vit7b16-pretrain-lvd1689m",
+        backbone_model_id: str = "google/vit-base-patch16-224",
         num_classes: int = 1,  # Binary segmentation by default
-        hidden_size: int = 384,
+        hidden_size: int = 768,
         patch_size: int = 16,
         image_size: int = 224,
         dropout_rate: float = 0.1,
@@ -86,18 +94,37 @@ class DiceLoss(nn.Module):
         return 1.0 - dice.mean()
 
 
-class DINOv3ForSegmentation(PreTrainedModel):
-    config_class = DINOv3SegmentationConfig
+class ViTForSegmentation(PreTrainedModel):
+    """
+    ViT model with segmentation head.
 
-    def __init__(self, config: DINOv3SegmentationConfig):
+    Uses the same architecture as DINOv3ForSegmentation:
+    - Extract patch tokens from ViT backbone
+    - Apply LayerNorm + Dropout
+    - Reshape to spatial grid
+    - Apply 1x1 conv for classification
+    - Upsample to original resolution
+    """
+    config_class = ViTSegmentationConfig
+
+    def __init__(self, config: ViTSegmentationConfig):
         super().__init__(config)
         self.config = config
         self.num_classes = config.num_classes
 
+        # Load backbone with support for different image sizes
+        # ignore_mismatched_sizes allows loading pretrained weights even when
+        # the image size differs (position embeddings will be interpolated)
+        # We also override the backbone's image_size config to prevent size validation errors
         self.backbone = AutoModel.from_pretrained(
             config.backbone_model_id,
-            torch_dtype=torch.float32
+            torch_dtype=torch.float32,
+            ignore_mismatched_sizes=True,
+            image_size=config.image_size,  # Override to accept target image size
         )
+
+        # Interpolate position embeddings if image size differs from pretrained
+        self._interpolate_position_embeddings(config.image_size, config.patch_size)
 
         self.num_patches_per_side = config.image_size // config.patch_size
 
@@ -112,6 +139,53 @@ class DINOv3ForSegmentation(PreTrainedModel):
         self.bce_loss = nn.BCEWithLogitsLoss()
 
         self._init_weights(self.seg_conv)
+
+    def _interpolate_position_embeddings(self, target_image_size: int, patch_size: int):
+        """
+        Interpolate position embeddings to support different image sizes.
+
+        The pretrained ViT has position embeddings for a specific image size (e.g., 224x224).
+        This method resizes them to match the target image size.
+        """
+        # Get the current position embeddings
+        pos_embed = self.backbone.embeddings.position_embeddings  # [1, num_patches+1, hidden_size]
+
+        # Original number of patches (excluding CLS token)
+        orig_num_patches = pos_embed.shape[1] - 1
+        orig_size = int(math.sqrt(orig_num_patches))
+
+        # Target number of patches
+        target_num_patches_per_side = target_image_size // patch_size
+        target_num_patches = target_num_patches_per_side ** 2
+
+        if orig_num_patches == target_num_patches:
+            return  # No interpolation needed
+
+        # Separate CLS token and patch embeddings
+        cls_token = pos_embed[:, :1, :]  # [1, 1, hidden_size]
+        patch_pos_embed = pos_embed[:, 1:, :]  # [1, orig_num_patches, hidden_size]
+
+        # Reshape to spatial grid: [1, orig_size, orig_size, hidden_size]
+        patch_pos_embed = patch_pos_embed.reshape(1, orig_size, orig_size, -1)
+        # Permute to [1, hidden_size, orig_size, orig_size] for interpolation
+        patch_pos_embed = patch_pos_embed.permute(0, 3, 1, 2)
+
+        # Interpolate to target size
+        patch_pos_embed = F.interpolate(
+            patch_pos_embed,
+            size=(target_num_patches_per_side, target_num_patches_per_side),
+            mode='bicubic',
+            align_corners=False,
+        )
+
+        # Reshape back: [1, hidden_size, H, W] -> [1, H*W, hidden_size]
+        patch_pos_embed = patch_pos_embed.permute(0, 2, 3, 1).reshape(1, target_num_patches, -1)
+
+        # Concatenate CLS token back
+        new_pos_embed = torch.cat([cls_token, patch_pos_embed], dim=1)
+
+        # Update the position embeddings
+        self.backbone.embeddings.position_embeddings = nn.Parameter(new_pos_embed)
 
     def _init_weights(self, module):
         """Initialize head weights."""
@@ -146,30 +220,30 @@ class DINOv3ForSegmentation(PreTrainedModel):
         outputs = self.backbone(pixel_values=pixel_values)
 
         # Get patch tokens (exclude CLS token)
-        # Shape: [batch_size, num_patches + 1, hidden_size] or
-        # Shape: [batch_size, num_patches + 1 + num_register_tokens, hidden_size]
+        # ViT output shape: [batch_size, num_patches + 1, hidden_size]
+        # First token is CLS, rest are patch tokens
         sequence_output = outputs.last_hidden_state
 
         batch_size = sequence_output.size(0)
         hidden_size = sequence_output.size(2)
 
         # Compute number of patches dynamically from input image size
-        # handles variable input sizes
         input_h, input_w = pixel_values.shape[2], pixel_values.shape[3]
         num_patches_h = input_h // self.config.patch_size
         num_patches_w = input_w // self.config.patch_size
         num_patches = num_patches_h * num_patches_w
 
-        # Calculate how many special tokens to remove (CLS + register tokens)
-        # Total sequence length - num_patches = num_special_tokens
-        total_seq_len = sequence_output.size(1)
-        num_special_tokens = total_seq_len - num_patches
+        # ViT has exactly 1 CLS token at position 0 (no register tokens)
+        # Remove CLS token to get only patch tokens
+        patch_tokens = sequence_output[:, 1:, :]  # [B, num_patches, hidden_size]
 
-        # Remove special tokens (CLS token is first, register tokens follow if present)
-        patch_tokens = sequence_output[:, num_special_tokens:, :]  # [B, num_patches, hidden_size]
+        # Verify we have the expected number of patches
+        assert patch_tokens.size(1) == num_patches, (
+            f"Expected {num_patches} patch tokens, got {patch_tokens.size(1)}. "
+            f"Input size: {input_h}x{input_w}, patch_size: {self.config.patch_size}"
+        )
 
         # Apply normalization and dropout before spatial reshape
-        # LayerNorm expects [B, num_patches, hidden_size] with norm over hidden_size
         patch_tokens = self.pre_head_norm(patch_tokens)
         patch_tokens = self.pre_head_dropout(patch_tokens)
 

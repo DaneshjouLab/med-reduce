@@ -191,6 +191,7 @@ class SplitManager:
         train_indices: np.ndarray,
         n_folds: int = 5,
         stratify_labels: Optional[np.ndarray] = None,
+        force_recompute: bool = False,
     ) -> List[Tuple[np.ndarray, np.ndarray]]:
         """
         Create and save 5-fold CV splits for hyperparameter tuning.
@@ -199,13 +200,14 @@ class SplitManager:
             train_indices: Indices of training samples
             n_folds: Number of folds (default 5)
             stratify_labels: Optional labels for stratified folding
+            force_recompute: If True, regenerate folds even if cached
 
         Returns:
             List of (train_fold_indices, val_fold_indices) tuples
         """
         cv_path = self._get_cv_path()
 
-        if cv_path.exists():
+        if cv_path.exists() and not force_recompute:
             log.info(f"📥 Loading existing CV folds from {cv_path}")
             return self.load_cv_folds()
 
@@ -213,17 +215,27 @@ class SplitManager:
 
         if stratify_labels is not None:
             from sklearn.model_selection import StratifiedKFold
+            train_labels = stratify_labels[train_indices]
+            unique, counts = np.unique(train_labels, return_counts=True)
+            log.info(f"  Using StratifiedKFold with label distribution: {dict(zip(unique.tolist(), counts.tolist()))}")
             kf = StratifiedKFold(n_splits=n_folds, shuffle=True, random_state=self.seed)
-            splits = list(kf.split(train_indices, stratify_labels[train_indices]))
+            splits = list(kf.split(train_indices, train_labels))
         else:
+            log.warning("  ⚠️ stratify_labels is None - using regular KFold (not stratified!)")
             kf = KFold(n_splits=n_folds, shuffle=True, random_state=self.seed)
             splits = list(kf.split(train_indices))
 
         folds = []
-        for train_fold_idx, val_fold_idx in splits:
+        for fold_idx, (train_fold_idx, val_fold_idx) in enumerate(splits):
             train_fold = train_indices[train_fold_idx]
             val_fold = train_indices[val_fold_idx]
             folds.append((train_fold, val_fold))
+
+            # Log class distribution in each fold's validation set
+            if stratify_labels is not None:
+                val_labels = stratify_labels[val_fold]
+                unique, counts = np.unique(val_labels, return_counts=True)
+                log.info(f"  Fold {fold_idx + 1} val set: {len(val_fold)} samples, classes: {dict(zip(unique.tolist(), counts.tolist()))}")
 
         cv_data = {
             "n_folds": n_folds,

@@ -63,7 +63,7 @@ def run_hyperparameter_tuning(
 
     # Build command with model overrides
     cmd = [
-        "python", "-m", "src.cli.probe_two_stage",
+        "python", "-m", "src.cli.run_probe_two_stage",
         f"--config-name={config_path}",
         f"domain={domain}",
         f"data.image_size={highest_res}",
@@ -82,14 +82,13 @@ def run_hyperparameter_tuning(
 
     print(f"Running: {' '.join(cmd)}\n")
 
-    result = subprocess.run(cmd, check=False, capture_output=False, text=True)
+    result = subprocess.run(cmd, check=False)
 
     if result.returncode != 0:
         print(f"\n❌ Hyperparameter tuning failed for {domain} with {model_key}")
         sys.exit(1)
 
     print(f"\n✅ Hyperparameter tuning completed for {domain} with {model_key}")
-    print(f"   Check logs above for the absolute path to best_hyperparameters.json")
 
 
 def run_final_probing(
@@ -161,7 +160,7 @@ def run_final_probing(
 
         # Build command
         cmd = [
-            "python", "-m", "src.cli.probe_two_stage",
+            "python", "-m", "src.cli.run_probe_two_stage",
             f"--config-name={config_path}",
             f"domain={domain}",
             f"data.image_size={resolution}",
@@ -242,7 +241,7 @@ def main():
     parser.add_argument(
         "--config",
         type=str,
-        default="configs/probe_two_stage.yaml",
+        default="configs/probe_two_stage",
         help="Path to config file",
     )
 

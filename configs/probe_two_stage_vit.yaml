@@ -1,16 +1,16 @@
-# Two-Stage Linear Probing Configuration
+# Two-Stage Linear Probing Configuration - ViT
 #
 # Pipeline:
 # (A) Data loading & split definition - consistent splits across all experiments
 # (B) Image preprocessing - clean images at target resolution
-# (C) Frozen DINOv3 encoder - extract and cache embeddings
+# (C) Frozen ViT encoder - extract and cache embeddings
 # (D) Linear Probing - two-stage process
 #     D1: Hyperparameter tuning at full resolution R* (5-fold CV)
 #     D2: Final training at each resolution R with fixed hyperparameters
 
 # Runtime configuration
 runtime:
-  run_dir: /scratch/groups/roxanad/users/sonnet/compressed_perception/runs/probe_two_stage
+  run_dir: /scratch/groups/roxanad/users/sonnet/compressed_perception/runs/probe_two_stage_vit
 
 domain: "dermatology"  # Options (eventually): dermatology, radiology, pathology
 
@@ -35,29 +35,28 @@ datamodule:
   # Local dataset configuration
   local_label_file: /scratch/groups/roxanad/datasets/isic/challenges/2017/merged_isic_2017_data/merged_ground_truth_part3.csv
   local_image_id_column: image_id
-  # For 3-class classification: nevus (both 0), melanoma (1,0), seborrheic_keratosis (0,1)
-  local_label_column: ["melanoma", "seborrheic_keratosis"]
+  local_label_column:
+    - melanoma
+    - seborrheic_keratosis
   local_image_extension: .jpg
 
-  # For 3-class: no class filtering needed (all samples used)
-  filtered_classes: null
+  filtered_classes: null  # Not used when balance_data is false
   balance_data: false
   num_train_images: 10000
 
   force_recompute_embeddings: true
 
 data:
-  image_size: 512  # Resolution R for this experiment
+  image_size: 512
   batch_size: 256
 
 model:
-  name: "dinov3"
-  model_id: "facebook/dinov3-vits16-pretrain-lvd1689m"
-  type: "dinov3"
+  name: "vit"
+  model_id: "google/vit-base-patch16-224"  # Options: google/vit-base-patch16-384, google/vit-large-patch16-224
+  type: "vit"
   config:
-    num_labels: 3  # nevus, melanoma, seborrheic_keratosis
-    hidden_size: 384
-    dropout_rate: 0.1
+    num_labels: 3
+    ignore_mismatched_sizes: true
 
 train:
   epochs: 100
@@ -88,10 +87,8 @@ train:
       lr: [1e-4, 3e-4, 1e-3]
       weight_decay: [0, 1e-4, 1e-3]
       batch_size: [32, 64]
-      # Uncomment for segmentation tasks:
-      # decoder_dropout: [0.0, 0.1, 0.3]
 
-    load_from_file: "/scratch/groups/roxanad/users/sonnet/compressed_perception/runs/probe_two_stage/hyperparam_search/best_hyperparameters.json"
+    load_from_file: "/scratch/groups/roxanad/users/sonnet/compressed_perception/runs/probe_two_stage_vit/hyperparam_search/best_hyperparameters.json"
 
 loss:
   label_smoothing: 0.0
@@ -100,6 +97,6 @@ loss:
 
 logging:
   project: "reduced-perception"
-  run_name: "dinov3_isic_512px"
+  run_name: "vit_isic_512px"
   wandb_enabled: true
   save_checkpoints: true

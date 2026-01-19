@@ -88,7 +88,7 @@ class ISICDataModulePersistent(BaseDataModule):
         self.keep_indices = keep_indices
         self.repo_id = dataset_name
 
-        self.filtered_classes = filtered_classes or ["0", "1"]
+        self.filtered_classes = filtered_classes  # None means no filtering
         self.balance_data = balance_data
         self.num_train_images = num_train_images
 
@@ -165,12 +165,20 @@ class ISICDataModulePersistent(BaseDataModule):
             if hasattr(dataset, 'ds'):
                 # Wrapped dataset
                 inner_ds = dataset.ds
+
+                if hasattr(inner_ds, '__getitem__') and hasattr(inner_ds, 'column_names'):
+                    label_col = getattr(dataset, 'label_column', 'label')
+                    if label_col in inner_ds.column_names:
+                        labels = inner_ds[label_col]  # Returns list of all labels
+                        log.info(f"Extracted {len(labels)} labels from HF Dataset column '{label_col}'")
+                        return np.array(labels)
+
                 if hasattr(inner_ds, 'targets'):
                     return np.array(inner_ds.targets)
                 elif hasattr(inner_ds, 'labels'):
                     return np.array(inner_ds.labels)
-                elif hasattr(inner_ds, '__getitem__'):
-                    # Try to extract labels by sampling
+
+                if hasattr(inner_ds, '__getitem__'):
                     labels = []
                     for i in range(len(inner_ds)):
                         try:
@@ -179,17 +187,22 @@ class ISICDataModulePersistent(BaseDataModule):
                                 labels.append(item[1])
                             elif isinstance(item, dict) and 'label' in item:
                                 labels.append(item['label'])
-                        except:
-                            break
+                        except Exception as e:
+                            log.warning(f"Failed to extract label at index {i}: {e}")
+                            continue  # Continue instead of break
                     if labels:
+                        log.info(f"Extracted {len(labels)} labels by iterating through dataset")
                         return np.array(labels)
+
             elif hasattr(dataset, 'targets'):
                 return np.array(dataset.targets)
             elif hasattr(dataset, 'labels'):
                 return np.array(dataset.labels)
+
         except Exception as e:
             log.warning(f"Could not extract labels for stratification: {e}")
 
+        log.warning("Failed to extract labels for stratification - returning None")
         return None
 
     @property

@@ -47,6 +47,7 @@ from omegaconf import OmegaConf
 from src.engines.linear_probe_embedding_engine import train_probe_on_embeddings
 from src.utils.logging_core import setup_logging, get_logger, WandbLogger
 from src.utils.optim import make_optimizer_and_scheduler
+from src.utils.training_utils import profile_model, calculate_inference_latency, get_gpu_memory
 from src.losses.classification import cross_entropy_loss
 from src.models.factory import create_model, freeze_backbone
 from src.utils.embedding_cache import EmbeddingCache
@@ -115,11 +116,28 @@ class ProbeTwoStageWrapper:
             run_name=getattr(cfg.logging, "run_name", "two_stage_run"),
             config=cfg,
             enabled=bool(getattr(cfg.logging, "wandb_enabled", True)),
-            tags=["two-stage", "linear-probe"],
+            tags=["two-stage", "linear-probe", f"{self.current_resolution}px", self.model_name],
         )
+
+        self.wandb.log({
+            "config/resolution": self.current_resolution,
+            "config/model_name": self.model_name,
+            "config/domain": self.domain,
+        })
 
         self.run_dir = getattr(cfg.runtime, "run_dir", "./runs/probe_two_stage")
         os.makedirs(self.run_dir, exist_ok=True)
+
+        # Efficiency metrics storage
+        self.efficiency_metrics = {
+            "resolution": self.current_resolution,
+            "model_name": self.model_name,
+            "domain": self.domain,
+            "encoder_gflops": None,
+            "encoder_latency_ms": None,
+            "embedding_extraction_time_s": None,
+            "peak_gpu_memory_mb": None,
+        }
 
         self.hyperparam_search_enabled = False
         self.pretuned_hyperparams = None
@@ -161,7 +179,7 @@ class ProbeTwoStageWrapper:
 
         return hyperparams
 
-    def _compute_class_weights(self, train_labels: torch.Tensor) -> torch.Tensor:
+    def _compute_class_weights(self, train_labels: torch.Tensor, num_classes: int | None = None) -> torch.Tensor:
         """
         Compute class weights for balanced loss function.
 
@@ -169,16 +187,31 @@ class ProbeTwoStageWrapper:
 
         Args:
             train_labels: Training labels
+            num_classes: Total number of classes. If None, inferred from max label + 1.
 
         Returns:
-            Tensor of class weights
+            Tensor of class weights (one per class)
         """
         train_labels_np = train_labels.cpu().numpy()
-        unique_classes, class_counts = np.unique(train_labels_np, return_counts=True)
         n_samples = len(train_labels_np)
-        n_classes = len(unique_classes)
 
-        class_weights = n_samples / (n_classes * class_counts)
+        if num_classes is None:
+            num_classes = int(train_labels_np.max()) + 1
+
+        # Count samples per class (including classes with 0 samples)
+        class_counts = np.zeros(num_classes, dtype=np.float64)
+        unique_classes, counts = np.unique(train_labels_np, return_counts=True)
+        for cls, count in zip(unique_classes, counts):
+            class_counts[cls] = count
+
+        # Compute weights, handling classes with 0 samples
+        class_weights = np.zeros(num_classes, dtype=np.float64)
+        for i in range(num_classes):
+            if class_counts[i] > 0:
+                class_weights[i] = n_samples / (num_classes * class_counts[i])
+            else:
+                # Assign weight of 0 for missing classes (won't affect loss since no samples)
+                class_weights[i] = 0.0
 
         class_weights_tensor = torch.tensor(class_weights, dtype=torch.float32, device=self.device)
 
@@ -186,9 +219,12 @@ class ProbeTwoStageWrapper:
         log.info("Class Weight Computation")
         log.info(f"{'='*60}")
         log.info(f"Training set size: {n_samples}")
-        log.info(f"Number of classes: {n_classes}")
-        for cls, count, weight in zip(unique_classes, class_counts, class_weights):
-            log.info(f"  Class {cls}: {count} samples ({count/n_samples*100:.1f}%) -> weight: {weight:.4f}")
+        log.info(f"Number of classes: {num_classes}")
+        for cls in range(num_classes):
+            count = int(class_counts[cls])
+            weight = class_weights[cls]
+            pct = count / n_samples * 100 if n_samples > 0 else 0
+            log.info(f"  Class {cls}: {count} samples ({pct:.1f}%) -> weight: {weight:.4f}")
         log.info(f"{'='*60}\n")
 
         return class_weights_tensor
@@ -302,8 +338,10 @@ class ProbeTwoStageWrapper:
         Returns:
             Dict mapping split_name -> (embeddings, labels)
         """
+        import time
+
         log.info(f"\n{'='*60}")
-        log.info(f"(C) Frozen DINOv3 Encoder - Extracting Embeddings at {resolution}px")
+        log.info(f"(C) Frozen Encoder - Extracting Embeddings at {resolution}px")
         log.info(f"{'='*60}\n")
 
         model = create_model(self.model_info, resolution=resolution)
@@ -311,6 +349,30 @@ class ProbeTwoStageWrapper:
         model.eval()
 
         freeze_backbone(model, self.model_info.get("type", "dinov3"))
+
+        # Profile encoder efficiency metrics
+        log.info(f"📊 Profiling encoder efficiency at {resolution}px...")
+
+        encoder_gflops = profile_model(model, resolution)
+        if encoder_gflops > 0:
+            self.efficiency_metrics["encoder_gflops"] = encoder_gflops
+            log.info(f"  Encoder GFLOPs: {encoder_gflops:.2f}")
+        else:
+            log.warning("  Could not compute encoder GFLOPs")
+
+        encoder_latency = calculate_inference_latency(model, resolution)
+        if encoder_latency > 0:
+            self.efficiency_metrics["encoder_latency_ms"] = encoder_latency
+            log.info(f"  Encoder latency: {encoder_latency:.2f} ms")
+        else:
+            log.warning("  Could not compute encoder latency")
+
+        peak_memory = get_gpu_memory()
+        if peak_memory > 0:
+            self.efficiency_metrics["peak_gpu_memory_mb"] = peak_memory
+            log.info(f"  Peak GPU memory: {peak_memory} MB")
+
+        extraction_start = time.time()
 
         all_embeddings = {}
         for split_name, split_indices in splits.items():
@@ -322,6 +384,10 @@ class ProbeTwoStageWrapper:
                 force_recompute=force_recompute,
             )
             all_embeddings[split_name] = (embeddings, labels)
+
+        extraction_time = time.time() - extraction_start
+        self.efficiency_metrics["embedding_extraction_time_s"] = extraction_time
+        log.info(f"  Total embedding extraction time: {extraction_time:.2f}s")
 
         del model
         torch.cuda.empty_cache()
@@ -460,7 +526,7 @@ class ProbeTwoStageWrapper:
             )
 
             train_fold_labels = train_labels[train_fold_rel]
-            fold_class_weights = self._compute_class_weights(train_fold_labels)
+            fold_class_weights = self._compute_class_weights(train_fold_labels, num_classes=num_classes)
 
             loss_fn = cross_entropy_loss(
                 label_smoothing=float(getattr(trial_cfg.loss, "label_smoothing", 0.0)),
@@ -486,8 +552,20 @@ class ProbeTwoStageWrapper:
 
             fold_metrics.append(result["best_metric"])
 
-        mean_metric = float(np.mean(fold_metrics))
-        std_metric = float(np.std(fold_metrics))
+        # Filter out NaN values (from folds where AUROC couldn't be computed)
+        valid_metrics = [m for m in fold_metrics if not np.isnan(m)]
+        if len(valid_metrics) < len(fold_metrics):
+            log.warning(
+                f"  {len(fold_metrics) - len(valid_metrics)}/{len(fold_metrics)} folds had invalid metrics (NaN), "
+                f"averaging over {len(valid_metrics)} valid folds"
+            )
+
+        if not valid_metrics:
+            log.warning("  All folds had invalid metrics!")
+            return float('nan'), float('nan')
+
+        mean_metric = float(np.mean(valid_metrics))
+        std_metric = float(np.std(valid_metrics))
 
         return mean_metric, std_metric
 
@@ -534,6 +612,7 @@ class ProbeTwoStageWrapper:
             train_indices=train_indices,
             n_folds=self.k_folds,
             stratify_labels=stratify_labels,
+            force_recompute=self.force_recompute,
         )
 
         all_configs = self._get_all_hyperparam_configs()
@@ -747,8 +826,12 @@ class ProbeTwoStageWrapper:
         train_embeddings, train_labels = all_embeddings["train"]
         test_embeddings, test_labels = all_embeddings["test"]
 
+        # Compute num_classes from all labels (train + test) to ensure we capture all classes
+        all_labels = torch.cat([train_labels, test_labels])
+        num_classes = int(all_labels.max().item()) + 1
+
         log.info("Computing class weights from training data...")
-        self.class_weights = self._compute_class_weights(train_labels)
+        self.class_weights = self._compute_class_weights(train_labels, num_classes=num_classes)
 
         self.loss_fn = cross_entropy_loss(
             label_smoothing=float(getattr(self.cfg.loss, "label_smoothing", 0.0)),
@@ -790,7 +873,82 @@ class ProbeTwoStageWrapper:
             resolution=self.current_resolution,
         )
 
+        self._log_efficiency_metrics()
+
+        self._save_comprehensive_results(result)
+
         return result
+
+    def _log_efficiency_metrics(self):
+        """Log efficiency metrics to wandb."""
+        metrics_to_log = {
+            "efficiency/encoder_gflops": self.efficiency_metrics.get("encoder_gflops"),
+            "efficiency/encoder_latency_ms": self.efficiency_metrics.get("encoder_latency_ms"),
+            "efficiency/embedding_extraction_time_s": self.efficiency_metrics.get("embedding_extraction_time_s"),
+            "efficiency/peak_gpu_memory_mb": self.efficiency_metrics.get("peak_gpu_memory_mb"),
+            "efficiency/resolution": self.current_resolution,
+        }
+
+        metrics_to_log = {k: v for k, v in metrics_to_log.items() if v is not None}
+
+        if metrics_to_log:
+            self.wandb.log(metrics_to_log)
+            log.info(f"\n📊 Efficiency metrics logged to wandb:")
+            for k, v in metrics_to_log.items():
+                log.info(f"  {k}: {v}")
+
+    def _save_comprehensive_results(self, training_result: Dict[str, Any]):
+        """Save comprehensive results including efficiency metrics to JSON."""
+        best_metric = training_result.get("best_metric", None)
+        history = training_result.get("history", {})
+
+        final_val_auroc = history.get("val_auroc", [None])[-1] if history.get("val_auroc") else None
+        final_val_acc = history.get("val_acc", [None])[-1] if history.get("val_acc") else None
+        final_val_loss = history.get("val_loss", [None])[-1] if history.get("val_loss") else None
+
+        comprehensive_results = {
+            "experiment_info": {
+                "resolution": self.current_resolution,
+                "model_name": self.model_name,
+                "domain": self.domain,
+                "dataset": self.dataset_name,
+            },
+            "accuracy_metrics": {
+                "best_metric": best_metric,
+                "metric_key": str(getattr(self.cfg.train, "metric_key", "val_acc")),
+                "final_val_auroc": final_val_auroc,
+                "final_val_acc": final_val_acc,
+                "final_val_loss": final_val_loss,
+            },
+            "efficiency_metrics": self.efficiency_metrics,
+            "hyperparameters": {
+                "lr": float(self.cfg.train.optimizer.lr),
+                "weight_decay": float(self.cfg.train.optimizer.weight_decay),
+                "batch_size": int(self.cfg.data.batch_size),
+                "epochs": int(self.cfg.train.epochs),
+            },
+            "training_history": {
+                "num_epochs": len(history.get("train_loss", [])),
+                "final_train_loss": history.get("train_loss", [None])[-1] if history.get("train_loss") else None,
+            },
+        }
+
+        results_path = os.path.join(self.run_dir, f"results_{self.model_name}_{self.current_resolution}px.json")
+        with open(results_path, "w") as f:
+            json.dump(comprehensive_results, f, indent=2)
+
+        log.info(f"\n💾 Comprehensive results saved to: {os.path.abspath(results_path)}")
+
+        summary_metrics = {
+            "summary/best_metric": best_metric,
+            "summary/final_val_auroc": final_val_auroc,
+            "summary/final_val_acc": final_val_acc,
+            "summary/resolution": self.current_resolution,
+            "summary/encoder_gflops": self.efficiency_metrics.get("encoder_gflops"),
+            "summary/encoder_latency_ms": self.efficiency_metrics.get("encoder_latency_ms"),
+        }
+        summary_metrics = {k: v for k, v in summary_metrics.items() if v is not None}
+        self.wandb.log(summary_metrics)
 
 
 def run(cfg: Any) -> Dict[str, Any]:

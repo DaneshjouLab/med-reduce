@@ -1,5 +1,5 @@
-# Configuration for ISIC segmentation dataset
-# Use this when training segmentation models on local image/mask directories
+# Configuration for ISIC segmentation dataset with ViT backbone
+# Use this when training ViT-based segmentation models on local image/mask directories
 
 # Global settings
 seed: 42
@@ -20,8 +20,8 @@ datamodule:
 
   # DataLoader parameters
   num_workers: 8
-  persistent_workers: true
-  prefetch_factor: 4
+  persistent_workers: false
+  prefetch_factor: 2
   pin_memory: true
   drop_last: false
   split_seed: 42
@@ -35,7 +35,7 @@ dataset:
 
 data:
   batch_size: 16
-  image_size: 256
+  image_size: 224                    # ViT default is 224, can use 384 for vit-base-patch16-384
 
 # Training configuration
 train:
@@ -91,7 +91,7 @@ loss:
 # Logging configuration
 logging:
   project: "reduced-perception"
-  run_name: "segmentation_run"
+  run_name: "vit_segmentation_run"
   wandb_enabled: true
   save_umap_embeddings: false
   umap_max_samples: 15
@@ -106,13 +106,14 @@ runtime: {}
 
 # Model configuration
 model:
-  name: "dinov3_segmentation"        # DINOv3 with segmentation head
-  model_id: "facebook/dinov3-vits16-pretrain-lvd1689m"
-  type: "dinov3_segmentation"
+  name: "vit_segmentation"           # ViT with segmentation head
+  model_id: "google/vit-base-patch16-224"  # Options: google/vit-base-patch16-384, google/vit-large-patch16-224
+  type: "vit"
   freeze_backbone: true              # Train only segmentation head (fast, efficient)
   config:
     num_classes: 1                   # Binary segmentation (1 output channel for lesion)
-    hidden_size: 384                 # DINOv3 small hidden size
+    hidden_size: 768                 # ViT-base hidden size (use 1024 for vit-large)
+    patch_size: 16                   # Patch size (matches model_id)
     dropout_rate: 0.1                # Dropout in segmentation head
     loss_type: "dice_bce"            # Combined Dice + BCE loss
     dice_weight: 0.5                 # Weight for Dice loss (0.5 = equal weight)
