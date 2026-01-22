@@ -162,14 +162,19 @@ def run_final_segmentation(
 
     # Find hyperparameter file if not specified
     if hyperparam_file is None:
-        project_root = Path(__file__).parent.parent.parent
-        runs_dir = project_root / "runs"
+        # Search in both outputs/ (Hydra default) and runs/ directories
+        cwd = Path.cwd()
+        search_dirs = []
 
-        # Find most recent hyperparam search results
-        search_dirs = sorted(runs_dir.glob("**/hyperparam_search"), key=lambda p: p.stat().st_mtime, reverse=True)
+        for search_root in [cwd / "outputs", cwd / "runs"]:
+            if search_root.exists():
+                search_dirs.extend(search_root.glob("**/hyperparam_search"))
+
+        # Sort by modification time (most recent first)
+        search_dirs = sorted(search_dirs, key=lambda p: p.stat().st_mtime, reverse=True)
 
         if not search_dirs:
-            print(f"⚠️  No hyperparameter search results found in {runs_dir}")
+            print(f"⚠️  No hyperparameter search results found in {cwd}/outputs or {cwd}/runs")
             print(f"   Run hyperparameter tuning first with --tune-hyperparams")
             sys.exit(1)
 

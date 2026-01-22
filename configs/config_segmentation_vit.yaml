@@ -40,7 +40,8 @@ data:
 # Training configuration
 train:
   # Core training loop params
-  mode: "segmentation"               # Set to "segmentation" for segmentation tasks
+  mode: "segmentation"
+  k_folds: 2               # Set to "segmentation" for segmentation tasks
   epochs: 50
   grad_clip: 1.0
   mixed_precision: true
@@ -63,8 +64,8 @@ train:
     warmup_epochs: 5                 # Warmup helps with segmentation training
     min_lr: 1e-6
 
-  # Cross-validation params
-  k_folds: 5
+  # Train/val split params
+  val_frac: 0.2
   subset_frac: 1.0
   seed: 42
 
@@ -72,13 +73,13 @@ train:
   # For segmentation, also tune decoder_dropout
   hyperparam_search:
     enabled: false
-    use_cv: true
+    use_cv: false
     load_from_file: null
     param_grid:
-      lr: [1e-4, 3e-4, 1e-3]
-      weight_decay: [0.0, 1e-4, 1e-3]
-      batch_size: [8, 16]
-      decoder_dropout: [0.0, 0.1, 0.3]  # Segmentation-specific
+      lr: [1e-4, 3e-4]
+      weight_decay: [0.0, 1e-4]
+      batch_size: [8]
+      decoder_dropout: [0.0, 0.1]  # Segmentation-specific
 
 # Loss configuration
 loss:
