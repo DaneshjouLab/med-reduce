@@ -30,6 +30,14 @@ DOMAIN_CONFIG = {
         "highest_resolution": 512,
         "default_resolutions": [512, 256, 128, 64],
     },
+    "radiology": {
+        "highest_resolution": 512,
+        "default_resolutions": [512, 256, 128, 64],
+    },
+    "pathology": {
+        "highest_resolution": 512,
+        "default_resolutions": [512, 256, 128, 64],
+    },
 }
 
 
@@ -127,7 +135,7 @@ def run_final_probing(
 
         if not final_config_path.endswith(".yaml"):
             final_config_path = f"{final_config_path}.yaml"
-        
+
         resolved_config_path = project_root / final_config_path
         config = OmegaConf.load(resolved_config_path)
 

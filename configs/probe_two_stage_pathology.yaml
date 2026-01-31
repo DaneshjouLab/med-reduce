@@ -1,4 +1,4 @@
-# Two-Stage Linear Probing Configuration
+# Two-Stage Linear Probing Configuration - Pathology Domain
 #
 # Pipeline:
 # (A) Data loading & split definition - consistent splits across all experiments
@@ -12,7 +12,7 @@
 runtime:
   run_dir: /scratch/groups/roxanad/users/sonnet/compressed_perception/runs/probe_two_stage
 
-domain: "dermatology"  # Options (eventually): dermatology, radiology, pathology
+domain: "pathology"
 
 # Split configuration
 split_dir: /scratch/groups/roxanad/users/sonnet/compressed_perception/splits
@@ -23,7 +23,7 @@ embedding_cache_dir: /scratch/groups/roxanad/users/sonnet/compressed_perception/
 datamodule:
   _target_: src.data.isic_datamodule_persistent.ISICDataModulePersistent
   dataset_name: null  # Set to null for local data
-  data_dir: /scratch/groups/roxanad/datasets/isic/challenges/2017/merged_isic_2017_data/images
+  data_dir: /path/to/pathology/dataset/images
   num_workers: 8
   pin_memory: true
   persistent_workers: false
@@ -33,13 +33,12 @@ datamodule:
   train_ratio: 0.8
 
   # Local dataset configuration
-  local_label_file: /scratch/groups/roxanad/datasets/isic/challenges/2017/merged_isic_2017_data/merged_ground_truth_part3.csv
+  local_label_file: /path/to/pathology/dataset/labels.csv
   local_image_id_column: image_id
-  # For 3-class classification: nevus (both 0), melanoma (1,0), seborrheic_keratosis (0,1)
-  local_label_column: ["melanoma", "seborrheic_keratosis"]
+  local_label_column: ["class_0", "class_1"]  # Update with actual pathology class names
   local_image_extension: .jpg
 
-  # For 3-class: no class filtering needed (all samples used)
+  # Dataset filtering
   filtered_classes: null
   balance_data: false
   num_train_images: 10000
@@ -55,7 +54,7 @@ model:
   model_id: "facebook/dinov3-vits16-pretrain-lvd1689m"
   type: "dinov3"
   config:
-    num_labels: 3  # nevus, melanoma, seborrheic_keratosis
+    num_labels: 2  # Update based on pathology task
     hidden_size: 384
     dropout_rate: 0.1
 
@@ -80,7 +79,7 @@ train:
     min_lr: 1e-6
 
   hyperparam_search:
-    enabled: true  # Set to true for hyperparameter tuning at highest resolution
+    enabled: true
     use_cv: true
 
     # Grid search parameters
@@ -88,8 +87,6 @@ train:
       lr: [1e-4, 3e-4, 1e-3]
       weight_decay: [0, 1e-4, 1e-3]
       batch_size: [32, 64]
-      # Uncomment for segmentation tasks:
-      # decoder_dropout: [0.0, 0.1, 0.3]
 
     load_from_file: "/scratch/groups/roxanad/users/sonnet/compressed_perception/runs/probe_two_stage/hyperparam_search/best_hyperparameters.json"
 
@@ -100,6 +97,6 @@ loss:
 
 logging:
   project: "reduced-perception"
-  run_name: "dinov3_isic_512px"
+  run_name: "dinov3_pathology_512px"
   wandb_enabled: true
   save_checkpoints: true
