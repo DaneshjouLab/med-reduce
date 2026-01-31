@@ -127,7 +127,7 @@ def run_hyperparameter_tuning(
         sys.exit(1)
 
     print(f"\n✅ Hyperparameter tuning completed for {domain} with {model_key}")
-    print(f"   Best params saved to: runs/.../hyperparam_search/best_hyperparameters.json")
+    print(f"   Best params saved to: runs/.../hyperparam_search_segmentation/best_hyperparameters.json")
     print(f"   Note the path above and use it with --hyperparam-file for final evaluation")
 
 
@@ -168,7 +168,7 @@ def run_final_segmentation(
 
         for search_root in [cwd / "outputs", cwd / "runs"]:
             if search_root.exists():
-                search_dirs.extend(search_root.glob("**/hyperparam_search"))
+                search_dirs.extend(search_root.glob("**/hyperparam_search_segmentation"))
 
         # Sort by modification time (most recent first)
         search_dirs = sorted(search_dirs, key=lambda p: p.stat().st_mtime, reverse=True)

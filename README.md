@@ -115,18 +115,67 @@ pip install -r requirements.txt
 
 ---
 
-## Running Training
+## Running on HPC (Sherlock)
+
+### 1. Build the container (first time only)
+
+```bash
+sbatch jobs/slim_container.sh
+```
+
+This pulls a lightweight Python 3.10 image and saves it to `/scratch/users/$USER/simg/`. Follow the printed instructions to enter the container interactively and install PyTorch + dependencies into the `.venv`.
+
+### 2. Run experiments
+
+Submit a training job with:
+
+```bash
+sbatch jobs/train_container.sh
+```
+
+Inside `train_container.sh`, change the Python command depending on the task:
+
+**Classification (linear probing):**
+```bash
+python -m src.cli.run_multiresolution_probe \
+    --domain dermatology \
+    --model dinov3 \
+    --config probe_two_stage \
+    --tune-hyperparams \
+    --resolutions 512 256 128 64
+```
+
+**Segmentation:**
+```bash
+python -m src.cli.run_multiresolution_segmentation \
+    --domain dermatology \
+    --model dinov3 \
+    --tune-hyperparams \
+    --resolutions 512 256 128 64
+```
+
+Both scripts follow the same two-step protocol:
+1. `--tune-hyperparams` runs hyperparameter search via cross-validation at the highest resolution
+2. `--resolutions` trains and evaluates at each resolution using the tuned hyperparameters
+
+Results are saved to separate directories to avoid conflicts:
+- Classification: `runs/probe_two_stage/hyperparam_search/`
+- Segmentation: `runs/segmentation/hyperparam_search_segmentation/`
+
+---
+
+## Running Training (standalone)
 
 The main training entry point is:
 
 ```bash
-python src/cli/train.py
+python -m src.cli.train
 ```
 
 Training is fully driven by **Hydra configs**. For example:
 
 ```bash
-python src/cli/train.py \
+python -m src.cli.train \
   --config-name probe_two_stage \
   dataset=isic2019 \
   train.mode=probe

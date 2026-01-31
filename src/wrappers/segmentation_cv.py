@@ -87,7 +87,7 @@ class SegmentationCVWrapper:
             self.param_grid = getattr(hyperparam_search, "param_grid", {})
 
             if self.hyperparam_search_enabled:
-                self.search_dir = self.run_dir / "hyperparam_search"
+                self.search_dir = self.run_dir / "hyperparam_search_segmentation"
                 self.search_dir.mkdir(exist_ok=True, parents=True)
                 log.info(f"✓ Hyperparameter search enabled")
 
