@@ -1,0 +1,137 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "reduced-perception"
+version = "0.1.0"
+description = "REDUCE: Resolution-Aware Evaluation of Deep Understanding and Computational Efficiency"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [
+    {name = "DaneshjouLab", email = "daneshjoulab@stanford.edu"},
+]
+keywords = ["vision", "efficiency", "multi-resolution", "linear-probing", "distillation"]
+
+dependencies = [
+    "annotated-types",
+    "anyio",
+    "asttokens",
+    "accelerate",
+    "beautifulsoup4",
+    "biopython",
+    "certifi",
+    "charset-normalizer",
+    "colorama",
+    "comm",
+    "contourpy",
+    "cycler",
+    "datasets",
+    "debugpy",
+    "decorator",
+    "distro",
+    "dotenv",
+    "exceptiongroup",
+    "executing",
+    "fonttools",
+    "h11",
+    "httpcore",
+    "httpx",
+    "idna",
+    "importlib_metadata",
+    "ipykernel",
+    "ipython",
+    "jedi",
+    "jiter",
+    "joblib",
+    "jupyter_client",
+    "jupyter_core",
+    "kiwisolver",
+    "loguru",
+    "matplotlib",
+    "matplotlib-inline",
+    "nest_asyncio",
+    "numpy",
+    "openai",
+    "packaging",
+    "pandas",
+    "parso",
+    "pickleshare",
+    "pillow",
+    "platformdirs",
+    "prompt_toolkit",
+    "psutil",
+    "pure_eval",
+    "pydantic",
+    "pydantic_core",
+    "pynvml",
+    "Pygments",
+    "pyparsing",
+    "python-dateutil",
+    "python-dotenv",
+    "requests",
+    "scikit-learn",
+    "scipy",
+    "seaborn",
+    "setuptools",
+    "six",
+    "sniffio",
+    "soupsieve",
+    "stack-data",
+    "timm",
+    "thop",
+    "threadpoolctl",
+    "tornado",
+    "torch",
+    "torchvision",
+    "transformers",
+    "tqdm",
+    "traitlets",
+    "typing-inspection",
+    "typing_extensions",
+    "triton",
+    "tzdata",
+    "urllib3",
+    "wandb",
+    "wcwidth",
+    "wheel",
+    "zipp",
+    "hydra-core",
+    "omegaconf",
+    "umap-learn",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "black>=23.0",
+    "flake8>=6.0",
+    "isort>=5.0",
+    "mypy>=1.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/DaneshjouLab/reduced-perception"
+Repository = "https://github.com/DaneshjouLab/reduced-perception.git"
+Issues = "https://github.com/DaneshjouLab/reduced-perception/issues"
+
+[tool.setuptools]
+packages = ["src"]
+
+[tool.black]
+line-length = 100
+target-version = ['py310']
+include = '\.pyi?$'
+
+[tool.isort]
+profile = "black"
+line_length = 100
+multi_line_mode = 3
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false
+ignore_missing_imports = true
