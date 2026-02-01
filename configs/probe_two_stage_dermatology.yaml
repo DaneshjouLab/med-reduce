@@ -26,9 +26,9 @@ embedding_cache_dir: /scratch/groups/roxanad/users/sonnet/compressed_perception/
 # pathology: ${PATHOLOGY_DATASET_PATH}
 
 datamodule:
-  _target_: src.data.isic_datamodule_persistent.ISICDataModulePersistent
+  _target_: src.data.tabular_datamodule_persistent.TabularDataModulePersistent
   dataset_name: null  # Set to null for local data
-  data_dir: /scratch/groups/roxanad/datasets/isic/challenges/2017/merged_isic_2017_data/images  # Update for radiology/pathology
+  data_dir: /scratch/groups/roxanad/datasets/isic/challenges/2017/merged_isic_2017_data/images  # <----- Where images live
   num_workers: 8
   pin_memory: true
   persistent_workers: false
@@ -38,8 +38,8 @@ datamodule:
   train_ratio: 0.8
 
   # Local dataset configuration (domain-specific)
-  local_label_file: /scratch/groups/roxanad/datasets/isic/challenges/2017/merged_isic_2017_data/merged_ground_truth_part3.csv  # Update for radiology/pathology
-  local_image_id_column: image_id
+  local_label_file: /scratch/groups/roxanad/datasets/isic/challenges/2017/merged_isic_2017_data/merged_ground_truth_part3.csv # <----- Where labels live
+  local_image_id_column: image_id # Update for radiology/pathology from labels.csv
   local_label_column: ["nevus", "melanoma", "seborrheic_keratosis"]  # Update for radiology/pathology
   local_image_extension: .jpg
 

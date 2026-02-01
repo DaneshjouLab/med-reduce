@@ -4,14 +4,17 @@
 # SPDX-License-Identifier: MIT
 
 """
-ISIC DataModule with persistent splits.
+Tabular DataModule with persistent splits for image + CSV label datasets.
+
+Works with any domain (dermatology, radiology, pathology, etc.)
+Loads images from a directory and labels from a CSV file.
 
 train/val/test splits are:
 1. Created once and stored to disk
 2. Reused across all experiments and resolutions
 3. Consistent across different models
 
-Splits stored in ./splits/isic/
+Splits stored in split_dir (e.g., ./splits/dermatology/)
 """
 
 from typing import Optional, Any, List
@@ -34,9 +37,12 @@ VAL_SPLIT_RATIO = 0.1
 DEFAULT_REPO_ID = "MKZuziak/ISIC_2019_224"
 
 
-class ISICDataModulePersistent(BaseDataModule):
+class TabularDataModulePersistent(BaseDataModule):
     """
-    ISIC DataModule with persistent split management.
+    Tabular DataModule with persistent split management.
+    
+    Generic loader for any image dataset with CSV labels.
+    Works across domains: dermatology, radiology, pathology, etc.
     """
 
     def __init__(

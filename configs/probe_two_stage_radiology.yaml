@@ -21,7 +21,7 @@ split_dir: /scratch/groups/roxanad/users/sonnet/compressed_perception/splits
 embedding_cache_dir: /scratch/groups/roxanad/users/sonnet/compressed_perception/cache/embeddings
 
 datamodule:
-  _target_: src.data.isic_datamodule_persistent.ISICDataModulePersistent
+  _target_: src.data.tabular_datamodule_persistent.TabularDataModulePersistent
   dataset_name: null  # Set to null for local data
   data_dir: /path/to/radiology/dataset/images
   num_workers: 8

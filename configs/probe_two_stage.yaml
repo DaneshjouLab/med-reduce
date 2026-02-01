@@ -1,4 +1,4 @@
-# Two-Stage Linear Probing Configuration - Pathology Domain
+# Two-Stage Linear Probing Configuration
 #
 # Pipeline:
 # (A) Data loading & split definition - consistent splits across all experiments
@@ -12,7 +12,7 @@
 runtime:
   run_dir: /scratch/groups/roxanad/users/sonnet/compressed_perception/runs/probe_two_stage
 
-domain: "pathology"
+domain: "dermatology"  # Options: dermatology, radiology, pathology
 
 # Split configuration
 split_dir: /scratch/groups/roxanad/users/sonnet/compressed_perception/splits
@@ -20,10 +20,15 @@ split_dir: /scratch/groups/roxanad/users/sonnet/compressed_perception/splits
 # Embedding cache configuration
 embedding_cache_dir: /scratch/groups/roxanad/users/sonnet/compressed_perception/cache/embeddings
 
+# Domain-specific dataset configuration
+# dermatology: ISIC dataset
+# radiology: ${RADIOLOGY_DATASET_PATH}
+# pathology: ${PATHOLOGY_DATASET_PATH}
+
 datamodule:
   _target_: src.data.tabular_datamodule_persistent.TabularDataModulePersistent
   dataset_name: null  # Set to null for local data
-  data_dir: /path/to/pathology/dataset/images
+  data_dir: /scratch/groups/roxanad/datasets/isic/challenges/2017/merged_isic_2017_data/images  # Update for radiology/pathology
   num_workers: 8
   pin_memory: true
   persistent_workers: false
@@ -32,16 +37,16 @@ datamodule:
   use_val_split: false  # Use train/test splits, create val from train
   train_ratio: 0.8
 
-  # Local dataset configuration
-  local_label_file: /path/to/pathology/dataset/labels.csv
+  # Local dataset configuration (domain-specific)
+  local_label_file: /scratch/groups/roxanad/datasets/isic/challenges/2017/merged_isic_2017_data/merged_ground_truth_part3.csv  # Update for radiology/pathology
   local_image_id_column: image_id
-  local_label_column: ["class_0", "class_1"]  # Update with actual pathology class names
+  local_label_column: ["nevus", "melanoma", "seborrheic_keratosis"]  # Update for radiology/pathology
   local_image_extension: .jpg
 
-  # Dataset filtering
+  # Dataset filtering (domain-specific)
   filtered_classes: null
   balance_data: false
-  num_train_images: 10000
+  num_train_images: 10000  # Update for radiology/pathology
 
   force_recompute_embeddings: true
 
@@ -54,7 +59,7 @@ model:
   model_id: "facebook/dinov3-vits16-pretrain-lvd1689m"
   type: "dinov3"
   config:
-    num_labels: 2  # Update based on pathology task
+    num_labels: 3  # Update for radiology/pathology (ISIC: 3 classes)
     hidden_size: 384
     dropout_rate: 0.1
 
@@ -79,7 +84,7 @@ train:
     min_lr: 1e-6
 
   hyperparam_search:
-    enabled: true
+    enabled: true  # Set to true for hyperparameter tuning at highest resolution
     use_cv: true
 
     # Grid search parameters
@@ -87,6 +92,8 @@ train:
       lr: [1e-4, 3e-4, 1e-3]
       weight_decay: [0, 1e-4, 1e-3]
       batch_size: [32, 64]
+      # Uncomment for segmentation tasks:
+      # decoder_dropout: [0.0, 0.1, 0.3]
 
     load_from_file: "/scratch/groups/roxanad/users/sonnet/compressed_perception/runs/probe_two_stage/hyperparam_search/best_hyperparameters.json"
 
@@ -97,6 +104,6 @@ loss:
 
 logging:
   project: "reduced-perception"
-  run_name: "dinov3_pathology_512px"
+  run_name: "dinov3_isic_512px"
   wandb_enabled: true
   save_checkpoints: true
