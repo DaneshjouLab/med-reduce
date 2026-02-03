@@ -89,11 +89,13 @@ class ProbeTwoStageWrapper:
         self.model_info = cfg.model
         self.model_name = self.model_info.get("name", "dinov3")
 
+        self.seed = int(getattr(cfg.train, "seed", 42))
+
         split_dir = getattr(cfg, "split_dir", "./splits")
         self.split_manager = SplitManager(
             split_dir=split_dir,
             dataset_name=self.dataset_name,
-            seed=int(getattr(cfg.train, "seed", 42)),
+            seed=self.seed,
         )
 
         cache_dir = getattr(cfg, "embedding_cache_dir", "./cache/embeddings")
@@ -101,6 +103,7 @@ class ProbeTwoStageWrapper:
             cache_dir=cache_dir,
             dataset_name=self.dataset_name,
             model_name=self.model_name,
+            seed=self.seed,
             device=self.device,
         )
 
@@ -123,9 +126,11 @@ class ProbeTwoStageWrapper:
             "config/resolution": self.current_resolution,
             "config/model_name": self.model_name,
             "config/domain": self.domain,
+            "config/seed": self.seed,
         })
 
-        self.run_dir = getattr(cfg.runtime, "run_dir", "./runs/probe_two_stage")
+        base_run_dir = getattr(cfg.runtime, "run_dir", "./runs/probe_two_stage")
+        self.run_dir = os.path.join(base_run_dir, f"seed_{self.seed}")
         os.makedirs(self.run_dir, exist_ok=True)
 
         # Efficiency metrics storage

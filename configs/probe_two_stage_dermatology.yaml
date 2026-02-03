@@ -21,9 +21,6 @@ split_dir: /scratch/groups/roxanad/users/sonnet/compressed_perception/splits
 embedding_cache_dir: /scratch/groups/roxanad/users/sonnet/compressed_perception/cache/embeddings
 
 # Domain-specific dataset configuration
-# dermatology: ISIC dataset
-# radiology: ${RADIOLOGY_DATASET_PATH}
-# pathology: ${PATHOLOGY_DATASET_PATH}
 
 datamodule:
   _target_: src.data.tabular_datamodule_persistent.TabularDataModulePersistent
@@ -104,6 +101,6 @@ loss:
 
 logging:
   project: "reduced-perception"
-  run_name: "dinov3_isic_512px"
+  run_name: "dinov3_derm_512px"
   wandb_enabled: true
   save_checkpoints: true

@@ -97,6 +97,6 @@ loss:
 
 logging:
   project: "reduced-perception"
-  run_name: "dinov3_radiology_512px"
+  run_name: "dinov3_rad_512px"
   wandb_enabled: true
   save_checkpoints: true
