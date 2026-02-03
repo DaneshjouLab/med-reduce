@@ -52,13 +52,14 @@ SIF_STORE="/scratch/users/$USER/simg"
 
     # Run the script
     echo 'INFO: Starting Hydra run...'
-    export HYDRA_FULL_ERROR=1 
+    export HYDRA_FULL_ERROR=1
     python -m src.cli.run_multiresolution_probe \
         --domain dermatology \
         --model dinov3 \
         --config probe_two_stage \
         --tune-hyperparams \
-        --resolutions 512 256
+        --resolutions 512 256 \
+        --seeds 42 123 456
     
     echo 'INFO: Job finished successfully.' 
   "
