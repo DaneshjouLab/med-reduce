@@ -1,12 +1,37 @@
 #!/bin/bash
-#SBATCH --job-name=compressed_perception
+#SBATCH --job-name=probe_3seeds
 #SBATCH --partition=roxanad
 #SBATCH --gres=gpu:1
-#SBATCH --time=23:59:00
-#SBATCH --mem=32G
-#SBATCH --cpus-per-task=4
+#SBATCH --time=12:00:00
+#SBATCH --mem=48G
+#SBATCH --cpus-per-task=8
 #SBATCH --output=logs/%x_%j.out
 #SBATCH --error=logs/%x_%j.err
+
+# =============================================================================
+# TRAINING BUDGET ESTIMATE (dermatology, dinov3, 3 seeds, 4 resolutions)
+# =============================================================================
+#
+# 1. Hyperparameter Tuning (seed 42 only, 512px):
+#    - Grid: 3 lr × 3 wd × 2 bs = 18 configs
+#    - 5-fold CV × 100 epochs each
+#    - Estimated: ~3-4 hours (LP on embeddings is fast)
+#
+# 2. Embedding Extraction:
+#    - 3 seeds × 4 resolutions × ~10 min = ~2 hours
+#    - DINOv3-ViT-S at 512px, batch_size=256
+#
+# 3. Final Linear Probing:
+#    - 3 seeds × 4 resolutions × 100 epochs
+#    - Estimated: ~1-2 hours
+#
+# TOTAL ESTIMATED: 6-8 hours (with 12h buffer for safety)
+#
+# RESOURCES:
+#   - GPU: 1x (DINOv3-ViT-S ~4GB, embeddings fit in VRAM)
+#   - RAM: 48GB (caching embeddings + data loading)
+#   - CPUs: 8 (num_workers=8 in config)
+# =============================================================================
 
 # This source file is part of the compressed perception project
 #
@@ -17,22 +42,33 @@
 # Container-based execution instead of conda
 TOOL=$(command -v apptainer || command -v singularity)
 SIF_STORE="/scratch/users/$USER/simg"
+SIF_IMAGE="${SIF_IMAGE:-python_3.10-slim-v2.sif}"
+
+# Check if container exists
+if [ ! -f "$SIF_STORE/$SIF_IMAGE" ]; then
+    echo "ERROR: Container not found at $SIF_STORE/$SIF_IMAGE"
+    echo "Available images:"
+    ls -la "$SIF_STORE"/*.sif 2>/dev/null || echo "  No .sif files found in $SIF_STORE"
+    echo ""
+    echo "To pull the container, run: ./jobs/slim_container.sh"
+    exit 1
+fi
 
 # Run the training inside the container
 "$TOOL" exec --nv \
-     -B "/home/groups/roxanad/compressed-perception:/workspace" \
+     -B "/scratch/users/$USER/reduced-perception:/workspace" \
      -B "/scratch/users/$USER:/scratch_user" \
      -B "/scratch/users/$USER/pip_cache:/root/.cache/pip" \
      -B "/tmp:/tmp" \
      --pwd /workspace \
-     "$SIF_STORE/python_3.10-slim-copy.sif" \
+     "$SIF_STORE/$SIF_IMAGE" \
       bash -c "
 
     set -e
-    
+
     cd /workspace
     echo 'INFO: Successfully navigated to /workspace.'
-    
+
     source .venv/bin/activate
     echo 'INFO: Virtual environment activated.'
 
@@ -56,10 +92,10 @@ SIF_STORE="/scratch/users/$USER/simg"
     python -m src.cli.run_multiresolution_probe \
         --domain dermatology \
         --model dinov3 \
-        --config probe_two_stage \
+        --config probe_two_stage_dermatology \
         --tune-hyperparams \
-        --resolutions 512 256 \
+        --resolutions 512 256 128 64 \
         --seeds 42 123 456
-    
-    echo 'INFO: Job finished successfully.' 
+
+    echo 'INFO: Job finished successfully.'
   "

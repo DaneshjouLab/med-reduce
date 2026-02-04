@@ -15,91 +15,38 @@ authors = [
 keywords = ["vision", "efficiency", "multi-resolution", "linear-probing", "distillation"]
 
 dependencies = [
-    "annotated-types",
-    "anyio",
-    "asttokens",
-    "accelerate",
-    "beautifulsoup4",
-    "biopython",
-    "certifi",
-    "charset-normalizer",
-    "colorama",
-    "comm",
-    "contourpy",
-    "cycler",
-    "datasets",
-    "debugpy",
-    "decorator",
-    "distro",
-    "dotenv",
-    "exceptiongroup",
-    "executing",
-    "fonttools",
-    "h11",
-    "httpcore",
-    "httpx",
-    "idna",
-    "importlib_metadata",
-    "ipykernel",
-    "ipython",
-    "jedi",
-    "jiter",
-    "joblib",
-    "jupyter_client",
-    "jupyter_core",
-    "kiwisolver",
-    "loguru",
-    "matplotlib",
-    "matplotlib-inline",
-    "nest_asyncio",
-    "numpy",
-    "openai",
-    "packaging",
-    "pandas",
-    "parso",
-    "pickleshare",
-    "pillow",
-    "platformdirs",
-    "prompt_toolkit",
-    "psutil",
-    "pure_eval",
-    "pydantic",
-    "pydantic_core",
-    "pynvml",
-    "Pygments",
-    "pyparsing",
-    "python-dateutil",
-    "python-dotenv",
-    "requests",
-    "scikit-learn",
-    "scipy",
-    "seaborn",
-    "setuptools",
-    "six",
-    "sniffio",
-    "soupsieve",
-    "stack-data",
-    "timm",
-    "thop",
-    "threadpoolctl",
-    "tornado",
-    "torch",
-    "torchvision",
-    "transformers",
-    "tqdm",
-    "traitlets",
-    "typing-inspection",
-    "typing_extensions",
-    "triton",
-    "tzdata",
-    "urllib3",
-    "wandb",
-    "wcwidth",
-    "wheel",
-    "zipp",
-    "hydra-core",
-    "omegaconf",
-    "umap-learn",
+    # Core ML
+    "torch>=2.0",
+    "torchvision>=0.15",
+    "transformers>=4.30",
+    "accelerate>=0.20",
+    "timm>=0.9",
+    "datasets>=2.14",
+
+    # Scientific computing
+    "numpy>=1.24",
+    "scipy>=1.10",
+    "scikit-learn>=1.3",
+    "pandas>=2.0",
+
+    # Visualization
+    "matplotlib>=3.7",
+    "seaborn>=0.12",
+    "umap-learn>=0.5",
+
+    # Config & logging
+    "hydra-core>=1.3",
+    "omegaconf>=2.3",
+    "wandb>=0.15",
+    "loguru>=0.7",
+    "tqdm>=4.65",
+
+    # Utilities
+    "pillow>=9.5",
+    "python-dotenv>=1.0",
+    "pynvml>=11.5",
+    "thop>=0.1",
+    "requests>=2.31",
 ]
 
 [project.optional-dependencies]
@@ -116,8 +63,9 @@ Homepage = "https://github.com/DaneshjouLab/reduced-perception"
 Repository = "https://github.com/DaneshjouLab/reduced-perception.git"
 Issues = "https://github.com/DaneshjouLab/reduced-perception/issues"
 
-[tool.setuptools]
-packages = ["src"]
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*"]
 
 [tool.black]
 line-length = 100
