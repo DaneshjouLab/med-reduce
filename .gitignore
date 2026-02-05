@@ -210,3 +210,6 @@ __marimo__/
 **data/**
 *.claude
 config.yaml
+
+# HuggingFace token (DO NOT COMMIT)
+.huggingface/

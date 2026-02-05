@@ -66,9 +66,10 @@ echo "INFO: Using container: $SIF_STORE/$SIF_IMAGE"
     echo 'INFO: Python: '\$(which python)
 
     # HuggingFace authentication for gated models (dinov3)
-    if [ -f /scratch_user/.huggingface/token ]; then
-        export HF_TOKEN=\$(cat /scratch_user/.huggingface/token)
-        echo 'INFO: HuggingFace token loaded from ~/.huggingface/token'
+    # Token is read from project root .huggingface/token or HF_TOKEN env var
+    if [ -f /workspace/.huggingface/token ]; then
+        export HF_TOKEN=\$(cat /workspace/.huggingface/token)
+        echo 'INFO: HuggingFace token loaded from .huggingface/token'
     elif [ -n \"\$HF_TOKEN\" ]; then
         echo 'INFO: Using HF_TOKEN from environment'
     else

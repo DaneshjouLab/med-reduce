@@ -187,13 +187,16 @@ The DINOv3 model (`facebook/dinov3-vits16-pretrain-lvd1689m`) is a gated model t
    - Go to [HuggingFace Settings > Access Tokens](https://huggingface.co/settings/tokens)
    - Create a new token with "Read" permissions
 
-3. **Save the token on the cluster**:
+3. **Save the token in the project root** (on the cluster):
    ```bash
-   # On the cluster, save your token
-   mkdir -p ~/.huggingface
-   echo "hf_your_token_here" > ~/.huggingface/token
-   chmod 600 ~/.huggingface/token
+   # In the project directory, create .huggingface/token
+   cd /scratch/users/$USER/reduced-perception
+   mkdir -p .huggingface
+   echo "hf_your_token_here" > .huggingface/token
+   chmod 600 .huggingface/token
    ```
+
+   The token file is git-ignored, so it won't be committed.
 
    Or set it as an environment variable before submitting jobs:
    ```bash

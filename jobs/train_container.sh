@@ -83,15 +83,15 @@ fi
     export WANDB_MODE=offline  # Run without wandb API key (logs saved locally)
 
     # HuggingFace authentication for gated models (dinov3)
-    # Token is read from ~/.huggingface/token or HF_TOKEN env var
-    if [ -f /scratch_user/.huggingface/token ]; then
-        export HF_TOKEN=\$(cat /scratch_user/.huggingface/token)
-        echo 'INFO: HuggingFace token loaded from ~/.huggingface/token'
+    # Token is read from project root .huggingface/token or HF_TOKEN env var
+    if [ -f /workspace/.huggingface/token ]; then
+        export HF_TOKEN=\$(cat /workspace/.huggingface/token)
+        echo 'INFO: HuggingFace token loaded from .huggingface/token'
     elif [ -n \"\$HF_TOKEN\" ]; then
         echo 'INFO: Using HF_TOKEN from environment'
     else
         echo 'WARNING: No HuggingFace token found. Gated models (dinov3) may fail.'
-        echo '         Run: huggingface-cli login (or set HF_TOKEN env var)'
+        echo '         Create .huggingface/token in project root with your HF token'
     fi
 
     # Create all directories
@@ -99,9 +99,71 @@ fi
     mkdir -p \$TMPDIR \$HF_HOME \$HF_DATASETS_CACHE \$TORCH_HOME \
             \$TRAIN_OUTPUT_DIR \$LOG_DIR \$MODEL_DIR \$PLOT_DIR
 
-    # Run the script
+    # ==========================================================================
+    # Resource Monitoring (runs in background)
+    # ==========================================================================
+    START_TIME=\$(date +%s)
+    SLURM_TIME_LIMIT_SEC=\$((12 * 60 * 60))  # 12 hours in seconds
+
+    monitor_resources() {
+        while true; do
+            sleep 300  # Log every 5 minutes
+
+            CURRENT_TIME=\$(date +%s)
+            ELAPSED=\$((CURRENT_TIME - START_TIME))
+            REMAINING=\$((SLURM_TIME_LIMIT_SEC - ELAPSED))
+
+            ELAPSED_H=\$((ELAPSED / 3600))
+            ELAPSED_M=\$(((ELAPSED % 3600) / 60))
+            REMAINING_H=\$((REMAINING / 3600))
+            REMAINING_M=\$(((REMAINING % 3600) / 60))
+
+            echo ''
+            echo '============================================================'
+            echo \"RESOURCE MONITOR - \$(date '+%Y-%m-%d %H:%M:%S')\"
+            echo '============================================================'
+            echo \"Time elapsed:   \${ELAPSED_H}h \${ELAPSED_M}m\"
+            echo \"Time remaining: \${REMAINING_H}h \${REMAINING_M}m\"
+            echo ''
+
+            # GPU stats (if nvidia-smi available)
+            if command -v nvidia-smi &> /dev/null; then
+                echo 'GPU Usage:'
+                nvidia-smi --query-gpu=name,memory.used,memory.total,utilization.gpu,temperature.gpu \
+                    --format=csv,noheader,nounits | while read line; do
+                    echo \"  \$line\"
+                done
+            fi
+
+            # CPU and memory
+            echo ''
+            echo 'CPU/Memory:'
+            echo \"  CPU cores: \$(nproc)\"
+            echo \"  Memory: \$(free -h | grep Mem | awk '{print \$3 \"/\" \$2}')\"
+            echo '============================================================'
+            echo ''
+        done
+    }
+
+    # Start monitoring in background
+    monitor_resources &
+    MONITOR_PID=\$!
+    echo \"INFO: Resource monitor started (PID: \$MONITOR_PID)\"
+
+    # Cleanup function
+    cleanup() {
+        echo 'INFO: Stopping resource monitor...'
+        kill \$MONITOR_PID 2>/dev/null || true
+    }
+    trap cleanup EXIT
+
+    # ==========================================================================
+    # Main Training
+    # ==========================================================================
     echo 'INFO: Starting Hydra run...'
+    echo \"INFO: Start time: \$(date '+%Y-%m-%d %H:%M:%S')\"
     export HYDRA_FULL_ERROR=1
+
     python -m src.cli.run_multiresolution_probe \
         --domain dermatology \
         --model dinov3 \
@@ -110,5 +172,16 @@ fi
         --resolutions 512 256 128 64 \
         --seeds 42 123 456
 
-    echo 'INFO: Job finished successfully.'
+    END_TIME=\$(date +%s)
+    TOTAL_ELAPSED=\$((END_TIME - START_TIME))
+    TOTAL_H=\$((TOTAL_ELAPSED / 3600))
+    TOTAL_M=\$(((TOTAL_ELAPSED % 3600) / 60))
+
+    echo ''
+    echo '============================================================'
+    echo 'JOB COMPLETED'
+    echo '============================================================'
+    echo \"End time: \$(date '+%Y-%m-%d %H:%M:%S')\"
+    echo \"Total runtime: \${TOTAL_H}h \${TOTAL_M}m\"
+    echo '============================================================'
   "
