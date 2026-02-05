@@ -65,6 +65,16 @@ echo "INFO: Using container: $SIF_STORE/$SIF_IMAGE"
     echo 'INFO: Virtual environment activated'
     echo 'INFO: Python: '\$(which python)
 
+    # HuggingFace authentication for gated models (dinov3)
+    if [ -f /scratch_user/.huggingface/token ]; then
+        export HF_TOKEN=\$(cat /scratch_user/.huggingface/token)
+        echo 'INFO: HuggingFace token loaded from ~/.huggingface/token'
+    elif [ -n \"\$HF_TOKEN\" ]; then
+        echo 'INFO: Using HF_TOKEN from environment'
+    else
+        echo 'WARNING: No HuggingFace token found. Gated models (dinov3) may fail.'
+    fi
+
     # Upgrade pip
     echo 'INFO: Upgrading pip...'
     pip install --upgrade pip wheel setuptools

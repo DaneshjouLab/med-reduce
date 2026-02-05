@@ -37,7 +37,7 @@ datamodule:
   # Local dataset configuration (domain-specific)
   local_label_file: /scratch/groups/roxanad/datasets/isic/challenges/2017/merged_isic_2017_data/merged_ground_truth_part3.csv # <----- Where labels live
   local_image_id_column: image_id # Update for radiology/pathology from labels.csv
-  local_label_column: ["nevus", "melanoma", "seborrheic_keratosis"]  # Update for radiology/pathology
+  local_label_column: ["melanoma", "seborrheic_keratosis"]  # Update for radiology/pathology
   local_image_extension: .jpg
 
   # Dataset filtering (domain-specific)

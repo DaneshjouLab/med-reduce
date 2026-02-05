@@ -6,8 +6,8 @@ from torch.utils.data import Dataset, ConcatDataset, Subset
 from torchvision import transforms
 from typing import Optional, List, Dict, Any, Union
 
-from src.config import HF_MODELS, DEFAULT_IMAGE_SIZE
-from src.transformation.transforms import ResolutionReductionTransform
+from src.utils.constants import HF_MODELS, DEFAULT_IMAGE_SIZE
+from src.transformations.transforms import ResolutionReductionTransform
 
 class ISICDataset(Dataset):
     """ISIC dataset with support for multiple model types and transformations."""

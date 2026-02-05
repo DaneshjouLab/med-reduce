@@ -80,6 +80,19 @@ fi
     export LOG_DIR=/scratch/users/$USER/logs
     export MODEL_DIR=/scratch/users/$USER/models
     export PLOT_DIR=/scratch/users/$USER/plots
+    export WANDB_MODE=offline  # Run without wandb API key (logs saved locally)
+
+    # HuggingFace authentication for gated models (dinov3)
+    # Token is read from ~/.huggingface/token or HF_TOKEN env var
+    if [ -f /scratch_user/.huggingface/token ]; then
+        export HF_TOKEN=\$(cat /scratch_user/.huggingface/token)
+        echo 'INFO: HuggingFace token loaded from ~/.huggingface/token'
+    elif [ -n \"\$HF_TOKEN\" ]; then
+        echo 'INFO: Using HF_TOKEN from environment'
+    else
+        echo 'WARNING: No HuggingFace token found. Gated models (dinov3) may fail.'
+        echo '         Run: huggingface-cli login (or set HF_TOKEN env var)'
+    fi
 
     # Create all directories
     echo 'INFO: Creating required directories...'

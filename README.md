@@ -175,6 +175,43 @@ For containerized or HPC runs, see [Running on HPC](#running-on-hpc-sherlock).
 
 ## Running on HPC (Sherlock)
 
+### Prerequisites: HuggingFace Authentication
+
+The DINOv3 model (`facebook/dinov3-vits16-pretrain-lvd1689m`) is a gated model that requires:
+
+1. **Request access** on HuggingFace:
+   - Go to [facebook/dinov3-vits16-pretrain-lvd1689m](https://huggingface.co/facebook/dinov3-vits16-pretrain-lvd1689m)
+   - Click "Request access" and wait for approval
+
+2. **Create a HuggingFace token**:
+   - Go to [HuggingFace Settings > Access Tokens](https://huggingface.co/settings/tokens)
+   - Create a new token with "Read" permissions
+
+3. **Save the token on the cluster**:
+   ```bash
+   # On the cluster, save your token
+   mkdir -p ~/.huggingface
+   echo "hf_your_token_here" > ~/.huggingface/token
+   chmod 600 ~/.huggingface/token
+   ```
+
+   Or set it as an environment variable before submitting jobs:
+   ```bash
+   export HF_TOKEN="hf_your_token_here"
+   ```
+
+**Alternative: Use DINOv2 (no authentication required)**
+
+If you don't have access to DINOv3, you can use the public DINOv2 model:
+```bash
+python -m src.cli.run_multiresolution_probe \
+    --domain dermatology \
+    --model dinov2 \
+    ...
+```
+
+---
+
 ### Complete Pipeline (3 steps)
 
 ```bash
