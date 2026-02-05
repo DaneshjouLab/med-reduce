@@ -2,7 +2,7 @@
 #SBATCH --job-name=probe_3seeds
 #SBATCH --partition=roxanad
 #SBATCH --gres=gpu:1
-#SBATCH --time=12:00:00
+#SBATCH --time=26:00:00
 #SBATCH --mem=48G
 #SBATCH --cpus-per-task=8
 #SBATCH --output=logs/%x_%j.out

@@ -703,7 +703,15 @@ class ProbeTwoStageWrapper:
             return obj
 
     def _save_hyperparam_results(self, results: List[Dict[str, Any]], best_result: Dict[str, Any]):
-        """Save hyperparameter search results."""
+        """Save hyperparameter search results.
+
+        If results files already exist, creates backups with timestamp before overwriting.
+        """
+        from datetime import datetime
+        import shutil
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
         output = {
             "search_config": {
                 "param_grid": self._to_serializable(self.param_grid),
@@ -711,12 +719,21 @@ class ProbeTwoStageWrapper:
                 "resolution": self.current_resolution,
                 "domain": self.domain,
                 "model": self.model_name,
+                "seed": self.seed,
+                "timestamp": timestamp,
             },
             "best_result": self._to_serializable(best_result),
             "all_results": self._to_serializable(results),
         }
 
         output_path = os.path.join(self.search_dir, "hyperparam_search_results.json")
+
+        # Backup existing results if they exist
+        if os.path.exists(output_path):
+            backup_path = os.path.join(self.search_dir, f"hyperparam_search_results_backup_{timestamp}.json")
+            shutil.copy2(output_path, backup_path)
+            log.warning(f"⚠️  HT results exist. Backed up to: {backup_path}")
+
         with open(output_path, "w") as f:
             json.dump(output, f, indent=2)
 
@@ -730,10 +747,19 @@ class ProbeTwoStageWrapper:
                 "resolution": self.current_resolution,
                 "domain": self.domain,
                 "teacher_model": self.model_name,
+                "seed": self.seed,
+                "timestamp": timestamp,
             },
         }
 
         best_params_path = os.path.join(self.search_dir, "best_hyperparameters.json")
+
+        # Backup existing best params if they exist
+        if os.path.exists(best_params_path):
+            backup_path = os.path.join(self.search_dir, f"best_hyperparameters_backup_{timestamp}.json")
+            shutil.copy2(best_params_path, backup_path)
+            log.warning(f"⚠️  Best params exist. Backed up to: {backup_path}")
+
         with open(best_params_path, "w") as f:
             json.dump(best_params_output, f, indent=2)
 
@@ -903,7 +929,12 @@ class ProbeTwoStageWrapper:
                 log.info(f"  {k}: {v}")
 
     def _save_comprehensive_results(self, training_result: Dict[str, Any]):
-        """Save comprehensive results including efficiency metrics to JSON."""
+        """Save comprehensive results including efficiency metrics to JSON.
+
+        If results file already exists, creates a backup with timestamp before overwriting.
+        """
+        from datetime import datetime
+
         best_metric = training_result.get("best_metric", None)
         history = training_result.get("history", {})
 
@@ -911,12 +942,16 @@ class ProbeTwoStageWrapper:
         final_val_acc = history.get("val_acc", [None])[-1] if history.get("val_acc") else None
         final_val_loss = history.get("val_loss", [None])[-1] if history.get("val_loss") else None
 
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
         comprehensive_results = {
             "experiment_info": {
                 "resolution": self.current_resolution,
                 "model_name": self.model_name,
                 "domain": self.domain,
                 "dataset": self.dataset_name,
+                "seed": self.seed,
+                "timestamp": timestamp,
             },
             "accuracy_metrics": {
                 "best_metric": best_metric,
@@ -939,6 +974,17 @@ class ProbeTwoStageWrapper:
         }
 
         results_path = os.path.join(self.run_dir, f"results_{self.model_name}_{self.current_resolution}px.json")
+
+        # Backup existing results if they exist
+        if os.path.exists(results_path):
+            backup_path = os.path.join(
+                self.run_dir,
+                f"results_{self.model_name}_{self.current_resolution}px_backup_{timestamp}.json"
+            )
+            import shutil
+            shutil.copy2(results_path, backup_path)
+            log.warning(f"⚠️  Results file exists. Backed up to: {backup_path}")
+
         with open(results_path, "w") as f:
             json.dump(comprehensive_results, f, indent=2)
 

@@ -10,15 +10,15 @@
 
 # Runtime configuration
 runtime:
-  run_dir: /scratch/groups/roxanad/users/sonnet/compressed_perception/runs/probe_two_stage
+  run_dir: /scratch/users/$USER/reduced-perception-path-results/runs/probe_two_stage
 
 domain: "pathology"
 
 # Split configuration
-split_dir: /scratch/groups/roxanad/users/sonnet/compressed_perception/splits
+split_dir: /scratch/users/$USER/reduced-perception-path-results/splits
 
 # Embedding cache configuration
-embedding_cache_dir: /scratch/groups/roxanad/users/sonnet/compressed_perception/cache/embeddings
+embedding_cache_dir: /scratch/users/$USER/reduced-perception-path-results/cache/embeddings
 
 datamodule:
   _target_: src.data.tabular_datamodule_persistent.TabularDataModulePersistent
@@ -88,7 +88,7 @@ train:
       weight_decay: [0, 1e-4, 1e-3]
       batch_size: [32, 64]
 
-    load_from_file: "/scratch/groups/roxanad/users/sonnet/compressed_perception/runs/probe_two_stage/hyperparam_search/best_hyperparameters.json"
+    load_from_file: "/scratch/users/$USER/reduced-perception-path-results/runs/probe_two_stage/hyperparam_search/best_hyperparameters.json"
 
 loss:
   label_smoothing: 0.0
