@@ -169,8 +169,8 @@ fi
         --model dinov3 \
         --config probe_two_stage_dermatology \
         --tune-hyperparams \
-        --resolutions 512 256 128 64 \
-        --seeds 42 123 456
+        --resolutions 64
+
 
     END_TIME=\$(date +%s)
     TOTAL_ELAPSED=\$((END_TIME - START_TIME))

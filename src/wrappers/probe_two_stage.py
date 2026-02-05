@@ -941,6 +941,7 @@ class ProbeTwoStageWrapper:
         final_val_auroc = history.get("val_auroc", [None])[-1] if history.get("val_auroc") else None
         final_val_acc = history.get("val_acc", [None])[-1] if history.get("val_acc") else None
         final_val_loss = history.get("val_loss", [None])[-1] if history.get("val_loss") else None
+        final_val_f1 = history.get("val_f1", [None])[-1] if history.get("val_f1") else None
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
@@ -958,6 +959,7 @@ class ProbeTwoStageWrapper:
                 "metric_key": str(getattr(self.cfg.train, "metric_key", "val_acc")),
                 "final_val_auroc": final_val_auroc,
                 "final_val_acc": final_val_acc,
+                "final_val_f1": final_val_f1,
                 "final_val_loss": final_val_loss,
             },
             "efficiency_metrics": self.efficiency_metrics,
@@ -994,6 +996,7 @@ class ProbeTwoStageWrapper:
             "summary/best_metric": best_metric,
             "summary/final_val_auroc": final_val_auroc,
             "summary/final_val_acc": final_val_acc,
+            "summary/final_val_f1": final_val_f1,
             "summary/resolution": self.current_resolution,
             "summary/encoder_gflops": self.efficiency_metrics.get("encoder_gflops"),
             "summary/encoder_latency_ms": self.efficiency_metrics.get("encoder_latency_ms"),

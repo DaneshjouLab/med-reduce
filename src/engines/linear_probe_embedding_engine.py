@@ -17,7 +17,7 @@ import math
 import torch
 from torch import nn
 import numpy as np
-from sklearn.metrics import roc_auc_score
+from sklearn.metrics import roc_auc_score, f1_score
 
 try:
     from torch.amp import autocast
@@ -77,7 +77,7 @@ def train_probe_on_embeddings(
     best_metric = -math.inf if not metric_key.endswith("loss") else math.inf
     best_state_dict = None
 
-    history = {"train_loss": [], "val_loss": [], "val_acc": [], "val_auroc": [], "lr": []}
+    history = {"train_loss": [], "val_loss": [], "val_acc": [], "val_auroc": [], "val_f1": [], "lr": []}
 
     for epoch in range(1, epochs + 1):
         classifier.train()
@@ -122,7 +122,7 @@ def train_probe_on_embeddings(
 
         train_loss = running_loss / max(n_seen, 1)
 
-        val_loss, val_acc, val_auroc = _run_validation_on_embeddings(
+        val_loss, val_acc, val_auroc, val_f1 = _run_validation_on_embeddings(
             classifier=classifier,
             loaders=loaders,
             loss_fn=loss_fn,
@@ -145,8 +145,7 @@ def train_probe_on_embeddings(
             epoch=epoch,
             train_loss=train_loss,
             val_loss=val_loss,
-            val_acc=val_acc,
-            val_auroc=val_auroc,
+            metrics={"val_acc": val_acc, "val_auroc": val_auroc, "val_f1": val_f1},
             cur_lr=cur_lr,
             wandb_logger=wandb_logger,
             log=log,
@@ -189,7 +188,7 @@ def _run_validation_on_embeddings(
     loss_fn,
     device: torch.device,
     mixed_precision: bool = True,
-) -> Tuple[float, float, float]:
+) -> Tuple[float, float, float, float]:
     classifier.eval()
 
     val_loss = 0.0
@@ -264,4 +263,12 @@ def _run_validation_on_embeddings(
             log.warning(f"Could not compute AUROC: {e}")
             val_auroc = float('nan')
 
-    return val_loss, val_acc, val_auroc
+    # Compute Macro F1
+    try:
+        all_preds = np.argmax(all_probs, axis=1)
+        val_f1 = f1_score(all_labels, all_preds, average='macro')
+    except ValueError as e:
+        log.warning(f"Could not compute F1: {e}")
+        val_f1 = float('nan')
+
+    return val_loss, val_acc, val_auroc, val_f1

@@ -10,15 +10,15 @@
 
 # Runtime configuration
 runtime:
-  run_dir: /scratch/users/$USER/reduced-perception-path-results/runs/probe_two_stage
+  run_dir: /scratch/users/bikia/reduced-perception-path-results/runs/probe_two_stage
 
 domain: "pathology"
 
 # Split configuration
-split_dir: /scratch/users/$USER/reduced-perception-path-results/splits
+split_dir: /scratch/users/bikia/reduced-perception-path-results/splits
 
 # Embedding cache configuration
-embedding_cache_dir: /scratch/users/$USER/reduced-perception-path-results/cache/embeddings
+embedding_cache_dir: /scratch/users/bikia/reduced-perception-path-results/cache/embeddings
 
 datamodule:
   _target_: src.data.tabular_datamodule_persistent.TabularDataModulePersistent
@@ -28,7 +28,7 @@ datamodule:
   pin_memory: true
   persistent_workers: false
   prefetch_factor: 2
-  split_dir: /scratch/groups/roxanad/users/sonnet/compressed_perception/splits
+  split_dir: /scratch/users/bikia/reduced-perception-path-results/splits
   use_val_split: false  # Use train/test splits, create val from train
   train_ratio: 0.8
 
@@ -59,7 +59,7 @@ model:
     dropout_rate: 0.1
 
 train:
-  epochs: 100
+  epochs: 200
   seed: 42
   k_folds: 5
   mixed_precision: true
@@ -88,7 +88,7 @@ train:
       weight_decay: [0, 1e-4, 1e-3]
       batch_size: [32, 64]
 
-    load_from_file: "/scratch/users/$USER/reduced-perception-path-results/runs/probe_two_stage/hyperparam_search/best_hyperparameters.json"
+    load_from_file: "/scratch/users/bikia/reduced-perception-path-results/runs/probe_two_stage/hyperparam_search/best_hyperparameters.json"
 
 loss:
   label_smoothing: 0.0
