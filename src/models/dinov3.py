@@ -18,7 +18,7 @@ class DINOv3Config(PretrainedConfig):
     
     def __init__(
         self,
-        backbone_model_id: str = "facebook/dinov3-vit7b16-pretrain-lvd1689m",
+        backbone_model_id: str = "facebook/dinov3-vits16-pretrain-lvd1689m",
         num_labels: int = 2,
         hidden_size: int = 384,
         dropout_rate: float = 0.1,

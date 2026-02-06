@@ -9,13 +9,18 @@ from omegaconf import OmegaConf
 
 
 # Model configurations
-MODELS = ["vit", "dinov3"]
+MODELS = ["vit", "dinov2", "dinov3"]
 MODEL_CONFIGS = {
     "vit": {
         "model.name": "vit",
         "model.model_id": "google/vit-base-patch16-224",
         "model.type": "vit",
         "+model.dtype": "bfloat16"
+    },
+    "dinov2": {
+        "model.name": "dinov2",
+        "model.model_id": "facebook/dinov2-small",
+        "model.type": "dinov2",
     },
     "dinov3": {
         "model.name": "dinov3",

@@ -17,7 +17,7 @@ from datasets import Dataset as HFDataset
 
 # Local imports
 # pylint: disable=import-error,relative-beyond-top-level
-from src.config import HF_MODELS, DEFAULT_IMAGE_SIZE
+from src.utils.constants import HF_MODELS, DEFAULT_IMAGE_SIZE
 
 # ============================================================================
 # DATA LOADING

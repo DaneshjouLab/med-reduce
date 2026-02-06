@@ -30,14 +30,17 @@ To use your own dataset, prepare:
 
 **1. Create and activate virtual environment:**
 ```bash
-python3.10 -m venv venv
-source venv/bin/activate  # On macOS/Linux
-# or on Windows:
-# venv\Scripts\activate
+python3.10 -m venv .venv
+source .venv/bin/activate  # On macOS/Linux
+# or on Windows: .venv\Scripts\activate
 ```
 
-**2. Install package with dependencies:**
+**2. Install PyTorch and project:**
 ```bash
+# Install PyTorch with CUDA support
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
+
+# Install project from pyproject.toml
 pip install -e .
 ```
 
@@ -45,7 +48,10 @@ pip install -e .
 ```bash
 python -m src.cli.run_multiresolution_probe \
     --domain dermatology \
-    --resolutions 512 256
+    --model dinov3 \
+    --tune-hyperparams \
+    --resolutions 512 256 \
+    --seeds 42 123 456
 ```
 
 ---
@@ -75,7 +81,8 @@ reduced-perception/
 │   └── load_checkpoint_example.py        # Example: loading a trained checkpoint
 │
 ├── jobs/                                 # Container / job execution scripts
-│   ├── slim_container.sh                 # Lightweight container build/run
+│   ├── setup_container.sh                # One-time setup: creates venv, installs deps
+│   ├── slim_container.sh                 # Pulls lightweight Python container image
 │   └── train_container.sh                # Training entrypoint for containers / HPC
 │
 ├── scripts/                              # One-off utilities and sanity checks
@@ -145,60 +152,254 @@ reduced-perception/
 
 ## Installation
 
-Create a Python environment and install dependencies:
+Create a Python environment and install the package:
 
 ```bash
-pip install -r requirements.txt
+# Create virtual environment
+python3.10 -m venv .venv
+source .venv/bin/activate
+
+# Install PyTorch with CUDA (adjust for your CUDA version)
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
+
+# Install project and dependencies
+pip install -e .
+
+# For development tools (optional)
+pip install -e ".[dev]"
 ```
 
-(Optional) For containerized or HPC runs, see scripts in `jobs/`.
+For containerized or HPC runs, see [Running on HPC](#running-on-hpc-sherlock).
 
 ---
 
 ## Running on HPC (Sherlock)
 
-### 1. Build the container (first time only)
+### Prerequisites: HuggingFace Authentication
 
+The DINOv3 model (`facebook/dinov3-vits16-pretrain-lvd1689m`) is a gated model that requires:
+
+1. **Request access** on HuggingFace:
+   - Go to [facebook/dinov3-vits16-pretrain-lvd1689m](https://huggingface.co/facebook/dinov3-vits16-pretrain-lvd1689m)
+   - Click "Request access" and wait for approval
+
+2. **Create a HuggingFace token**:
+   - Go to [HuggingFace Settings > Access Tokens](https://huggingface.co/settings/tokens)
+   - Create a new token with "Read" permissions
+
+3. **Save the token in the project root** (on the cluster):
+   ```bash
+   # In the project directory, create .huggingface/token
+   cd /scratch/users/$USER/reduced-perception
+   mkdir -p .huggingface
+   echo "hf_your_token_here" > .huggingface/token
+   chmod 600 .huggingface/token
+   ```
+
+   The token file is git-ignored, so it won't be committed.
+
+   Or set it as an environment variable before submitting jobs:
+   ```bash
+   export HF_TOKEN="hf_your_token_here"
+   ```
+
+**Alternative: Use DINOv2 (no authentication required)**
+
+If you don't have access to DINOv3, you can use the public DINOv2 model:
 ```bash
-sbatch jobs/slim_container.sh
+python -m src.cli.run_multiresolution_probe \
+    --domain dermatology \
+    --model dinov2 \
+    ...
 ```
 
-This pulls a lightweight Python 3.10 image and saves it to `/scratch/users/$USER/simg/`. Follow the printed instructions to enter the container interactively and install PyTorch + dependencies into the `.venv`.
+---
 
-### 2. Run experiments
+### Complete Pipeline (3 steps)
 
-Submit a training job with:
+```bash
+# Step 1: One-time setup (creates directories, venv, installs dependencies)
+sbatch jobs/setup_container.sh
+
+# Step 2: Monitor setup (wait for completion)
+tail -f logs/setup_env_*.out
+
+# Step 3: Run training with bootstrap seeds
+sbatch jobs/train_container.sh
+```
+
+That's it! The pipeline will:
+1. Run hyperparameter tuning once (seed 42, highest resolution)
+2. Run final probing for all seeds (42, 123, 456) at all resolutions (512, 256, 128, 64)
+
+---
+
+### Detailed Setup Instructions
+
+#### 1. Setup environment (first time only)
+
+```bash
+# Create logs directory
+mkdir -p logs
+
+# Submit setup job (creates venv, installs PyTorch + dependencies)
+sbatch jobs/setup_container.sh
+
+# Monitor progress
+tail -f logs/setup_env_*.out
+```
+
+The setup script automatically:
+- Creates required directories (`pip_cache/`, `simg/`, `tmp/`, `huggingface/`, `torch/`)
+- Pulls the Python 3.10-slim container if missing
+- Creates `.venv` and installs PyTorch (CUDA 11.8)
+- Installs project from `pyproject.toml` (`pip install -e .`)
+- Verifies CUDA is working
+
+#### 2. Run experiments
 
 ```bash
 sbatch jobs/train_container.sh
 ```
 
-Inside `train_container.sh`, change the Python command depending on the task:
-
-**Classification (linear probing):**
+Monitor progress:
 ```bash
+# Watch output
+tail -f logs/probe_3seeds_*.out
+
+# Check job status
+squeue -u $USER
+```
+
+---
+
+### Multi-Seed Bootstrap Support
+
+The pipeline supports running multiple bootstrap seeds to estimate variance in results. Each seed produces independent splits, embeddings, and results.
+
+**CLI Usage:**
+```bash
+# Single seed (default behavior)
 python -m src.cli.run_multiresolution_probe \
     --domain dermatology \
     --model dinov3 \
-    --config probe_two_stage \
     --tune-hyperparams \
     --resolutions 512 256 128 64
-```
 
-**Segmentation:**
-```bash
-python -m src.cli.run_multiresolution_segmentation \
+# Multiple bootstrap seeds (recommended for papers)
+python -m src.cli.run_multiresolution_probe \
     --domain dermatology \
     --model dinov3 \
     --tune-hyperparams \
-    --resolutions 512 256 128 64
+    --resolutions 512 256 128 64 \
+    --seeds 42 123 456
 ```
 
-Both scripts follow the same two-step protocol:
-1. `--tune-hyperparams` runs hyperparameter search via cross-validation at the highest resolution
-2. `--resolutions` trains and evaluates at each resolution using the tuned hyperparameters
+**How it works:**
+- Hyperparameter tuning runs **once** with the first seed (e.g., 42)
+- Final probing runs for **all seeds** using shared hyperparameters
+- This isolates variance to train/test split differences (standard bootstrap approach)
 
-Results are saved to separate directories to avoid conflicts:
-- Classification: `runs/probe_two_stage/hyperparam_search/`
-- Segmentation: `runs/segmentation/hyperparam_search_segmentation/`
+**Directory structure with seeds:**
+```
+splits/
+  {dataset_name}/
+    seed_42/
+      train_indices.npy
+      test_indices.npy
+      cv_folds.json
+    seed_123/
+      ...
+
+cache/embeddings/
+  {dataset_name}/
+    {model_name}/
+      seed_42/
+        512px/
+          train_embeddings.pt
+          test_embeddings.pt
+      seed_123/
+        ...
+
+runs/probe_two_stage/
+  seed_42/
+    hyperparam_search/
+      best_hyperparameters.json
+    results_dinov3_512px.json
+    results_dinov3_256px.json
+  seed_123/
+    results_dinov3_512px.json
+    ...
+```
+
+---
+
+### Running All Domains
+
+```bash
+# Dermatology (ISIC 2017)
+python -m src.cli.run_multiresolution_probe \
+    --domain dermatology --model dinov3 \
+    --tune-hyperparams --resolutions 512 256 128 64 \
+    --seeds 42 123 456 \
+    --config configs/probe_two_stage_dermatology
+
+# Radiology (CheXpert)
+python -m src.cli.run_multiresolution_probe \
+    --domain radiology --model dinov3 \
+    --tune-hyperparams --resolutions 512 256 128 64 \
+    --seeds 42 123 456 \
+    --config configs/probe_two_stage_radiology
+
+# Pathology (TCGA)
+python -m src.cli.run_multiresolution_probe \
+    --domain pathology --model dinov3 \
+    --tune-hyperparams --resolutions 512 256 128 64 \
+    --seeds 42 123 456 \
+    --config configs/probe_two_stage_pathology
+```
+
+---
+
+### Training Budget
+
+Default job configuration (`jobs/train_container.sh`):
+
+| Resource | Value | Reason |
+|----------|-------|--------|
+| Time | 12 hours | ~6-8h estimated, with buffer |
+| Memory | 48 GB | Embedding caching + data loading |
+| CPUs | 8 | Matches `num_workers` in config |
+| GPUs | 1 | DINOv3-ViT-S fits on single GPU |
+
+**Workload breakdown (3 seeds, 4 resolutions):**
+1. **Hyperparameter tuning** (~3-4h): 18 configs × 5-fold CV × 100 epochs
+2. **Embedding extraction** (~2h): 3 seeds × 4 resolutions × 2 splits
+3. **Final linear probing** (~1-2h): 12 runs × 100 epochs
+
+---
+
+### Troubleshooting
+
+**Container not found:**
+```bash
+# Pull the container manually
+./jobs/slim_container.sh
+```
+
+**Mount error (pip_cache):**
+```bash
+mkdir -p /scratch/users/$USER/pip_cache
+```
+
+**venv not found:**
+```bash
+# Run the setup script
+sbatch jobs/setup_container.sh
+```
+
+**Check available containers:**
+```bash
+ls -la /scratch/users/$USER/simg/*.sif
+```
 
