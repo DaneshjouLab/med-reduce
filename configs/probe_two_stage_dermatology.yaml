@@ -37,13 +37,16 @@ datamodule:
   # Local dataset configuration (domain-specific)
   local_label_file: /scratch/groups/roxanad/datasets/isic/challenges/2017/merged_isic_2017_data/merged_ground_truth_part3.csv # <----- Where labels live
   local_image_id_column: image_id # Update for radiology/pathology from labels.csv
-  local_label_column: ["melanoma", "seborrheic_keratosis"]  # Update for radiology/pathology
+  local_label_column: ["melanoma", "seborrheic_keratosis"]  # <------- Update for radiology/pathology
   local_image_extension: .jpg
 
   # Dataset filtering (domain-specific)
   filtered_classes: null
-  balance_data: false
-  num_train_images: 10000  # Update for radiology/pathology
+  # Specifies which classes to keep from the dataset. When null, no class filtering is applied — all classes in the dataset are used. If set to a list (e.g.,
+  # ["melanoma", "benign"]) only samples belonging to those classes are retained for training and evaluation.
+  balance_data: false  # Controls whether to equalize class counts. Since this is false, no balancing happens — the dataset is used as-is with its natural class distribution. When
+   #true, it triggers balance_dataset() which subsamples the majority classes so each class has the same number of samples.
+  num_train_images: 10000  # The total budget of training images when balancing is active. It's divided equally across classes.
 
   force_recompute_embeddings: true
 
@@ -100,7 +103,6 @@ loss:
   reduction: "mean"
 
 logging:
-  project: "reduced-perception"
-  run_name: "dinov3_derm_512px"
+  project: "reduced-perception" # <----- Update for your W&B project name
   wandb_enabled: true
   save_checkpoints: true
