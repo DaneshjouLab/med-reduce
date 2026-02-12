@@ -631,6 +631,54 @@ df_with_thumbnails = result.df
 
 ---
 
+## Training (Two-Stage Linear Probing)
+
+Once the pipeline has produced `data/tcga/tables/dataset.csv`, you can train
+linear probes on TCGA slide thumbnails using a **single config file** and Hydra
+overrides.
+
+The datamodule lives at `src/data/tcga_datamodule.py` (outside this ETL
+package) and the config at `configs/probe_two_stage_tcga.yaml`.
+
+### Available Tasks
+
+| Task | What it classifies | Row filter |
+|------|--------------------|------------|
+| `luad_vs_lusc` | Lung adeno vs squamous (project_id) | project_id in {TCGA-LUAD, TCGA-LUSC} |
+| `lgg_vs_gbm` | Low-grade glioma vs glioblastoma (project_id) | project_id in {TCGA-LGG, TCGA-GBM} |
+| `kras` | KRAS mutation (0/1) | has_maf == True |
+| `tp53` | TP53 mutation (0/1) | has_maf == True |
+| `egfr` | EGFR mutation (0/1) | has_maf == True |
+| `idh` | IDH mutation (0/1) | has_maf == True |
+
+### Running
+
+There is one config for all tasks. Override `datamodule.task` to switch:
+
+```bash
+# Subtype classification
+python -m src.cli.run_probe_two_stage --config-name=probe_two_stage_tcga datamodule.task=luad_vs_lusc
+python -m src.cli.run_probe_two_stage --config-name=probe_two_stage_tcga datamodule.task=lgg_vs_gbm
+
+# Gene mutation prediction
+python -m src.cli.run_probe_two_stage --config-name=probe_two_stage_tcga datamodule.task=kras
+python -m src.cli.run_probe_two_stage --config-name=probe_two_stage_tcga datamodule.task=tp53
+python -m src.cli.run_probe_two_stage --config-name=probe_two_stage_tcga datamodule.task=egfr
+python -m src.cli.run_probe_two_stage --config-name=probe_two_stage_tcga datamodule.task=idh
+```
+
+You can override any other config value the same way:
+
+```bash
+# Different resolution
+python -m src.cli.run_probe_two_stage --config-name=probe_two_stage_tcga datamodule.task=kras data.image_size=224
+
+# Different batch size / learning rate
+python -m src.cli.run_probe_two_stage --config-name=probe_two_stage_tcga datamodule.task=tp53 data.batch_size=128 train.optimizer.lr=3e-4
+```
+
+---
+
 ## External Resources
 
 - **GDC Portal**: https://portal.gdc.cancer.gov/
