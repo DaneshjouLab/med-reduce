@@ -1,6 +1,6 @@
 # TCGA / GDC Data Module
 
-This module provides tools for querying and managing TCGA (The Cancer Genome Atlas) data from the GDC (Genomic Data Commons).
+This module provides tools for querying, downloading, and managing TCGA (The Cancer Genome Atlas) data from the GDC (Genomic Data Commons).
 
 ## What is TCGA?
 
@@ -10,304 +10,443 @@ TCGA is a landmark cancer genomics program that molecularly characterized over 2
 
 The Genomic Data Commons (GDC) is a data sharing platform that hosts TCGA and other cancer genomics datasets. It provides a REST API to query and download data programmatically.
 
-**Important:** You don't need to know the exact field names or data structure ahead of time. This client can discover available fields dynamically.
+---
+
+## Module Architecture
+
+```
+src/data/tcga/
+├── __init__.py        # Exports all public classes
+├── gdc_client.py      # Generic GDC API wrapper (queries only)
+├── hierarchy.py       # Builds hierarchy index (case → sample → portion → slide)
+├── etl.py             # Flat table builder with proper hierarchy broadcasting
+├── config.py          # Configuration dataclass
+├── manifest.py        # Manifest file generation for gdc-client
+├── downloader.py      # Download orchestration
+├── gene_matrix.py     # Gene-level mutation matrix from MAF files
+├── README.md          # This file
+└── notebooks/
+    ├── tutorial_one.ipynb      # GDC Client basics
+    └── tutorial_two_etl.ipynb  # ETL pipeline, downloads & gene matrix
+```
+
+### Layer Responsibilities
+
+| Module | Responsibility |
+|--------|---------------|
+| `gdc_client.py` | Generic API wrapper - queries GDC, no ETL logic |
+| `hierarchy.py` | Builds index: slide_id → {sample_id, case_id, ...} |
+| `etl.py` | Builds flat DataFrames with hierarchy broadcasting |
+| `config.py` | Configuration management (directories, project selection) |
+| `manifest.py` | Creates manifest files for gdc-client downloads |
+| `downloader.py` | Orchestrates downloads, tracks status |
+| `gene_matrix.py` | Gene-level one-hot encoding from MAF files |
 
 ---
 
 ## Installation
 
-No additional dependencies beyond `requests` (already in requirements):
-
 ```bash
-pip install requests
+pip install requests pandas
+
+# For downloading files:
+pip install gdc-client
 ```
 
 ---
 
 ## Quick Start
 
+### Option 1: Just Query Data
+
 ```python
 from src.data.tcga import GDCClient
 
-# Create client (no authentication needed for open-access data)
 client = GDCClient()
-
-# What projects are available?
 projects = client.list_projects(program="TCGA")
 for p in projects:
-    print(f"{p.project_id}: {p.name} ({p.case_count} patients)")
+    print(f"{p.project_id}: {p.case_count} patients")
 ```
 
----
-
-## Understanding the Data Structure
-
-TCGA data is organized hierarchically. Here's what each level means in plain terms:
-
-```
-TCGA (the program)
-│
-├── TCGA-BRCA (Breast Cancer project)
-├── TCGA-LUAD (Lung Adenocarcinoma project)
-├── TCGA-SKCM (Skin Cutaneous Melanoma project)
-│   ... 33 cancer types total
-│
-└── Each project contains CASES (patients)
-         │
-         ├── Who is this patient?
-         │   └── demographic: age, gender, race, ethnicity
-         │
-         ├── What cancer do they have?
-         │   └── diagnoses: cancer type, tumor stage, tumor grade
-         │                  when diagnosed, survival status
-         │
-         ├── What tissue samples were collected?
-         │   └── samples: tumor vs normal tissue, fresh vs frozen
-         │        └── portions: subdivisions of the sample
-         │             └── slides: the actual microscope slides
-         │                         (with pathologist annotations like
-         │                          % tumor cells, % necrosis)
-         │
-         ├── Lifestyle/environmental factors?
-         │   └── exposures: smoking history, alcohol use, BMI
-         │
-         └── Family cancer history?
-             └── family_histories: relatives with cancer
-```
-
-### What Files Are Available?
-
-Each case has associated **files** - the actual data you can download:
-
-| File Type | What It Is | Example Use |
-|-----------|-----------|-------------|
-| **Slide Image** | Whole slide microscopy images (.svs) | Deep learning on pathology |
-| **Clinical Supplement** | XML files with clinical details | Extract survival data |
-| **Gene Expression** | RNA-seq quantification | Gene expression analysis |
-| **Somatic Mutation** | Mutation calls (MAF files) | Identify driver mutations |
-| **Copy Number** | Chromosomal gains/losses | Genomic instability analysis |
-
-### Open vs Controlled Access
-
-- **Open access**: Anyone can download (slide images, clinical summaries)
-- **Controlled access**: Requires dbGaP approval (raw sequencing, germline variants)
-
-This module defaults to **open access** data only.
-
----
-
-## Discovering What's Available
-
-**You don't need to memorize field names.** The client can tell you what's available:
+### Option 2: Full ETL Pipeline
 
 ```python
-client = GDCClient()
+from pathlib import Path
+from src.data.tcga import (
+    TCGAConfig,
+    TCGASlideETL,
+    ManifestGenerator,
+    TCGADownloader,
+)
 
-# What fields exist for cases (patients)?
-fields = client.discover_fields("cases")
-print(f"Found {len(fields)} available fields")
+# 1. Configure
+config = TCGAConfig(
+    project_ids=["TCGA-LUAD"],
+    data_dir=Path("data/tcga"),
+)
+config.ensure_directories()
 
-# What nested data can be expanded?
-expandable = client.get_expandable_fields("cases")
-print(expandable)
-# ['demographic', 'diagnoses', 'samples', 'exposures', ...]
+# 2. Build flat table
+etl = TCGASlideETL()
+df = etl.build_slide_table(
+    project_ids=config.project_ids,
+    include_demographics=True,
+    include_diagnosis=True,
+    include_maf=True,
+)
+df = etl.add_local_paths(df, config)
+
+# 3. Generate manifests
+manifest_gen = ManifestGenerator()
+slide_manifest = manifest_gen.create_slide_manifest(df, config.manifests_dir / "slides.txt")
+maf_manifest = manifest_gen.create_maf_manifest(df, config.manifests_dir / "maf.txt")
+
+# 4. Download (or use gdc-client directly)
+downloader = TCGADownloader()
+result = downloader.download_from_manifest(slide_manifest, config.slides_dir)
+print(f"Downloaded: {result.files_downloaded}/{result.files_total}")
+
+# 5. Save table
+df.to_csv(config.tables_dir / "slides.csv", index=False)
 ```
+
+---
+
+## Data Structure
+
+### TCGA Hierarchy
+
+```
+TCGA Program
+└── Project (e.g., TCGA-LUAD)
+    └── Case (patient)
+        ├── demographic (gender, race, ethnicity)
+        ├── diagnoses (cancer type, stage, survival)
+        └── samples (tumor, normal tissue)
+            └── portions
+                ├── slides → files (SVS images)
+                └── analytes → aliquots → files (MAF, sequencing)
+```
+
+**Important:** MAF files are linked at the **aliquot** level, not the sample level. The `Tumor_Sample_UUID` in MAF files is actually an aliquot UUID. GeneMatrix resolves this via the GDC API to properly link mutations to samples.
+
+### ETL Output: Flat Table
+
+The ETL creates a flat DataFrame where **each row is a slide image file**:
+
+| Column Level | Columns |
+|--------------|---------|
+| File | file_id, filename, file_size, md5sum, slide_local_path |
+| Slide | slide_id, percent_tumor_cells, percent_necrosis |
+| Portion | portion_id, is_ffpe |
+| Sample | sample_id, sample_type, tissue_type |
+| Case | case_id, gender, race, primary_diagnosis, tumor_stage, vital_status |
+| MAF | maf_file_id, maf_filename, maf_local_path, has_maf |
+
+**Key concept:** Parent-level data is **broadcast** down to all child slides.
+
+---
+
+## Module Details
+
+### TCGAConfig
+
+Configuration dataclass for the pipeline:
+
+```python
+from src.data.tcga import TCGAConfig
+
+config = TCGAConfig(
+    project_ids=["TCGA-LUAD", "TCGA-LUSC"],  # Required
+    data_dir=Path("data/tcga"),               # Base directory
+    include_demographics=True,
+    include_diagnosis=True,
+    include_maf=True,
+    access="open",  # "open" or "controlled"
+)
+
+# Computed paths
+config.slides_dir     # data/tcga/slides
+config.maf_dir        # data/tcga/maf
+config.manifests_dir  # data/tcga/manifests
+config.tables_dir     # data/tcga/tables
+
+# Create directories
+config.ensure_directories()
+```
+
+### TCGASlideETL
+
+Builds flat tables with proper hierarchy broadcasting:
+
+```python
+from src.data.tcga import TCGASlideETL
+
+etl = TCGASlideETL()
+
+# Build table
+df = etl.build_slide_table(
+    project_ids=["TCGA-LUAD"],
+    include_demographics=True,
+    include_diagnosis=True,
+    include_maf=True,
+    access="open",
+)
+
+# Add local file paths
+df = etl.add_local_paths(df, config)
+```
+
+**Output columns:** 34+ columns including file metadata, slide data, sample data, case data (demographics, diagnosis), and MAF linkage.
+
+### ManifestGenerator
+
+Creates manifest files for gdc-client:
+
+```python
+from src.data.tcga import ManifestGenerator
+
+manifest_gen = ManifestGenerator()
+
+# Full manifests
+slide_manifest = manifest_gen.create_slide_manifest(df, Path("slides.txt"))
+maf_manifest = manifest_gen.create_maf_manifest(df, Path("maf.txt"))
+
+# Subset manifest for testing (first N files)
+test_manifest = manifest_gen.create_subset_manifest(
+    manifest_path=slide_manifest,
+    output_path=Path("test.txt"),
+    max_files=2,
+)
+```
+
+### TCGADownloader
+
+Orchestrates downloads using gdc-client:
+
+```python
+from src.data.tcga import TCGADownloader, DownloadStatus
+
+downloader = TCGADownloader()
+
+# Check status
+status = downloader.check_download_status(output_dir, manifest_path)
+print(f"Status: {status.status.value}")  # not_started, in_progress, completed
+
+# Download
+result = downloader.download_from_manifest(
+    manifest_path=manifest_path,
+    output_dir=output_dir,
+    n_processes=4,
+)
+print(f"Downloaded: {result.files_downloaded}/{result.files_total}")
+```
+
+**Resume:** gdc-client automatically resumes interrupted downloads.
+
+### HierarchyBuilder
+
+Low-level utility for building hierarchy indices:
+
+```python
+from src.data.tcga import GDCClient, HierarchyBuilder
+
+client = GDCClient()
+cases = client._paginate(
+    "cases",
+    filters={"op": "=", "content": {"field": "project.project_id", "value": "TCGA-LUAD"}},
+    expand=["samples", "samples.portions", "samples.portions.slides"],
+)
+
+builder = HierarchyBuilder()
+index = builder.build_index(cases)
+# index[slide_id] → HierarchyNode with case_id, sample_id, etc.
+```
+
+### GeneMatrix
+
+Builds gene-level one-hot encoding from downloaded MAF files:
+
+```python
+from src.data.tcga import GeneMatrix, GDCClient
+
+# Build from downloaded MAF files
+# Requires GDCClient to resolve aliquot → sample mapping
+client = GDCClient()
+gm = GeneMatrix(client=client)
+gm.build_from_maf_dir(config.maf_dir)
+
+print(gm)  # GeneMatrix(samples=510, genes=15234)
+print(gm.shape)  # (510, 15234) - samples x genes
+
+# Save for reuse
+gm.save(config.tables_dir / "gene_matrix.parquet")
+
+# Load existing (no client needed for loading)
+gm = GeneMatrix.load(config.tables_dir / "gene_matrix.parquet")
+
+# Get subset of genes
+tp53_kras = gm.subset(genes=["TP53", "KRAS", "EGFR"])
+
+# Merge with slide table (all genes)
+df_with_genes = gm.merge(slide_df)
+
+# Merge with specific genes only
+df_with_genes = gm.merge(slide_df, genes=["TP53", "KRAS"])
+```
+
+**Key features:**
+- Resolves aliquot → sample via GDC API (MAF files use aliquot UUIDs, not sample UUIDs)
+- Joins on `sample_id` (UUID) for proper linking with slide table
+- Left join preserves all slides - slides without MAF get 0 for all genes
+- Subset to specific genes of interest
+- Saves to parquet for efficient storage/loading
+
+---
+
+## File Types
+
+| File Type | Format | Description | Access |
+|-----------|--------|-------------|--------|
+| Slide Image | .svs | Whole slide microscopy images | Open |
+| MAF | .maf.gz | Masked somatic mutations | Open |
+| Clinical | .xml | Clinical supplement data | Open |
+| Gene Expression | various | RNA-seq quantification | Mixed |
+
+### Download Structure
+
+gdc-client creates:
+```
+output_dir/
+├── <file_uuid_1>/
+│   └── <filename.svs>
+├── <file_uuid_2>/
+│   └── <filename.maf.gz>
+```
+
+**No unpacking needed** - SVS and MAF files are ready to use.
+
+---
+
+## Tutorials
+
+### Tutorial 1: GDC Client Basics
+`notebooks/tutorial_one.ipynb`
+- List projects
+- Query cases with clinical data
+- Get slide images
+- Generate manifests
+
+### Tutorial 2: ETL Pipeline & Gene Matrix
+`notebooks/tutorial_two_etl.ipynb`
+- Configure pipeline
+- Build flat slide tables
+- Add local paths
+- Generate manifests
+- Download files (slides and MAF)
+- Build gene mutation matrix from MAF files
+- Merge gene data with slide table
 
 ---
 
 ## Common Tasks
 
-### 1. List Available Cancer Types
+### Get Slide Images for Deep Learning
 
 ```python
-projects = client.list_projects(program="TCGA")
+from src.data.tcga import TCGAConfig, TCGASlideETL
 
-for p in projects:
-    print(f"{p.project_id}")
-    print(f"  Cancer: {p.disease_type}")
-    print(f"  Site: {p.primary_site}")
-    print(f"  Patients: {p.case_count}")
-    print(f"  Files: {p.file_count}")
-    print()
+config = TCGAConfig(project_ids=["TCGA-LUAD"])
+etl = TCGASlideETL()
+
+df = etl.build_slide_table(
+    project_ids=config.project_ids,
+    include_maf=False,  # Don't need MAF for image analysis
+)
+df = etl.add_local_paths(df, config)
+
+# Filter to tumor slides only
+tumor_df = df[df['tissue_type'] == 'Tumor']
+print(f"Tumor slides: {len(tumor_df)}")
 ```
 
-### 2. Get Patient Clinical Data
+### Link Slides to Mutations
 
 ```python
-# Get patients from breast cancer project
-# expand= tells the API to include nested data
-cases = client.get_cases(
-    project_id="TCGA-BRCA",
-    expand=["demographic", "diagnoses", "samples"],
-    max_results=10
+# MAF files link at SAMPLE level
+df = etl.build_slide_table(["TCGA-LUAD"], include_maf=True)
+
+# All slides from same sample share the same MAF
+# Normal tissue samples don't have MAF
+print(df.groupby('sample_type')['has_maf'].mean())
+```
+
+### Test Download with Subset
+
+```python
+# Create subset manifest for testing
+test_manifest = manifest_gen.create_subset_manifest(
+    slide_manifest,
+    config.manifests_dir / "test.txt",
+    max_files=2,
 )
 
-for case in cases:
-    print(f"Patient: {case.submitter_id}")
-    print(f"  Gender: {case.gender}")
-    print(f"  Age at diagnosis: {case.age_at_diagnosis}")
-    print(f"  Cancer type: {case.primary_diagnosis}")
-    print(f"  Stage: {case.tumor_stage}")
-    print(f"  Alive/Dead: {case.vital_status}")
-    print(f"  Number of samples: {len(case.samples)}")
-    print()
+# Download just 2 files
+result = downloader.download_from_manifest(test_manifest, config.slides_dir)
 ```
 
-### 3. Get Pathology Slide Images
+### Build Gene Mutation Matrix
 
 ```python
-# Get slide images (the microscopy images)
-slides = client.get_slide_images(
-    project_id="TCGA-BRCA",
-    access="open",  # Only open-access slides
-    max_results=5
-)
+from src.data.tcga import GeneMatrix, GDCClient
 
-for slide in slides:
-    print(f"File: {slide.filename}")
-    print(f"  Size: {slide.file_size / 1e9:.2f} GB")
-    print(f"  Patient: {slide.case_submitter_id}")
-    print(f"  Type: {slide.experimental_strategy}")  # Diagnostic vs Tissue slide
-    print()
-```
+# After downloading MAF files...
+client = GDCClient()
+gm = GeneMatrix(client=client)
+gm.build_from_maf_dir(config.maf_dir)
 
-### 4. Filter Patients by Criteria
+# Save for reuse
+gm.save(config.tables_dir / "gene_matrix.parquet")
 
-```python
-# Find deceased female patients
-cases = client.get_cases(
-    project_id="TCGA-BRCA",
-    gender="female",
-    vital_status="Dead",
-    max_results=50
-)
+# Merge specific genes with slide table
+df_with_genes = gm.merge(slide_df, genes=["TP53", "KRAS", "EGFR"])
 
-print(f"Found {len(cases)} deceased female patients")
-for case in cases:
-    print(f"  {case.submitter_id}: died day {case.days_to_death}")
-```
-
-### 5. Build Complex Queries
-
-```python
-from src.data.tcga import GDCFilterBuilder, FilterOp
-
-# Find open-access files that are either slides OR clinical XMLs
-filter = (
-    GDCFilterBuilder()
-    .add("cases.project.project_id", "TCGA-BRCA")
-    .add("access", "open")
-    .add("data_type", ["Slide Image", "Clinical Supplement"], FilterOp.IN)
-    .build()
-)
-
-files = client.get_files(custom_filter=filter)
-print(f"Found {len(files)} matching files")
-```
-
-### 6. Generate Download Manifest
-
-The GDC provides a command-line tool (`gdc-client`) for bulk downloads. This creates the manifest file it needs:
-
-```python
-# Get the files you want
-slides = client.get_slide_images("TCGA-BRCA", access="open", max_results=100)
-
-# Create manifest
-client.create_manifest(slides, output_path="my_download_manifest.txt")
-
-# Then in terminal:
-# gdc-client download -m my_download_manifest.txt
-```
-
----
-
-## Running the Test Suite
-
-To verify everything works and see real data:
-
-```bash
-python src/data/tcga/gdc_client.py
-```
-
-This runs 13 tests against the live GDC API, showing you actual TCGA-BRCA data:
-- Project listings
-- Patient clinical data
-- Slide images
-- Clinical files
-- And more
-
----
-
-## What Each Field Actually Contains
-
-### Patient Demographics (`demographic`)
-| Field | Meaning | Example Values |
-|-------|---------|----------------|
-| gender | Biological sex | "female", "male" |
-| race | Self-reported race | "white", "black or african american", "asian" |
-| ethnicity | Hispanic/Latino origin | "not hispanic or latino", "hispanic or latino" |
-| year_of_birth | Birth year | 1945, 1962 |
-| year_of_death | Death year (if applicable) | 2015, None |
-
-### Diagnosis Information (`diagnoses`)
-| Field | Meaning | Example Values |
-|-------|---------|----------------|
-| primary_diagnosis | Cancer type | "Infiltrating duct carcinoma, NOS" |
-| age_at_diagnosis | Age in days when diagnosed | 18250 (about 50 years) |
-| tumor_stage | How advanced | "stage iia", "stage iiic" |
-| tumor_grade | How abnormal cells look | "G1", "G2", "G3" |
-| vital_status | Alive or dead | "Alive", "Dead" |
-| days_to_death | Days from diagnosis to death | 365, 1825, None |
-
-### Sample Information (`samples`)
-| Field | Meaning | Example Values |
-|-------|---------|----------------|
-| sample_type | What was collected | "Primary Tumor", "Blood Derived Normal" |
-| tissue_type | Tumor or normal | "Tumor", "Normal" |
-| is_ffpe | Preserved in paraffin? | True, False |
-| tumor_descriptor | Tumor characteristics | "Primary", "Metastatic" |
-
-### Slide Annotations (`samples.portions.slides`)
-| Field | Meaning | Example Values |
-|-------|---------|----------------|
-| percent_tumor_cells | % of slide that's tumor | 80, 60, 40 |
-| percent_necrosis | % dead tissue | 5, 10, 20 |
-| percent_normal_cells | % normal cells | 10, 20 |
-| percent_stromal_cells | % connective tissue | 15, 30 |
-
----
-
-## File Structure
-
-```
-src/data/tcga/
-├── __init__.py     # Exports: GDCClient, GDCFilterBuilder, FilterOp, etc.
-├── gdc_client.py   # Main client implementation + test suite
-└── README.md       # This file
+# Now each slide row has TP53, KRAS, EGFR columns (1=mutated, 0=not)
 ```
 
 ---
 
 ## External Resources
 
-- **GDC Portal** (browse data visually): https://portal.gdc.cancer.gov/
+- **GDC Portal**: https://portal.gdc.cancer.gov/
 - **GDC API Docs**: https://docs.gdc.cancer.gov/API/Users_Guide/
+- **gdc-client**: https://gdc.cancer.gov/access-data/gdc-data-transfer-tool
 - **TCGA Overview**: https://www.cancer.gov/tcga
-- **gdc-client download tool**: https://gdc.cancer.gov/access-data/gdc-data-transfer-tool
 
 ---
 
 ## Troubleshooting
 
-**"No cases returned"**
-- Check if the project_id is correct (e.g., "TCGA-BRCA" not "tcga-brca")
-- Some filters may be too restrictive
+**"project_ids cannot be empty"**
+- TCGAConfig requires you to specify at least one project
+
+**"gdc-client not found"**
+- Install with: `pip install gdc-client`
 
 **"Timeout errors"**
-- The GDC API can be slow. Increase timeout: `GDCClient(timeout=60)`
-- Try smaller `max_results`
+- Increase timeout: `GDCClient(timeout=60)`
+- Try smaller queries first
 
-**"Need controlled access data"**
-- You need dbGaP approval and an authentication token
-- Pass token: `GDCClient(token="your-token-here")`
+**"Some slides don't have MAF"**
+- Normal tissue samples don't have MAF (MAF is for tumor mutations)
+- Not all tumor samples were sequenced
+
+**"Could not resolve any aliquot → sample mappings"**
+- GeneMatrix needs to query GDC API to map aliquot UUIDs to sample UUIDs
+- Ensure you have internet connectivity
+- Check that the MAF files contain valid `Tumor_Sample_UUID` values
+
+**"No overlapping samples after merge"**
+- The sample_ids in gene matrix don't match slide table
+- Verify MAF files are from the same project as your slides
+- Check that aliquot → sample resolution succeeded
