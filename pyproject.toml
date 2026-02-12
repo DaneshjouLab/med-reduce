@@ -57,6 +57,9 @@ dev = [
     "mypy>=1.0",
 ]
 
+[project.scripts]
+build-tcga-dataset = "src.cli.build_tcga_dataset:main"
+
 [project.urls]
 Homepage = "https://github.com/DaneshjouLab/reduced-perception"
 Repository = "https://github.com/DaneshjouLab/reduced-perception.git"

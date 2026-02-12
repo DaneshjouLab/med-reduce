@@ -87,6 +87,10 @@ from src.data.tcga.slide_processor import (
     ProcessingResult,
 )
 
+from src.data.tcga.pipeline import (
+    TCGADatasetBuilder,
+)
+
 __all__ = [
     # Client
     "GDCClient",
@@ -120,4 +124,6 @@ __all__ = [
     # Slide Processor
     "SlideProcessor",
     "ProcessingResult",
+    # Pipeline
+    "TCGADatasetBuilder",
 ]

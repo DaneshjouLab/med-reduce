@@ -25,6 +25,7 @@ src/data/tcga/
 ├── downloader.py      # Download orchestration
 ├── gene_matrix.py     # Gene-level mutation matrix from MAF files
 ├── slide_processor.py # Parallel thumbnail generation from SVS files
+├── pipeline.py        # End-to-end dataset builder (TCGADatasetBuilder)
 ├── README.md          # This file
 └── notebooks/
     ├── tutorial_one.ipynb      # GDC Client basics
@@ -43,6 +44,7 @@ src/data/tcga/
 | `downloader.py` | Orchestrates downloads, tracks status |
 | `gene_matrix.py` | Gene-level one-hot encoding from MAF files |
 | `slide_processor.py` | Parallel thumbnail generation from SVS files |
+| `pipeline.py` | YAML-driven orchestrator that chains all steps end-to-end |
 
 ---
 
@@ -56,7 +58,149 @@ pip install requests pandas
 
 ---
 
-## Quick Start
+## Dataset Builder (Full Pipeline)
+
+The fastest way to go from zero to a training-ready dataset. A single CLI command runs the full pipeline: query GDC API, build slide table, generate manifests, download files, create thumbnails, build gene mutation matrix, and assemble a final CSV/parquet.
+
+### Configuration
+
+Edit `configs/tcga_dataset.yaml`:
+
+```yaml
+projects:
+  - TCGA-LUAD
+  - TCGA-LUSC
+
+data_dir: data/tcga
+access: open
+
+etl:
+  include_demographics: true
+  include_diagnosis: true
+  include_maf: true
+
+download:
+  enabled: true
+  slides: true
+  maf: true
+  token_path: null           # path to GDC token for controlled access
+  n_processes: 4
+  max_files: null            # limit for testing (null = all)
+
+slides:
+  thumbnail_size: [512, 512]
+  n_workers: 4
+
+gene_matrix:
+  enabled: true
+  genes: null                # null = all genes, or ["TP53", "KRAS", ...]
+
+steps:
+  - etl            # Query GDC API, build flat slide table
+  - manifest       # Generate download manifests
+  - download       # Download files via gdc-client
+  - process_slides # Create JPG thumbnails from SVS
+  - gene_matrix    # Build gene mutation matrix from MAF
+  - assemble       # Merge everything into final dataset
+```
+
+### CLI Usage
+
+```bash
+# Run the full pipeline with default config
+python -m src.cli.build_tcga_dataset
+
+# Custom config
+python -m src.cli.build_tcga_dataset --config configs/tcga_dataset.yaml
+
+# Run specific steps only (comma-separated)
+python -m src.cli.build_tcga_dataset --steps etl,manifest
+
+# Override config values from the command line
+python -m src.cli.build_tcga_dataset 'projects=[TCGA-BRCA]' download.max_files=5
+
+# Test run: 2 files, just to see data flow through
+python -m src.cli.build_tcga_dataset download.max_files=2
+
+# Dry run: show resolved config without executing
+python -m src.cli.build_tcga_dataset --dry-run
+
+# Force re-run all steps (ignore cached artifacts)
+python -m src.cli.build_tcga_dataset --force
+```
+
+### Pipeline Steps
+
+| Step | What it does | Artifact |
+|------|-------------|----------|
+| `etl` | Queries GDC API, builds flat slide table with demographics/diagnosis/MAF linkage | `tables/slide_table.parquet` |
+| `manifest` | Generates gdc-client manifests (+ subset manifests if `max_files` set) | `manifests/slides_manifest.txt`, `manifests/maf_manifest.txt` |
+| `download` | Downloads slides and MAF files via gdc-client | `slides/<uuid>/<file>`, `maf/<uuid>/<file>` |
+| `process_slides` | Creates JPG thumbnails from SVS whole-slide images in parallel | `thumbnails/<slide_id>.jpg` |
+| `gene_matrix` | Parses MAF files, resolves aliquot-to-sample mapping, builds gene mutation matrix | `tables/gene_matrix.parquet` |
+| `assemble` | Merges slide table + gene matrix, validates file paths, writes final dataset | `tables/dataset.csv`, `tables/dataset.parquet` |
+
+Each step checks for existing artifacts before running, so the pipeline is **resumable** — if it fails mid-way, re-run and it picks up where it left off. Use `--force` to override this.
+
+### Output
+
+The final dataset at `tables/dataset.csv` has one row per slide with all columns carried forward:
+
+| Column Group | Columns |
+|---|---|
+| Image location | `jpg_path`, `slide_local_path` |
+| File metadata | `file_id`, `filename`, `file_size`, `md5sum`, `file_state`, `project_id` |
+| Slide | `slide_id`, `slide_submitter_id`, `percent_tumor_cells`, `percent_necrosis` |
+| Portion | `portion_id`, `is_ffpe` |
+| Sample | `sample_id`, `sample_submitter_id`, `sample_type`, `tissue_type` |
+| Case | `case_id`, `case_submitter_id` |
+| Demographics | `gender`, `race`, `ethnicity`, `year_of_birth` |
+| Diagnosis | `primary_diagnosis`, `tumor_stage`, `tumor_grade`, `vital_status`, `days_to_death`, `age_at_diagnosis` |
+| MAF | `maf_file_id`, `maf_filename`, `maf_file_size`, `maf_md5sum`, `has_maf`, `maf_local_path` |
+| Gene mutations | One column per gene (0/1), e.g. `TP53`, `KRAS`, ... |
+| Validation | `slide_exists`, `maf_exists` |
+
+Use this CSV as `datamodule.local_label_file` in training configs, with `local_image_id_column: slide_id`.
+
+### Python API
+
+```python
+from omegaconf import OmegaConf
+from src.data.tcga import TCGADatasetBuilder
+
+cfg = OmegaConf.load("configs/tcga_dataset.yaml")
+builder = TCGADatasetBuilder(cfg)
+dataset_path = builder.run()  # returns Path to dataset.csv
+```
+
+### Directory Structure After a Full Run
+
+```
+data/tcga/
+├── slides/                  # Downloaded SVS files
+│   ├── <uuid>/<file>.svs
+│   └── ...
+├── maf/                     # Downloaded MAF files
+│   ├── <uuid>/<file>.maf.gz
+│   └── ...
+├── manifests/               # gdc-client manifests
+│   ├── slides_manifest.txt
+│   ├── maf_manifest.txt
+│   └── *_subset.txt         # if max_files was set
+├── thumbnails/              # JPG thumbnails
+│   ├── <slide_id>.jpg
+│   └── ...
+└── tables/
+    ├── slide_table.parquet  # Intermediate: ETL output
+    ├── slide_table.csv
+    ├── gene_matrix.parquet  # Intermediate: gene mutations
+    ├── dataset.parquet      # Final dataset
+    └── dataset.csv          # Final dataset
+```
+
+---
+
+## Quick Start (Individual Components)
 
 ### Option 1: Just Query Data
 

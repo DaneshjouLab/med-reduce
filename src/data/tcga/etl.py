@@ -347,13 +347,13 @@ class TCGASlideETL:
         # Check slide files
         if "slide_local_path" in df.columns:
             df["slide_exists"] = df["slide_local_path"].apply(
-                lambda p: Path(p).exists() if p is not None else False
+                lambda p: Path(p).exists() if pd.notna(p) else False
             )
 
         # Check MAF files
         if "maf_local_path" in df.columns:
             df["maf_exists"] = df["maf_local_path"].apply(
-                lambda p: Path(p).exists() if p is not None else False
+                lambda p: Path(p).exists() if pd.notna(p) else False
             )
 
         return df
