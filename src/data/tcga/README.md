@@ -49,8 +49,7 @@ src/data/tcga/
 ```bash
 pip install requests pandas
 
-# For downloading files:
-pip install gdc-client
+
 ```
 
 ---
