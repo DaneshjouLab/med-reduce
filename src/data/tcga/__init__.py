@@ -82,6 +82,11 @@ from src.data.tcga.gene_matrix import (
     GeneMatrix,
 )
 
+from src.data.tcga.slide_processor import (
+    SlideProcessor,
+    ProcessingResult,
+)
+
 __all__ = [
     # Client
     "GDCClient",
@@ -112,4 +117,7 @@ __all__ = [
     "DownloadResult",
     # Gene Matrix
     "GeneMatrix",
+    # Slide Processor
+    "SlideProcessor",
+    "ProcessingResult",
 ]

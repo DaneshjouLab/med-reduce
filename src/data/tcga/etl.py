@@ -302,6 +302,9 @@ class TCGASlideETL:
 
         gdc-client downloads files to: <dir>/<file_uuid>/<filename>
 
+        Note: These are computed paths - files may not exist yet.
+        Use validate_local_paths() to check which files exist.
+
         Args:
             df: DataFrame from build_slide_table()
             config: TCGAConfig with directory settings
@@ -324,5 +327,33 @@ class TCGASlideETL:
             return None
 
         df["maf_local_path"] = df.apply(get_maf_path, axis=1)
+
+        return df
+
+    def validate_local_paths(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Validate which local files actually exist.
+
+        Adds boolean columns indicating whether files are present on disk.
+        Run this after add_local_paths() and after downloading.
+
+        Args:
+            df: DataFrame with slide_local_path (and optionally maf_local_path)
+
+        Returns:
+            DataFrame with slide_exists and maf_exists columns added
+        """
+        df = df.copy()
+
+        # Check slide files
+        if "slide_local_path" in df.columns:
+            df["slide_exists"] = df["slide_local_path"].apply(
+                lambda p: Path(p).exists() if p is not None else False
+            )
+
+        # Check MAF files
+        if "maf_local_path" in df.columns:
+            df["maf_exists"] = df["maf_local_path"].apply(
+                lambda p: Path(p).exists() if p is not None else False
+            )
 
         return df

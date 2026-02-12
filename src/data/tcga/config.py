@@ -55,7 +55,12 @@ class TCGAConfig:
         """Directory for output tables (CSV/parquet)."""
         return self.data_dir / "tables"
 
+    @property
+    def thumbnails_dir(self) -> Path:
+        """Directory for slide thumbnail images."""
+        return self.data_dir / "thumbnails"
+
     def ensure_directories(self):
         """Create all configured directories if they don't exist."""
-        for d in [self.slides_dir, self.maf_dir, self.manifests_dir, self.tables_dir]:
+        for d in [self.slides_dir, self.maf_dir, self.manifests_dir, self.tables_dir, self.thumbnails_dir]:
             d.mkdir(parents=True, exist_ok=True)

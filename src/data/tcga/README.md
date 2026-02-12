@@ -24,6 +24,7 @@ src/data/tcga/
 ├── manifest.py        # Manifest file generation for gdc-client
 ├── downloader.py      # Download orchestration
 ├── gene_matrix.py     # Gene-level mutation matrix from MAF files
+├── slide_processor.py # Parallel thumbnail generation from SVS files
 ├── README.md          # This file
 └── notebooks/
     ├── tutorial_one.ipynb      # GDC Client basics
@@ -41,6 +42,7 @@ src/data/tcga/
 | `manifest.py` | Creates manifest files for gdc-client downloads |
 | `downloader.py` | Orchestrates downloads, tracks status |
 | `gene_matrix.py` | Gene-level one-hot encoding from MAF files |
+| `slide_processor.py` | Parallel thumbnail generation from SVS files |
 
 ---
 
@@ -169,6 +171,7 @@ config.slides_dir     # data/tcga/slides
 config.maf_dir        # data/tcga/maf
 config.manifests_dir  # data/tcga/manifests
 config.tables_dir     # data/tcga/tables
+config.thumbnails_dir # data/tcga/thumbnails
 
 # Create directories
 config.ensure_directories()
@@ -192,11 +195,21 @@ df = etl.build_slide_table(
     access="open",
 )
 
-# Add local file paths
+# Add local file paths (computed, may not exist yet)
 df = etl.add_local_paths(df, config)
+
+# Validate which files actually exist on disk
+df = etl.validate_local_paths(df)
+print(f"Slides downloaded: {df['slide_exists'].sum()} / {len(df)}")
 ```
 
 **Output columns:** 34+ columns including file metadata, slide data, sample data, case data (demographics, diagnosis), and MAF linkage.
+
+**Path columns:**
+- `slide_local_path` - computed path where slide will be/is downloaded
+- `slide_exists` - boolean, True if file exists on disk
+- `maf_local_path` - computed path for MAF file
+- `maf_exists` - boolean, True if MAF file exists
 
 ### ManifestGenerator
 
@@ -300,6 +313,48 @@ df_with_genes = gm.merge(slide_df, genes=["TP53", "KRAS"])
 - Left join preserves all slides - slides without MAF get 0 for all genes
 - Subset to specific genes of interest
 - Saves to parquet for efficient storage/loading
+
+### SlideProcessor
+
+Parallel thumbnail generation from whole slide images:
+
+```python
+from src.data.tcga import SlideProcessor
+
+# Process slides in parallel (uses all CPU cores by default)
+processor = SlideProcessor(n_workers=4)
+result = processor.process_slides(
+    df=slide_df,
+    output_dir=config.thumbnails_dir,
+    size=(512, 512),
+)
+
+# Check results
+print(f"Processed: {result.processed}")
+print(f"Skipped (already exist): {result.skipped}")
+print(f"Failed: {result.failed}")
+print(f"Missing (source not found): {result.missing}")
+
+# DataFrame now has jpg_path column
+df_with_thumbnails = result.df
+```
+
+**Required DataFrame columns:**
+- `slide_local_path` - path to the SVS file (from `etl.add_local_paths()`)
+- `slide_id` - unique identifier, used for output filename (`{slide_id}.jpg`)
+
+**Key features:**
+- Multiprocessing - each slide processed by separate worker
+- Idempotent - skips slides that already have thumbnails
+- Graceful errors - logs failures, continues processing
+- Adds `jpg_path` column to DataFrame
+
+**Requirements:**
+```bash
+pip install openslide-python Pillow
+```
+
+**Note:** OpenSlide requires system libraries. On macOS: `brew install openslide`
 
 ---
 
@@ -411,6 +466,23 @@ gm.save(config.tables_dir / "gene_matrix.parquet")
 df_with_genes = gm.merge(slide_df, genes=["TP53", "KRAS", "EGFR"])
 
 # Now each slide row has TP53, KRAS, EGFR columns (1=mutated, 0=not)
+```
+
+### Generate Slide Thumbnails
+
+```python
+from src.data.tcga import SlideProcessor
+
+# After downloading slides...
+processor = SlideProcessor(n_workers=8)
+result = processor.process_slides(
+    df=slide_df,
+    output_dir=config.thumbnails_dir,
+    size=(512, 512),
+)
+
+# DataFrame now has jpg_path column pointing to thumbnails
+df_with_thumbnails = result.df
 ```
 
 ---
