@@ -169,7 +169,7 @@ fi
         --model dinov3 \
         --config probe_two_stage_dermatology \
         --tune-hyperparams \
-        --resolutions 64
+        --resolutions 512 256 128 64
 
 
     END_TIME=\$(date +%s)
