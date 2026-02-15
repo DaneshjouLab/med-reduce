@@ -133,49 +133,71 @@ class GeneMatrix:
 
         return result
 
-    def _resolve_aliquot_to_sample(self, aliquot_ids: List[str]) -> Dict[str, str]:
+    def _resolve_aliquot_to_sample(
+        self,
+        aliquot_ids: List[str],
+        batch_size: int = 100,
+    ) -> Dict[str, str]:
         """Resolve aliquot UUIDs to sample UUIDs via GDC API.
+
+        Batches requests to avoid overwhelming the API with a single
+        massive query.
 
         Args:
             aliquot_ids: List of aliquot UUIDs from MAF files
+            batch_size: Number of aliquot IDs per API request
 
         Returns:
             Dict mapping aliquot_id to sample_id
         """
+        import logging
+        import time
+
+        logger = logging.getLogger(__name__)
+
         if self._client is None:
             from src.data.tcga.gdc_client import GDCClient
             self._client = GDCClient()
 
-        # Query cases filtered by aliquot_ids, expanding the full path to aliquots
-        # Hierarchy: case → sample → portion → analyte → aliquot
-        cases = self._client._paginate(
-            "cases",
-            filters={
-                "op": "in",
-                "content": {
-                    "field": "aliquot_ids",
-                    "value": aliquot_ids,
-                }
-            },
-            expand=[
-                "samples",
-                "samples.portions",
-                "samples.portions.analytes",
-                "samples.portions.analytes.aliquots",
-            ],
-        )
-
-        # Build aliquot → sample mapping by walking the hierarchy
         aliquot_to_sample: Dict[str, str] = {}
-        for case in cases:
-            for sample in case.get("samples", []):
-                sample_id = sample.get("sample_id")
-                for portion in sample.get("portions", []):
-                    for analyte in portion.get("analytes", []):
-                        for aliquot in analyte.get("aliquots", []):
-                            aliquot_id = aliquot.get("aliquot_id")
-                            if aliquot_id and sample_id:
-                                aliquot_to_sample[aliquot_id] = sample_id
+
+        for i in range(0, len(aliquot_ids), batch_size):
+            batch = aliquot_ids[i : i + batch_size]
+            logger.info(
+                "Resolving aliquot→sample batch %d-%d / %d",
+                i, min(i + batch_size, len(aliquot_ids)), len(aliquot_ids),
+            )
+
+            cases = self._client._paginate(
+                "cases",
+                filters={
+                    "op": "in",
+                    "content": {
+                        "field": "aliquot_ids",
+                        "value": batch,
+                    }
+                },
+                expand=[
+                    "samples",
+                    "samples.portions",
+                    "samples.portions.analytes",
+                    "samples.portions.analytes.aliquots",
+                ],
+            )
+
+            for case in cases:
+                for sample in case.get("samples", []):
+                    sample_id = sample.get("sample_id")
+                    for portion in sample.get("portions", []):
+                        for analyte in portion.get("analytes", []):
+                            for aliquot in analyte.get("aliquots", []):
+                                aliquot_id = aliquot.get("aliquot_id")
+                                if aliquot_id and sample_id:
+                                    aliquot_to_sample[aliquot_id] = sample_id
+
+            # Rate-limit between batches
+            if i + batch_size < len(aliquot_ids):
+                time.sleep(1)
 
         return aliquot_to_sample
 

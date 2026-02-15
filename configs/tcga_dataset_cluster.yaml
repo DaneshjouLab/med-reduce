@@ -1,0 +1,52 @@
+# ── TCGA Dataset Config for SLURM Cluster ────────────
+# Data lives at /scratch/groups/roxanad/datasets/tcga
+# (bind-mounted as /tcga_data inside the container)
+#
+# Usage:
+#   sbatch jobs/build_tcga_dataset.sh
+#   # or manually:
+#   python -m src.cli.build_tcga_dataset --config configs/tcga_dataset_cluster.yaml
+
+# ── What to pull from GDC ──────────────────────────
+projects:
+  - TCGA-LUAD
+  - TCGA-LUSC
+  - TCGA-LGG
+  - TCGA-GBM
+
+data_dir: /tcga_data
+access: open
+
+# ── Metadata to include in slide table ─────────────
+etl:
+  include_demographics: true
+  include_diagnosis: true
+  include_maf: true
+
+# ── Download settings ──────────────────────────────
+download:
+  enabled: true
+  slides: true
+  maf: true
+  token_path: null
+  n_processes: 8             # bumped for cluster (8 CPUs allocated)
+  max_files: null
+
+# ── Slide processing (SVS → JPG thumbnails) ───────
+slides:
+  thumbnail_size: [512, 512]
+  n_workers: 8               # bumped for cluster (8 CPUs allocated)
+
+# ── Gene mutation matrix ──────────────────────────
+gene_matrix:
+  enabled: true
+  genes: ["KRAS","TP53","EGFR","IDH"]
+
+# ── Pipeline control ──────────────────────────────
+steps:
+  - etl
+  - manifest
+  - download
+  - process_slides
+  - gene_matrix
+  - assemble
