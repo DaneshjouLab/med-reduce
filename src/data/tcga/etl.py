@@ -71,8 +71,8 @@ class TCGASlideETL:
         Build flat table with one row per slide image file.
 
         Steps:
-        1. Query cases with hierarchy (samples/portions/slides)
-        2. Build hierarchy index (slide_id → parents)
+        1. Query cases with hierarchy (samples/portions/slides)[top down]
+        2. Build hierarchy index (slide_id → parents)[bottom up, asymettric parent depths]
         3. Query slide files
         4. Join files to hierarchy via associated_entities.entity_id
         5. Optionally add demographics, diagnosis, MAF at appropriate levels
@@ -88,7 +88,7 @@ class TCGASlideETL:
             DataFrame with one row per slide image file
         """
         all_rows = []
-
+        # TODO: please update to register new types of column filters relative to some expected fuzzy search across hiearchy.... example. I know i want details X_1,X_2,Xn and i know the parent that should have the details... supposedly, but i should allow a fuzzy search across entities and broadcast the informaiton to the level i envision. .. later challenge. 
         for project_id in project_ids:
             rows = self._process_project(
                 project_id, include_demographics, include_diagnosis, include_maf, access

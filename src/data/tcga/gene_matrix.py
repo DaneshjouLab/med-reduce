@@ -327,7 +327,7 @@ class GeneMatrix:
         # Merge
         result = slide_df.merge(gene_df, on="sample_id", how=how)
 
-        # Fill NaN with 0 for slides without MAF
+        # Fill NaN with 0 for slides without MAF.
         gene_cols = [c for c in gene_df.columns if c != "sample_id"]
         result[gene_cols] = result[gene_cols].fillna(0).astype(int)
 

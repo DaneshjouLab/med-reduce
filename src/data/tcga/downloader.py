@@ -103,7 +103,7 @@ class TCGADownloader:
 
         failed = []
         downloaded = 0
-
+        # TODO: this is erroneous and will work for threading, but not for slide processing as generally the slide tools control one FD at a time. 
         with ThreadPoolExecutor(max_workers=n_processes) as pool:
             futures = {
                 pool.submit(
@@ -215,8 +215,10 @@ class TCGADownloader:
     def _parse_manifest(self, manifest_path: Path) -> List[Tuple[str, str, str, int, str]]:
         """Parse manifest file into list of (id, filename, md5, size, state)."""
         entries = []
+        # TOOD: fix this record of maintenance.. weak and flimsy, especiaaly if corrupted and does not currently support multi access reads and writes, ie no locking or atomic writes
         with open(manifest_path) as f:
             next(f)  # skip header
+            # Construction is weak should outsource to an object.. not guaranteed to be consistently parsing and should split the logical operations into their own class .. ie i should plugin a schema for this stuff and scale. 
             for line in f:
                 line = line.strip()
                 if not line:

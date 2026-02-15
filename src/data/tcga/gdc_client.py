@@ -3,6 +3,8 @@ GDC API Wrapper for TCGA Data Management.
 
 Purpose: Query and manage TCGA data from the Genomic Data Commons (GDC).
 
+
+
 GDC Data Model (Biospecimen Hierarchy):
     Program (e.g., TCGA)
         └── Project (e.g., TCGA-BRCA)
@@ -1242,7 +1244,7 @@ class GDCClient:
             )
         """
         builder = GDCFilterBuilder()
-
+        # For constructing the api call.. honestly should be in it's own class... the ops are pretty consistent. 
         if project_id:
             builder.add("project.project_id", project_id)
         if case_ids:
@@ -1280,6 +1282,7 @@ class GDCClient:
     def get_case(self, case_id: str, fields: Optional[List[str]] = None) -> Optional[GDCCase]:
         """Get a specific case by UUID."""
         cases = self.get_cases(case_ids=[case_id], fields=fields)
+        # TODO: THIS MAKES A HUGE ASSUMPTION>> SO FAR IT WORKS,BUT ACCESSING NUMBER ONE CASE CAN BE DANGEROUS 
         return cases[0] if cases else None
 
     def get_case_by_submitter_id(
@@ -1327,7 +1330,7 @@ class GDCClient:
             List of GDCFile objects
         """
         builder = GDCFilterBuilder()
-
+        # TODO: once again redundant building of api request package. this should be refactored.
         if project_id:
             builder.add("cases.project.project_id", project_id)
         if case_id:
@@ -1404,10 +1407,12 @@ class GDCClient:
     def get_biospecimen_files(
         self,
         project_id: str,
-        access: Literal["open", "controlled"] = "open",
+        access: Literal["open", "controlled"] = "open", 
         max_results: Optional[int] = None,
     ) -> List[GDCFile]:
-        """Get biospecimen supplement files for a project."""
+        """Get biospecimen supplement files for a project.
+        
+        """
         return self.get_files(
             project_id=project_id,
             data_category="Biospecimen",
@@ -1441,7 +1446,7 @@ class GDCClient:
             List of GDCAnnotation objects
         """
         builder = GDCFilterBuilder()
-
+        # TODO: im sorry but the builder should be much cleaner.. api request building should be not a bunch of if statments.. or atleast hide it in the builder, pass in the details and let it handle the, build... albeit for alpha build this is fine for error checking. 
         if project_id:
             builder.add("project.project_id", project_id)
         if case_id:
@@ -1647,7 +1652,7 @@ class GDCClient:
 # =============================================================================
 # Test Suite
 # =============================================================================
-
+#TODO: move to dedicated testing
 def run_tests():
     """
     Comprehensive test suite for GDC API Client.
