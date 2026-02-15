@@ -13,7 +13,7 @@ from PIL import Image
 from transformers import (
     ViTForImageClassification,
     AutoModelForImageClassification,
-    ViTFeatureExtractor,
+    ViTImageProcessor,
     AutoImageProcessor,
 )
 
@@ -103,13 +103,13 @@ def create_preprocessor(model_info: Dict[str, Any], resolution: int = 224):
         resolution: Input image resolution
 
     Returns:
-        HF preprocessor (FeatureExtractor/ImageProcessor) or None (for timm)
+        HF preprocessor (ImageProcessor) or None (for timm)
     """
     model_type = model_info["type"]
     model_id = model_info["model_id"]
 
     if model_type == "vit":
-        return ViTFeatureExtractor.from_pretrained(
+        return ViTImageProcessor.from_pretrained(
             model_id,
             size=resolution,
             do_resize=True,

@@ -9,11 +9,12 @@ Split management for consistent train/val/test splits across experiments.
 Directory structure:
   splits/
     {dataset_name}/
-      train_indices.npy
-      val_indices.npy    
-      test_indices.npy
-      cv_folds.json      (5-fold CV indices for hyperparameter tuning)
-      metadata.json
+      seed_{seed}/
+        train_indices.npy
+        val_indices.npy
+        test_indices.npy
+        cv_folds.json      (5-fold CV indices for hyperparameter tuning)
+        metadata.json
 """
 from __future__ import annotations
 import os
@@ -50,7 +51,7 @@ class SplitManager:
         self.dataset_name = dataset_name
         self.seed = seed
 
-        self.dataset_dir = self.split_dir / dataset_name
+        self.dataset_dir = self.split_dir / dataset_name / f"seed_{seed}"
         self.dataset_dir.mkdir(parents=True, exist_ok=True)
 
     def _get_split_path(self, split: str) -> Path:

@@ -1,65 +1,65 @@
-# Two-Stage Linear Probing Configuration - ViT
+# Two-Stage Linear Probing Configuration - Pathology Domain
 #
 # Pipeline:
 # (A) Data loading & split definition - consistent splits across all experiments
 # (B) Image preprocessing - clean images at target resolution
-# (C) Frozen ViT encoder - extract and cache embeddings
+# (C) Frozen DINOv3 encoder - extract and cache embeddings
 # (D) Linear Probing - two-stage process
 #     D1: Hyperparameter tuning at full resolution R* (5-fold CV)
 #     D2: Final training at each resolution R with fixed hyperparameters
 
 # Runtime configuration
 runtime:
-  run_dir: /scratch/groups/roxanad/users/sonnet/compressed_perception/runs/probe_two_stage_vit
+  run_dir: /scratch/users/bikia/reduced-perception-path-results/runs/probe_two_stage
 
-domain: "dermatology"  # Options (eventually): dermatology, radiology, pathology
+domain: "pathology"
 
 # Split configuration
-split_dir: /scratch/groups/roxanad/users/sonnet/compressed_perception/splits
+split_dir: /scratch/users/bikia/reduced-perception-path-results/splits
 
 # Embedding cache configuration
-embedding_cache_dir: /scratch/groups/roxanad/users/sonnet/compressed_perception/cache/embeddings
+embedding_cache_dir: /scratch/users/bikia/reduced-perception-path-results/cache/embeddings
 
 datamodule:
   _target_: src.data.tabular_datamodule_persistent.TabularDataModulePersistent
   dataset_name: null  # Set to null for local data
-  data_dir: /scratch/groups/roxanad/datasets/isic/challenges/2017/merged_isic_2017_data/images
+  data_dir: /path/to/pathology/dataset/images
   num_workers: 8
   pin_memory: true
   persistent_workers: false
   prefetch_factor: 2
-  split_dir: /scratch/groups/roxanad/users/sonnet/compressed_perception/splits
+  split_dir: /scratch/users/bikia/reduced-perception-path-results/splits
   use_val_split: false  # Use train/test splits, create val from train
   train_ratio: 0.8
 
   # Local dataset configuration
-  local_label_file: /scratch/groups/roxanad/datasets/isic/challenges/2017/merged_isic_2017_data/merged_ground_truth_part3.csv
+  local_label_file: /path/to/pathology/dataset/labels.csv
   local_image_id_column: image_id
-  local_label_column:
-    - melanoma
-    - seborrheic_keratosis
+  local_label_column: ["class_0", "class_1"]  # Update with actual pathology class names
   local_image_extension: .jpg
 
-  filtered_classes: null  # Not used when balance_data is false
+  # Dataset filtering
+  filtered_classes: null
   balance_data: false
   num_train_images: 10000
 
   force_recompute_embeddings: true
 
 data:
-  image_size: 512
+  image_size: 512  # Resolution R for this experiment
   batch_size: 256
 
 model:
-  name: "vit"
-  model_id: "google/vit-base-patch16-224"  # Options: google/vit-base-patch16-384, google/vit-large-patch16-224
-  type: "vit"
+  name: "dinov3"
+  model_id: "facebook/dinov3-vits16-pretrain-lvd1689m"
+  type: "dinov3"
   config:
-    num_labels: 3
-    ignore_mismatched_sizes: true
+    num_labels: 2  # Update based on pathology task
+    hidden_size: 384
+    dropout_rate: 0.1
 
 train:
-  epochs: 100
+  epochs: 200
   seed: 42
   k_folds: 5
   mixed_precision: true
@@ -79,7 +79,7 @@ train:
     min_lr: 1e-6
 
   hyperparam_search:
-    enabled: true  # Set to true for hyperparameter tuning at highest resolution
+    enabled: true
     use_cv: true
 
     # Grid search parameters
@@ -88,7 +88,7 @@ train:
       weight_decay: [0, 1e-4, 1e-3]
       batch_size: [32, 64]
 
-    load_from_file: "/scratch/groups/roxanad/users/sonnet/compressed_perception/runs/probe_two_stage_vit/hyperparam_search/best_hyperparameters.json"
+    load_from_file: "/scratch/users/bikia/reduced-perception-path-results/runs/probe_two_stage/hyperparam_search/best_hyperparameters.json"
 
 loss:
   label_smoothing: 0.0
@@ -97,6 +97,6 @@ loss:
 
 logging:
   project: "reduced-perception"
-  run_name: "vit_isic_512px"
+  run_name: "dinov3_path_512px"
   wandb_enabled: true
   save_checkpoints: true

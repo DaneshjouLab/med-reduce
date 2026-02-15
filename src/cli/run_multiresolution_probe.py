@@ -9,13 +9,18 @@ from omegaconf import OmegaConf
 
 
 # Model configurations
-MODELS = ["vit", "dinov3"]
+MODELS = ["vit", "dinov2", "dinov3"]
 MODEL_CONFIGS = {
     "vit": {
         "model.name": "vit",
         "model.model_id": "google/vit-base-patch16-224",
         "model.type": "vit",
         "+model.dtype": "bfloat16"
+    },
+    "dinov2": {
+        "model.name": "dinov2",
+        "model.model_id": "facebook/dinov2-small",
+        "model.type": "dinov2",
     },
     "dinov3": {
         "model.name": "dinov3",
@@ -30,13 +35,22 @@ DOMAIN_CONFIG = {
         "highest_resolution": 512,
         "default_resolutions": [512, 256, 128, 64],
     },
+    "radiology": {
+        "highest_resolution": 512,
+        "default_resolutions": [512, 256, 128, 64],
+    },
+    "pathology": {
+        "highest_resolution": 512,
+        "default_resolutions": [512, 256, 128, 64],
+    },
 }
 
 
 def run_hyperparameter_tuning(
     domain: str,
     model_key: str = "dinov3",
-    config_path: str = "configs/probe_two_stage.yaml"
+    config_path: str = "configs/probe_two_stage.yaml",
+    seed: int = 42,
 ):
     """
     Run hyperparameter tuning at the highest resolution for a domain.
@@ -45,6 +59,7 @@ def run_hyperparameter_tuning(
         domain: Domain name (dermatology, radiology, pathology)
         model_key: Model to use (vit, dinov3)
         config_path: Path to config file
+        seed: Random seed for reproducibility
     """
     if domain not in DOMAIN_CONFIG:
         raise ValueError(f"Unknown domain: {domain}. Choose from {list(DOMAIN_CONFIG.keys())}")
@@ -58,7 +73,7 @@ def run_hyperparameter_tuning(
     data_dir = domain_cfg.get("data_dir")
 
     print(f"\n{'='*80}")
-    print(f"HYPERPARAMETER TUNING: {domain.upper()} at {highest_res}px with {model_key.upper()}")
+    print(f"HYPERPARAMETER TUNING: {domain.upper()} at {highest_res}px with {model_key.upper()} (seed={seed})")
     print(f"{'='*80}\n")
 
     # Build command with model overrides
@@ -68,7 +83,8 @@ def run_hyperparameter_tuning(
         f"domain={domain}",
         f"data.image_size={highest_res}",
         "train.hyperparam_search.enabled=true",
-        f"logging.run_name={model_key}_{domain}_{highest_res}px_R*search",
+        f"train.seed={seed}",
+        f"logging.run_name={model_key}_{domain}_{highest_res}px_seed{seed}_R*search",
     ]
 
     if dataset is not None:
@@ -85,10 +101,10 @@ def run_hyperparameter_tuning(
     result = subprocess.run(cmd, check=False)
 
     if result.returncode != 0:
-        print(f"\n❌ Hyperparameter tuning failed for {domain} with {model_key}")
+        print(f"\n❌ Hyperparameter tuning failed for {domain} with {model_key} (seed={seed})")
         sys.exit(1)
 
-    print(f"\n✅ Hyperparameter tuning completed for {domain} with {model_key}")
+    print(f"\n✅ Hyperparameter tuning completed for {domain} with {model_key} (seed={seed})")
 
 
 def run_final_probing(
@@ -97,6 +113,7 @@ def run_final_probing(
     model_key: str = "dinov3",
     config_path: str = "configs/probe_two_stage.yaml",
     hyperparam_file: str = None,
+    seed: int = 42,
 ):
     """
     Run final linear probing at multiple resolutions with tuned hyperparameters.
@@ -107,6 +124,7 @@ def run_final_probing(
         model_key: Model to use (vit, dinov3)
         config_path: Path to config file
         hyperparam_file: Path to hyperparameter file (if None, uses default location)
+        seed: Random seed for reproducibility
     """
     if domain not in DOMAIN_CONFIG:
         raise ValueError(f"Unknown domain: {domain}")
@@ -127,7 +145,7 @@ def run_final_probing(
 
         if not final_config_path.endswith(".yaml"):
             final_config_path = f"{final_config_path}.yaml"
-        
+
         resolved_config_path = project_root / final_config_path
         config = OmegaConf.load(resolved_config_path)
 
@@ -135,7 +153,8 @@ def run_final_probing(
         hyperparam_file = config.train.hyperparam_search.get('load_from_file')
         if not hyperparam_file:
             run_dir = config.runtime.get('run_dir', './runs/probe_two_stage')
-            hyperparam_file = f"{run_dir}/hyperparam_search/best_hyperparameters.json"
+            # Use seed in the path to hyperparam file
+            hyperparam_file = f"{run_dir}/seed_{seed}/hyperparam_search/best_hyperparameters.json"
 
         # Resolve hyperparam_file relative to project root
         hyperparam_file = str((project_root / hyperparam_file).resolve())
@@ -147,7 +166,7 @@ def run_final_probing(
         sys.exit(1)
 
     print(f"\n{'='*80}")
-    print(f"FINAL PROBING: {domain.upper()} at resolutions {resolutions} with {model_key.upper()}")
+    print(f"FINAL PROBING: {domain.upper()} at resolutions {resolutions} with {model_key.upper()} (seed={seed})")
     print(f"Using hyperparameters from: {hyperparam_file}")
     print(f"{'='*80}\n")
 
@@ -155,7 +174,7 @@ def run_final_probing(
 
     for resolution in resolutions:
         print(f"\n{'-'*80}")
-        print(f"Training at {resolution}px with {model_key}")
+        print(f"Training at {resolution}px with {model_key} (seed={seed})")
         print(f"{'-'*80}\n")
 
         # Build command
@@ -166,7 +185,8 @@ def run_final_probing(
             f"data.image_size={resolution}",
             "train.hyperparam_search.enabled=false",
             f"++train.hyperparam_search.load_from_file={hyperparam_file}",
-            f"logging.run_name={model_key}_{domain}_{resolution}px_eval",
+            f"train.seed={seed}",
+            f"logging.run_name={model_key}_{domain}_{resolution}px_seed{seed}_eval",
         ]
 
         if dataset is not None:
@@ -184,20 +204,20 @@ def run_final_probing(
         result = subprocess.run(cmd, check=False)
 
         if result.returncode != 0:
-            print(f"\n❌ Training failed at {resolution}px")
-            results.append((resolution, "FAILED"))
+            print(f"\n❌ Training failed at {resolution}px (seed={seed})")
+            results.append((resolution, seed, "FAILED"))
         else:
-            print(f"\n✅ Training completed at {resolution}px")
-            results.append((resolution, "SUCCESS"))
+            print(f"\n✅ Training completed at {resolution}px (seed={seed})")
+            results.append((resolution, seed, "SUCCESS"))
 
     # Summary
     print(f"\n{'='*80}")
-    print("SUMMARY")
+    print(f"SUMMARY (seed={seed})")
     print(f"{'='*80}\n")
 
-    for resolution, status in results:
+    for resolution, seed_val, status in results:
         status_icon = "✅" if status == "SUCCESS" else "❌"
-        print(f"{status_icon} {resolution}px: {status}")
+        print(f"{status_icon} {resolution}px (seed={seed_val}): {status}")
 
     print(f"\n{'='*80}\n")
 
@@ -252,25 +272,55 @@ def main():
         help="Path to hyperparameter file (default: auto-detect from tuning run)",
     )
 
+    parser.add_argument(
+        "--seeds",
+        type=int,
+        nargs="+",
+        default=[42],
+        help="Random seeds for bootstrap runs (e.g., --seeds 42 123 456)",
+    )
+
     args = parser.parse_args()
 
     # Validate arguments
     if not args.tune_hyperparams and not args.resolutions:
         parser.error("Must specify either --tune-hyperparams or --resolutions")
 
-    # Run hyperparameter tuning
-    if args.tune_hyperparams:
-        run_hyperparameter_tuning(args.domain, args.model, args.config)
+    first_seed = args.seeds[0]
+    hyperparam_file = args.hyperparam_file
 
-    # Run final probing
+    # Run hyperparameter tuning (only once with the first seed)
+    if args.tune_hyperparams:
+        run_hyperparameter_tuning(args.domain, args.model, args.config, seed=first_seed)
+
+        # Construct path to best_hyperparameters.json from first seed
+        if hyperparam_file is None:
+            project_root = Path(__file__).parent.parent.parent
+            final_config_path = args.config
+
+            if not final_config_path.startswith("configs/"):
+                final_config_path = f"configs/{final_config_path}"
+
+            if not final_config_path.endswith(".yaml"):
+                final_config_path = f"{final_config_path}.yaml"
+
+            resolved_config_path = project_root / final_config_path
+            config = OmegaConf.load(resolved_config_path)
+
+            run_dir = config.runtime.get('run_dir', './runs/probe_two_stage')
+            hyperparam_file = str((project_root / f"{run_dir}/seed_{first_seed}/hyperparam_search/best_hyperparameters.json").resolve())
+
+    # Run final probing for ALL seeds using shared hyperparams
     if args.resolutions:
-        run_final_probing(
-            args.domain,
-            args.resolutions,
-            args.model,
-            args.config,
-            args.hyperparam_file,
-        )
+        for seed in args.seeds:
+            run_final_probing(
+                args.domain,
+                args.resolutions,
+                args.model,
+                args.config,
+                hyperparam_file=hyperparam_file,
+                seed=seed,
+            )
 
 
 if __name__ == "__main__":

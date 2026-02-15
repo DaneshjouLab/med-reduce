@@ -13,11 +13,12 @@ The cache is organized as:
   cache_dir/
     {dataset_name}/
       {model_name}/
-        {resolution}px/
-          train_embeddings.pt
-          val_embeddings.pt  (optional)
-          test_embeddings.pt
-          metadata.json
+        seed_{seed}/
+          {resolution}px/
+            train_embeddings.pt
+            val_embeddings.pt  (optional)
+            test_embeddings.pt
+            metadata.json
 """
 from __future__ import annotations
 import os
@@ -42,6 +43,7 @@ class EmbeddingCache:
         cache_dir: str,
         dataset_name: str,
         model_name: str,
+        seed: int = 42,
         device: torch.device = None,
     ):
         """
@@ -49,14 +51,16 @@ class EmbeddingCache:
             cache_dir: Root directory for embedding cache
             dataset_name: Name of dataset (e.g., 'isic', 'chexpert')
             model_name: Name of model (e.g., 'dinov3-vits16')
+            seed: Random seed for reproducibility (used in path)
             device: Device to use for extraction
         """
         self.cache_dir = Path(cache_dir)
         self.dataset_name = dataset_name
         self.model_name = model_name
+        self.seed = seed
         self.device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-        self.dataset_dir = self.cache_dir / dataset_name / model_name
+        self.dataset_dir = self.cache_dir / dataset_name / model_name / f"seed_{seed}"
         self.dataset_dir.mkdir(parents=True, exist_ok=True)
 
     def _extract_embeddings_from_model(self, model: torch.nn.Module, images: torch.Tensor) -> torch.Tensor:
