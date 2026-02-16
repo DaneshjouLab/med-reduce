@@ -13,6 +13,7 @@ from __future__ import annotations
 from typing import Any, Dict
 
 import os
+import json
 import torch
 import torch.nn as nn
 import hydra
@@ -105,6 +106,9 @@ class DistillationWrapper:
 
         # Stage 2: Train student
         result = self._train_student(teacher_lookup)
+
+        # Save results JSON
+        self._save_results(result)
 
         log.info("=" * 60)
         log.info("DISTILLATION COMPLETE")
@@ -405,6 +409,83 @@ class DistillationWrapper:
         ckpt_path = os.path.join(self.run_dir, "distilled_student.pt")
         torch.save(checkpoint, ckpt_path)
         log.info(f"  Saved checkpoint to {ckpt_path}")
+
+    def _save_results(self, training_result: Dict[str, Any]):
+        """Save distillation results to JSON (mirrors LP baseline format).
+
+        If the results file already exists, creates a timestamped backup first.
+        """
+        from datetime import datetime
+
+        history = training_result.get("history", {})
+        best_val_loss = training_result.get("best_val_loss", None)
+
+        train_losses = history.get("train_loss", [])
+        val_losses = history.get("val_loss", [])
+        lrs = history.get("lr", [])
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+        results = {
+            "experiment_info": {
+                "pipeline": "distillation",
+                "domain": self.domain,
+                "dataset": self.dataset_name,
+                "seed": self.seed,
+                "teacher_model": self.teacher_info.get("name", "dinov3"),
+                "teacher_model_id": self.teacher_info.get("model_id", ""),
+                "student_model": self.student_info.get("name", "resnet18"),
+                "student_model_id": self.student_info.get("model_id", ""),
+                "teacher_resolution": self.teacher_resolution,
+                "timestamp": timestamp,
+            },
+            "distillation_metrics": {
+                "best_val_loss": best_val_loss,
+                "final_train_loss": train_losses[-1] if train_losses else None,
+                "final_val_loss": val_losses[-1] if val_losses else None,
+            },
+            "hyperparameters": {
+                "alpha": self.alpha,
+                "lr": float(self.cfg.train.optimizer.lr),
+                "weight_decay": float(self.cfg.train.optimizer.weight_decay),
+                "batch_size": int(self.cfg.data.batch_size),
+                "epochs": int(self.cfg.train.epochs),
+                "image_size": int(getattr(self.cfg.data, "image_size", 512)),
+                "mixed_precision": bool(getattr(self.cfg.train, "mixed_precision", True)),
+                "grad_clip": getattr(self.cfg.train, "grad_clip", None),
+            },
+            "training_history": {
+                "num_epochs": len(train_losses),
+                "train_loss": train_losses,
+                "val_loss": val_losses,
+                "lr": lrs,
+            },
+            "checkpoint": os.path.join(self.run_dir, "distilled_student.pt"),
+        }
+
+        student_name = self.student_info.get("name", "student")
+        results_path = os.path.join(self.run_dir, f"results_distillation_{student_name}.json")
+
+        if os.path.exists(results_path):
+            import shutil
+            backup_path = os.path.join(
+                self.run_dir,
+                f"results_distillation_{student_name}_backup_{timestamp}.json",
+            )
+            shutil.copy2(results_path, backup_path)
+            log.warning(f"Results file exists. Backed up to: {backup_path}")
+
+        with open(results_path, "w") as f:
+            json.dump(results, f, indent=2)
+
+        log.info(f"Results saved to: {os.path.abspath(results_path)}")
+
+        if self.wandb:
+            self.wandb.log({
+                "summary/best_val_loss": best_val_loss,
+                "summary/final_train_loss": train_losses[-1] if train_losses else None,
+                "summary/seed": self.seed,
+            })
 
     # ------------------------------------------------------------------
     # Dataloader helpers
