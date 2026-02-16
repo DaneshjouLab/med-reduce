@@ -33,7 +33,7 @@ datamodule:
   train_ratio: 0.8
 
   # Local dataset configuration
-  local_label_file: /scratch/groups/roxanad/datasets/chexpert/train_valid_combined.csv
+  local_label_file: /scratch/groups/roxanad/datasets/chexpert/explore_chexpert/train_valid_combined.csv
   local_image_id_column: image_id
   local_label_column: [
     "Enlarged Cardiomediastinum",

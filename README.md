@@ -46,12 +46,18 @@ pip install -e .
 
 **3. Run an experiment:**
 ```bash
+# Baseline LP (frozen DINOv3 encoder + linear probe)
 python -m src.cli.run_multiresolution_probe \
     --domain dermatology \
     --model dinov3 \
     --tune-hyperparams \
-    --resolutions 512 256 \
+    --resolutions 512 256 128 64 \
     --seeds 42 123 456
+
+# Distillation (train ResNet18 student to match DINOv3 embeddings)
+python -m src.cli.run_distillation \
+    --config-name=distillation_dermatology \
+    train.seed=42
 ```
 
 ---
@@ -71,6 +77,7 @@ reduced-perception/
 ├── configs/                              # Hydra configuration files
 │   ├── config_segmentation.yaml          # Segmentation task config
 │   ├── config_segmentation_vit.yaml      # Segmentation with ViT backbone
+│   ├── distillation_dermatology.yaml     # Distillation config for dermatology
 │   ├── probe_two_stage_dermatology.yaml  # Two-stage probing for dermatology
 │   ├── probe_two_stage_radiology.yaml    # Two-stage probing for radiology
 │   ├── probe_two_stage_pathology.yaml    # Two-stage probing for pathology
@@ -81,9 +88,11 @@ reduced-perception/
 │   └── load_checkpoint_example.py        # Example: loading a trained checkpoint
 │
 ├── jobs/                                 # Container / job execution scripts
+│   ├── distill_container.sh              # Pipeline B: distillation training
+│   ├── eval_distilled_container.sh       # Pipeline C: LP eval of distilled students
 │   ├── setup_container.sh                # One-time setup: creates venv, installs deps
 │   ├── slim_container.sh                 # Pulls lightweight Python container image
-│   └── train_container.sh                # Training entrypoint for containers / HPC
+│   └── train_container.sh                # Pipeline A: baseline LP training
 │
 ├── scripts/                              # One-off utilities and sanity checks
 │   ├── merge_isic2017.py                 # Dataset preparation / merging utility
@@ -93,6 +102,7 @@ reduced-perception/
 │   │
 │   ├── cli/                              # Command-line entry points (Hydra-driven)
 │   │   ├── cache_teacher_embeddings.py   # Precompute & cache teacher embeddings
+│   │   ├── run_distillation.py           # Distillation pipeline runner
 │   │   ├── run_experiments.py            # Batch experiment launcher
 │   │   ├── run_multiresolution_probe.py  # Sweep over input resolutions
 │   │   ├── run_probe_two_stage.py        # Two-stage probing runner
@@ -110,6 +120,7 @@ reduced-perception/
 │   │   └── isic_loader.py                # Raw ISIC image loading
 │   │
 │   ├── engines/                          # Training & evaluation engines
+│   │   ├── distillation_engine.py        # Distillation training loop
 │   │   ├── linear_probe_engine.py        # Linear probe on frozen features
 │   │   ├── linear_probe_embedding_engine.py
 │   │   │                                 # Linear probing on cached embeddings
@@ -125,7 +136,8 @@ reduced-perception/
 │   │
 │   ├── losses/                           # Loss functions
 │   │   ├── __init__.py
-│   │   └── classification.py             # Classification losses
+│   │   ├── classification.py             # Classification losses
+│   │   └── distillation.py              # Embedding distillation loss
 │   │
 │   ├── models/                           # Model definitions & factories
 │   │   ├── dinov3.py                     # DINOv3 backbone
@@ -139,6 +151,7 @@ reduced-perception/
 │   ├── utils/                            # General utilities (logging, helpers)
 │   │
 │   └── wrappers/                         # High-level experiment wrappers
+│       ├── distillation_wrapper.py       # Distillation pipeline orchestrator
 │       ├── probe_cv.py                   # Cross-validation probing
 │       ├── probe_two_stage.py            # Two-stage probing logic
 │       └── __init__.py
@@ -173,6 +186,218 @@ For containerized or HPC runs, see [Running on HPC](#running-on-hpc-sherlock).
 
 ---
 
+## Experiment Pipelines
+
+The framework supports three experimental pipelines. All pipelines use the same persistent train/test splits (managed by `SplitManager`) to ensure fair comparison. All experiments should be run across three seeds (42, 123, 456) for variance estimation.
+
+### Pipeline Overview
+
+```
+Pipeline A: Baseline LP
+  Frozen DINOv3 @ each resolution → cache embeddings → linear probe → AUROC
+
+Pipeline B: Distillation
+  Frozen DINOv3 @ 512px → cache embeddings → train student (ResNet18/TinyViT)
+  end-to-end on degraded images → save distilled_student.pt
+
+Pipeline C: LP with Distilled Student
+  Frozen distilled student @ each resolution → cache embeddings → linear probe → AUROC
+```
+
+---
+
+### Pipeline A: Baseline Linear Probing (DINOv3)
+
+Evaluates frozen DINOv3 embeddings at multiple resolutions via linear probing.
+
+**Step 1 — Hyperparameter tuning** (once per domain, first seed only):
+
+```bash
+# Dermatology
+python -m src.cli.run_multiresolution_probe \
+    --domain dermatology --model dinov3 \
+    --tune-hyperparams \
+    --resolutions 512 256 128 64 \
+    --seeds 42 123 456 \
+    --config configs/probe_two_stage_dermatology
+
+# Pathology (per task)
+for TASK in luad_vs_lusc lgg_vs_gbm kras tp53 egfr idh; do
+  python -m src.cli.run_multiresolution_probe \
+      --domain pathology --model dinov3 \
+      --tune-hyperparams \
+      --resolutions 512 256 128 64 \
+      --seeds 42 123 456 \
+      --config configs/probe_two_stage_pathology \
+      --extra-overrides "datamodule.task=${TASK}"
+done
+
+# Radiology
+python -m src.cli.run_multiresolution_probe \
+    --domain radiology --model dinov3 \
+    --tune-hyperparams \
+    --resolutions 512 256 128 64 \
+    --seeds 42 123 456 \
+    --config configs/probe_two_stage_radiology
+```
+
+This automatically:
+1. Runs 5-fold CV hyperparameter search at 512px with seed 42
+2. Runs final LP at all 4 resolutions for all 3 seeds using the tuned hyperparameters
+
+**Outputs:**
+```
+runs/probe_two_stage/
+  seed_42/
+    hyperparam_search/best_hyperparameters.json
+    results_dinov3_512px.json
+    results_dinov3_256px.json
+    results_dinov3_128px.json
+    results_dinov3_64px.json
+  seed_123/
+    results_dinov3_*.json
+  seed_456/
+    results_dinov3_*.json
+```
+
+---
+
+### Pipeline B: Distillation (Train Student Models)
+
+Trains a student model (ResNet18 or TinyViT) to match DINOv3 embeddings on clean 512px images, while the student receives degraded inputs.
+
+**Step 1 — Run distillation for each seed:**
+
+```bash
+# Dermatology — ResNet18 student
+for SEED in 42 123 456; do
+  python -m src.cli.run_distillation \
+      --config-name=distillation_dermatology \
+      train.seed=${SEED}
+done
+
+# Dermatology — TinyViT student (override student config)
+for SEED in 42 123 456; do
+  python -m src.cli.run_distillation \
+      --config-name=distillation_dermatology \
+      train.seed=${SEED} \
+      student.name=tiny_vit \
+      student.model_id=tiny_vit_21m_224
+done
+```
+
+For pathology, create `configs/distillation_pathology.yaml` (copy from dermatology, update `datamodule`, `domain`, `num_labels`) or override inline:
+
+```bash
+for TASK in luad_vs_lusc lgg_vs_gbm kras tp53 egfr idh; do
+  for SEED in 42 123 456; do
+    python -m src.cli.run_distillation \
+        --config-name=distillation_dermatology \
+        domain=pathology \
+        train.seed=${SEED} \
+        datamodule._target_=src.data.tcga_datamodule.TCGADataModule \
+        datamodule.task=${TASK} \
+        student.config.num_labels=2
+  done
+done
+```
+
+**What happens:**
+1. Teacher embeddings are cached at 512px (reused across seeds if same data)
+2. Student trains end-to-end on degraded images to match teacher embeddings
+3. Loss: `alpha * MSE + (1 - alpha) * (1 - cosine_similarity)`
+4. Best checkpoint saved to `runs/distillation/seed_{SEED}/distilled_student.pt`
+
+**Config options** (`configs/distillation_dermatology.yaml`):
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `distillation.alpha` | 0.5 | MSE vs cosine balance (1.0 = pure MSE, 0.0 = pure cosine) |
+| `distillation.teacher_resolution` | 512 | Resolution for teacher embedding extraction |
+| `student.model_id` | resnet18 | timm model ID for the student |
+| `train.epochs` | 100 | Distillation training epochs |
+| `train.optimizer.lr` | 1e-4 | Learning rate |
+
+**Outputs:**
+```
+runs/distillation/
+  seed_42/
+    distilled_student.pt    # checkpoint with student_state_dict + metadata
+  seed_123/
+    distilled_student.pt
+  seed_456/
+    distilled_student.pt
+
+cache/teacher_embeddings/
+  {hash}/
+    embeddings.pt, labels.pt, image_ids.json, metadata.json
+```
+
+---
+
+### Pipeline C: LP Evaluation of Distilled Students
+
+After distillation, freeze the student backbone and evaluate it through the same LP pipeline as Pipeline A. This allows direct AUROC comparison between DINOv3 baseline and distilled students at each resolution.
+
+**Step 1 — Run LP with the distilled student at all resolutions:**
+
+```bash
+# Use the existing two-stage probe pipeline with the distilled student model
+for SEED in 42 123 456; do
+  python -m src.cli.run_multiresolution_probe \
+      --domain dermatology \
+      --model dinov3 \
+      --resolutions 512 256 128 64 \
+      --seeds ${SEED} \
+      --config configs/probe_two_stage_dermatology \
+      --extra-overrides \
+        "model.name=resnet18_distilled" \
+        "model.model_id=resnet18" \
+        "model.type=timm" \
+        "model.config.num_labels=3" \
+        "model.config.pretrained=false"
+done
+```
+
+> **Note:** To load the distilled weights (instead of random/ImageNet init), you will need to manually load the checkpoint from `runs/distillation/seed_{SEED}/distilled_student.pt` into the student model before embedding extraction. This can be done by extending `ProbeTwoStageWrapper` or writing a small script that loads the checkpoint and runs the LP pipeline.
+
+---
+
+### Split Consistency
+
+All three pipelines use the same `SplitManager` with the same `split_dir` and `seed`, ensuring:
+- Identical train/test splits across baseline LP, distillation, and distilled LP
+- Results are directly comparable within the same seed
+- Variance is estimated across seeds (42, 123, 456)
+
+**Directory structure:**
+```
+splits/
+  {dataset_name}/
+    seed_42/
+      train_indices.npy
+      test_indices.npy
+      cv_folds.json
+    seed_123/
+      ...
+    seed_456/
+      ...
+```
+
+---
+
+### Multi-Seed Bootstrap
+
+All experiments use three seeds. The pattern is consistent:
+
+- **Hyperparameter tuning** runs once with seed 42 (first seed)
+- **Final training/evaluation** runs for all seeds (42, 123, 456)
+- **Distillation** runs independently per seed (each seed gets its own student checkpoint)
+
+This isolates variance to train/test split differences (standard bootstrap approach).
+
+---
+
 ## Running on HPC (Sherlock)
 
 ### Prerequisites: HuggingFace Authentication
@@ -189,193 +414,90 @@ The DINOv3 model (`facebook/dinov3-vits16-pretrain-lvd1689m`) is a gated model t
 
 3. **Save the token in the project root** (on the cluster):
    ```bash
-   # In the project directory, create .huggingface/token
    cd /scratch/users/$USER/reduced-perception
    mkdir -p .huggingface
    echo "hf_your_token_here" > .huggingface/token
    chmod 600 .huggingface/token
    ```
 
-   The token file is git-ignored, so it won't be committed.
-
-   Or set it as an environment variable before submitting jobs:
+   Or set as an environment variable:
    ```bash
    export HF_TOKEN="hf_your_token_here"
    ```
 
-**Alternative: Use DINOv2 (no authentication required)**
-
-If you don't have access to DINOv3, you can use the public DINOv2 model:
-```bash
-python -m src.cli.run_multiresolution_probe \
-    --domain dermatology \
-    --model dinov2 \
-    ...
-```
-
----
-
-### Complete Pipeline (3 steps)
+### HPC Setup
 
 ```bash
 # Step 1: One-time setup (creates directories, venv, installs dependencies)
 sbatch jobs/setup_container.sh
-
-# Step 2: Monitor setup (wait for completion)
-tail -f logs/setup_env_*.out
-
-# Step 3: Run training with bootstrap seeds
-sbatch jobs/train_container.sh
+tail -f logs/setup_env_*.out  # wait for completion
 ```
 
-That's it! The pipeline will:
-1. Run hyperparameter tuning once (seed 42, highest resolution)
-2. Run final probing for all seeds (42, 123, 456) at all resolutions (512, 256, 128, 64)
+### Running All Three Pipelines on HPC
 
----
-
-### Detailed Setup Instructions
-
-#### 1. Setup environment (first time only)
+Each pipeline has a dedicated job script. Run them sequentially (B depends on nothing extra, C depends on B).
 
 ```bash
-# Create logs directory
-mkdir -p logs
+# ── Pipeline A: Baseline LP ──────────────────────────────────────────────────
+DOMAIN=dermatology sbatch jobs/train_container.sh
+DOMAIN=pathology   sbatch jobs/train_container.sh
+DOMAIN=radiology   sbatch jobs/train_container.sh
 
-# Submit setup job (creates venv, installs PyTorch + dependencies)
-sbatch jobs/setup_container.sh
+# ── Pipeline B: Distillation ─────────────────────────────────────────────────
+# (can run in parallel with Pipeline A)
+DOMAIN=dermatology sbatch jobs/distill_container.sh
+DOMAIN=pathology   sbatch jobs/distill_container.sh
+DOMAIN=radiology   sbatch jobs/distill_container.sh
 
-# Monitor progress
-tail -f logs/setup_env_*.out
+# TinyViT student (submit separately or after ResNet18 finishes)
+STUDENT=tiny_vit_21m_224 DOMAIN=dermatology sbatch jobs/distill_container.sh
+
+# ── Pipeline C: LP eval of distilled students ────────────────────────────────
+# (run AFTER Pipeline B completes for that domain/student)
+DOMAIN=dermatology sbatch jobs/eval_distilled_container.sh
+DOMAIN=pathology   sbatch jobs/eval_distilled_container.sh
+DOMAIN=radiology   sbatch jobs/eval_distilled_container.sh
+
+# TinyViT eval
+STUDENT=tiny_vit_21m_224 DOMAIN=dermatology sbatch jobs/eval_distilled_container.sh
 ```
 
-The setup script automatically:
-- Creates required directories (`pip_cache/`, `simg/`, `tmp/`, `huggingface/`, `torch/`)
-- Pulls the Python 3.10-slim container if missing
-- Creates `.venv` and installs PyTorch (CUDA 11.8)
-- Installs project from `pyproject.toml` (`pip install -e .`)
-- Verifies CUDA is working
+All job scripts accept the same environment variable overrides:
 
-#### 2. Run experiments
-
-```bash
-sbatch jobs/train_container.sh
-```
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `DOMAIN` | (required) | `dermatology`, `radiology`, or `pathology` |
+| `SEEDS` | `42 123 456` | Space-separated bootstrap seeds |
+| `RESOLUTIONS` | `512 256 128 64` | Space-separated resolutions (LP only) |
+| `STUDENT` | `resnet18` | timm model ID for student (distillation only) |
+| `TASKS` | all 6 TCGA tasks | Pathology tasks to run (pathology only) |
+| `ALPHA` | `0.5` | MSE vs cosine balance (distillation only) |
+| `EPOCHS` | `100` | Training epochs (distillation only) |
 
 Monitor progress:
 ```bash
-# Watch output
-tail -f logs/probe_3seeds_*.out
-
-# Check job status
+tail -f logs/distill_3seeds_*.out
+tail -f logs/eval_distilled_3seeds_*.out
 squeue -u $USER
 ```
 
----
-
-### Multi-Seed Bootstrap Support
-
-The pipeline supports running multiple bootstrap seeds to estimate variance in results. Each seed produces independent splits, embeddings, and results.
-
-**CLI Usage:**
-```bash
-# Single seed (default behavior)
-python -m src.cli.run_multiresolution_probe \
-    --domain dermatology \
-    --model dinov3 \
-    --tune-hyperparams \
-    --resolutions 512 256 128 64
-
-# Multiple bootstrap seeds (recommended for papers)
-python -m src.cli.run_multiresolution_probe \
-    --domain dermatology \
-    --model dinov3 \
-    --tune-hyperparams \
-    --resolutions 512 256 128 64 \
-    --seeds 42 123 456
-```
-
-**How it works:**
-- Hyperparameter tuning runs **once** with the first seed (e.g., 42)
-- Final probing runs for **all seeds** using shared hyperparameters
-- This isolates variance to train/test split differences (standard bootstrap approach)
-
-**Directory structure with seeds:**
-```
-splits/
-  {dataset_name}/
-    seed_42/
-      train_indices.npy
-      test_indices.npy
-      cv_folds.json
-    seed_123/
-      ...
-
-cache/embeddings/
-  {dataset_name}/
-    {model_name}/
-      seed_42/
-        512px/
-          train_embeddings.pt
-          test_embeddings.pt
-      seed_123/
-        ...
-
-runs/probe_two_stage/
-  seed_42/
-    hyperparam_search/
-      best_hyperparameters.json
-    results_dinov3_512px.json
-    results_dinov3_256px.json
-  seed_123/
-    results_dinov3_512px.json
-    ...
-```
-
----
-
-### Running All Domains
-
-```bash
-# Dermatology (ISIC 2017)
-python -m src.cli.run_multiresolution_probe \
-    --domain dermatology --model dinov3 \
-    --tune-hyperparams --resolutions 512 256 128 64 \
-    --seeds 42 123 456 \
-    --config configs/probe_two_stage_dermatology
-
-# Radiology (CheXpert)
-python -m src.cli.run_multiresolution_probe \
-    --domain radiology --model dinov3 \
-    --tune-hyperparams --resolutions 512 256 128 64 \
-    --seeds 42 123 456 \
-    --config configs/probe_two_stage_radiology
-
-# Pathology (TCGA)
-python -m src.cli.run_multiresolution_probe \
-    --domain pathology --model dinov3 \
-    --tune-hyperparams --resolutions 512 256 128 64 \
-    --seeds 42 123 456 \
-    --config configs/probe_two_stage_pathology
-```
-
----
-
 ### Training Budget
-
-Default job configuration (`jobs/train_container.sh`):
 
 | Resource | Value | Reason |
 |----------|-------|--------|
-| Time | 12 hours | ~6-8h estimated, with buffer |
+| Time | 12 hours | ~6-8h for LP baseline, with buffer |
 | Memory | 48 GB | Embedding caching + data loading |
 | CPUs | 8 | Matches `num_workers` in config |
 | GPUs | 1 | DINOv3-ViT-S fits on single GPU |
 
 **Workload breakdown (3 seeds, 4 resolutions):**
-1. **Hyperparameter tuning** (~3-4h): 18 configs × 5-fold CV × 100 epochs
-2. **Embedding extraction** (~2h): 3 seeds × 4 resolutions × 2 splits
-3. **Final linear probing** (~1-2h): 12 runs × 100 epochs
+
+| Pipeline | Estimate | Details |
+|----------|----------|---------|
+| Baseline LP (hyper-tuning) | ~3-4h | 18 configs x 5-fold CV x 100 epochs |
+| Baseline LP (final probing) | ~1-2h | 3 seeds x 4 resolutions x 200 epochs |
+| Distillation (per student) | ~4-6h | 3 seeds x 100 epochs end-to-end |
+| LP with distilled student | ~1-2h | 3 seeds x 4 resolutions x 200 epochs |
 
 ---
 
@@ -383,7 +505,6 @@ Default job configuration (`jobs/train_container.sh`):
 
 **Container not found:**
 ```bash
-# Pull the container manually
 ./jobs/slim_container.sh
 ```
 
@@ -394,7 +515,6 @@ mkdir -p /scratch/users/$USER/pip_cache
 
 **venv not found:**
 ```bash
-# Run the setup script
 sbatch jobs/setup_container.sh
 ```
 

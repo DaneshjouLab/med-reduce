@@ -6,6 +6,7 @@
 from typing import Dict, Any
 
 import os
+import torch
 import torch.nn as nn
 from PIL import Image
 
@@ -170,6 +171,81 @@ def freeze_backbone(model: nn.Module, model_type: str):
                 param.requires_grad = False
     else:
         raise ValueError(f"Unsupported model_type: {model_type}")
+
+
+def get_embedding_dim(model: nn.Module, model_type: str) -> int:
+    """
+    Return the embedding (pre-classifier) dimension for a model.
+
+    Args:
+        model: The model instance.
+        model_type: One of 'dinov3', 'vit', 'dinov2', 'timm'.
+
+    Returns:
+        Integer embedding dimension.
+    """
+    if model_type == "dinov3":
+        if hasattr(model, "config") and hasattr(model.config, "hidden_size"):
+            return model.config.hidden_size
+        return 384  # default for ViT-S/16
+
+    if model_type == "vit":
+        return model.config.hidden_size
+
+    if model_type == "dinov2":
+        return model.config.hidden_size
+
+    if model_type == "timm":
+        # timm models expose num_features
+        if hasattr(model, "num_features"):
+            return model.num_features
+        # fallback: probe with a dummy input
+        model.eval()
+        with torch.no_grad():
+            dummy = torch.zeros(1, 3, 224, 224, device=next(model.parameters()).device)
+            feats = model.forward_features(dummy)
+            if feats.dim() == 3:
+                return feats.shape[-1]
+            return feats.shape[1]
+
+    raise ValueError(f"Unknown model_type: {model_type}")
+
+
+def extract_embeddings(model: nn.Module, pixel_values: torch.Tensor, model_type: str) -> torch.Tensor:
+    """
+    Extract pre-classifier embeddings from any supported model type.
+
+    Args:
+        model: The model instance.
+        pixel_values: Input tensor [B, C, H, W].
+        model_type: One of 'dinov3', 'vit', 'dinov2', 'timm'.
+
+    Returns:
+        Embedding tensor [B, D].
+    """
+    if model_type == "dinov3":
+        if hasattr(model, "backbone"):
+            outputs = model.backbone(pixel_values=pixel_values)
+            return outputs.pooler_output
+        outputs = model(pixel_values=pixel_values, output_hidden_states=True)
+        return outputs.hidden_states[-1][:, 0]
+
+    if model_type == "vit":
+        outputs = model.vit(pixel_values=pixel_values)
+        return outputs.last_hidden_state[:, 0]
+
+    if model_type == "dinov2":
+        outputs = model.dinov2(pixel_values=pixel_values)
+        return outputs.last_hidden_state[:, 0]
+
+    if model_type == "timm":
+        feats = model.forward_features(pixel_values)
+        if feats.dim() == 3:
+            # Transformer-style: [B, tokens, D] → use CLS or global avg pool
+            return feats[:, 0] if feats.shape[1] > 1 else feats.squeeze(1)
+        return feats  # CNN-style: [B, D] already
+
+    raise ValueError(f"Unknown model_type: {model_type}")
 
 
 def save_model(model: nn.Module, model_info: Dict[str, Any], save_dir: str, preprocessor=None):

@@ -35,8 +35,8 @@ runtime:
 datamodule:
   _target_: src.data.tcga_datamodule.TCGADataModule
   task: luad_vs_lusc
-  dataset_csv: data/tcga/tables/dataset.csv
-  data_dir: data/tcga/thumbnails
+  dataset_csv: /scratch/groups/roxanad/datasets/tcga/tables/dataset.csv
+  data_dir: /scratch/groups/roxanad/datasets/tcga/thumbnails
   split_dir: /scratch/users/bikia/reduced-perception-path-results/splits
   use_val_split: false
   train_ratio: 0.8
