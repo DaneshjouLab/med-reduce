@@ -58,19 +58,22 @@ SEEDS="${SEEDS:-42 123 456}"
 # Pathology-specific: TCGA tasks (ignored for other domains)
 TASKS="${TASKS:-luad_vs_lusc lgg_vs_gbm kras tp53 egfr idh}"
 
-# Number of classes per domain
+# Number of classes and distillation checkpoint directory per domain
 case "$DOMAIN" in
     dermatology)
         CONFIG="probe_two_stage_dermatology"
         NUM_LABELS=3
+        DISTILL_DIR="${DISTILL_DIR:-./runs/distillation}"
         ;;
     radiology)
         CONFIG="probe_two_stage_radiology"
-        NUM_LABELS=2
+        NUM_LABELS=13
+        DISTILL_DIR="${DISTILL_DIR:-/scratch/users/$USER/reduced-perception-rad-results/runs/distillation}"
         ;;
     pathology)
         CONFIG="probe_two_stage_pathology"
         NUM_LABELS=2
+        DISTILL_DIR="${DISTILL_DIR:-/scratch/users/$USER/reduced-perception-path-results/runs/distillation}"
         ;;
     *)
         echo "ERROR: Unknown domain '$DOMAIN'. Must be one of: dermatology, radiology, pathology"
@@ -190,17 +193,44 @@ fi
     # ==========================================================================
     echo 'INFO: Starting LP evaluation of distilled student...'
     echo \"INFO: Domain: $DOMAIN | Student: $STUDENT_NAME\"
+    echo \"INFO: Distill dir: $DISTILL_DIR\"
     echo \"INFO: Start time: \$(date '+%Y-%m-%d %H:%M:%S')\"
     export HYDRA_FULL_ERROR=1
 
-    # Model overrides to swap DINOv3 for the distilled student
-    MODEL_OVERRIDES=\"model.name=$STUDENT_NAME model.model_id=$STUDENT model.type=timm model.config.num_labels=$NUM_LABELS model.config.pretrained=false\"
-
+    # Loop over seeds individually so each gets its own checkpoint path
     if [ \"$DOMAIN\" = 'pathology' ]; then
         for TASK in $TASKS; do
+            for SEED in $SEEDS; do
+                CKPT=\"$DISTILL_DIR/seed_\${SEED}/distilled_student.pt\"
+                echo ''
+                echo '============================================================'
+                echo \"INFO: LP eval — task=\$TASK  seed=\$SEED  ckpt=\$CKPT\"
+                echo '============================================================'
+
+                python -m src.cli.run_multiresolution_probe \
+                    --domain $DOMAIN \
+                    --model dinov3 \
+                    --config $CONFIG \
+                    --resolutions $RESOLUTIONS \
+                    --seeds \$SEED \
+                    --extra-overrides \
+                        datamodule.task=\$TASK \
+                        model.name=$STUDENT_NAME \
+                        model.model_id=$STUDENT \
+                        model.type=timm \
+                        model.config.num_labels=$NUM_LABELS \
+                        model.config.pretrained=false \
+                        model.config.checkpoint=\$CKPT
+
+                echo \"INFO: Finished task=\$TASK seed=\$SEED\"
+            done
+        done
+    else
+        for SEED in $SEEDS; do
+            CKPT=\"$DISTILL_DIR/seed_\${SEED}/distilled_student.pt\"
             echo ''
             echo '============================================================'
-            echo \"INFO: Evaluating distilled student on pathology task: \$TASK\"
+            echo \"INFO: LP eval — seed=\$SEED  ckpt=\$CKPT\"
             echo '============================================================'
 
             python -m src.cli.run_multiresolution_probe \
@@ -208,21 +238,17 @@ fi
                 --model dinov3 \
                 --config $CONFIG \
                 --resolutions $RESOLUTIONS \
-                --seeds $SEEDS \
+                --seeds \$SEED \
                 --extra-overrides \
-                    datamodule.task=\$TASK \
-                    \$MODEL_OVERRIDES
+                    model.name=$STUDENT_NAME \
+                    model.model_id=$STUDENT \
+                    model.type=timm \
+                    model.config.num_labels=$NUM_LABELS \
+                    model.config.pretrained=false \
+                    model.config.checkpoint=\$CKPT
 
-            echo \"INFO: Finished pathology task: \$TASK\"
+            echo \"INFO: Finished seed=\$SEED\"
         done
-    else
-        python -m src.cli.run_multiresolution_probe \
-            --domain $DOMAIN \
-            --model dinov3 \
-            --config $CONFIG \
-            --resolutions $RESOLUTIONS \
-            --seeds $SEEDS \
-            --extra-overrides \$MODEL_OVERRIDES
     fi
 
     END_TIME=\$(date +%s)

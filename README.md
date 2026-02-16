@@ -342,10 +342,13 @@ cache/teacher_embeddings/
 
 After distillation, freeze the student backbone and evaluate it through the same LP pipeline as Pipeline A. This allows direct AUROC comparison between DINOv3 baseline and distilled students at each resolution.
 
+The LP pipeline supports a `model.config.checkpoint` override that loads distilled weights before embedding extraction. Pass the path to `distilled_student.pt` for each seed.
+
 **Step 1 — Run LP with the distilled student at all resolutions:**
 
 ```bash
-# Use the existing two-stage probe pipeline with the distilled student model
+# Dermatology — ResNet18 distilled
+DISTILL_DIR=./runs/distillation  # or /scratch/users/$USER/...-results/runs/distillation
 for SEED in 42 123 456; do
   python -m src.cli.run_multiresolution_probe \
       --domain dermatology \
@@ -358,11 +361,49 @@ for SEED in 42 123 456; do
         "model.model_id=resnet18" \
         "model.type=timm" \
         "model.config.num_labels=3" \
-        "model.config.pretrained=false"
+        "model.config.pretrained=false" \
+        "model.config.checkpoint=${DISTILL_DIR}/seed_${SEED}/distilled_student.pt"
+done
+
+# Radiology — ResNet18 distilled
+DISTILL_DIR=/scratch/users/$USER/reduced-perception-rad-results/runs/distillation
+for SEED in 42 123 456; do
+  python -m src.cli.run_multiresolution_probe \
+      --domain radiology \
+      --model dinov3 \
+      --resolutions 512 256 128 64 \
+      --seeds ${SEED} \
+      --config configs/probe_two_stage_radiology \
+      --extra-overrides \
+        "model.name=resnet18_distilled" \
+        "model.model_id=resnet18" \
+        "model.type=timm" \
+        "model.config.num_labels=13" \
+        "model.config.pretrained=false" \
+        "model.config.checkpoint=${DISTILL_DIR}/seed_${SEED}/distilled_student.pt"
+done
+
+# Pathology — ResNet18 distilled (per task)
+DISTILL_DIR=/scratch/users/$USER/reduced-perception-path-results/runs/distillation
+for TASK in luad_vs_lusc lgg_vs_gbm kras tp53 egfr idh; do
+  for SEED in 42 123 456; do
+    python -m src.cli.run_multiresolution_probe \
+        --domain pathology \
+        --model dinov3 \
+        --resolutions 512 256 128 64 \
+        --seeds ${SEED} \
+        --config configs/probe_two_stage_pathology \
+        --extra-overrides \
+          "datamodule.task=${TASK}" \
+          "model.name=resnet18_distilled" \
+          "model.model_id=resnet18" \
+          "model.type=timm" \
+          "model.config.num_labels=2" \
+          "model.config.pretrained=false" \
+          "model.config.checkpoint=${DISTILL_DIR}/seed_${SEED}/distilled_student.pt"
+  done
 done
 ```
-
-> **Note:** To load the distilled weights (instead of random/ImageNet init), you will need to manually load the checkpoint from `runs/distillation/seed_{SEED}/distilled_student.pt` into the student model before embedding extraction. This can be done by extending `ProbeTwoStageWrapper` or writing a small script that loads the checkpoint and runs the LP pipeline.
 
 ---
 

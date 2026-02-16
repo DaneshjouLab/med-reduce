@@ -350,6 +350,18 @@ class ProbeTwoStageWrapper:
         log.info(f"{'='*60}\n")
 
         model = create_model(self.model_info, resolution=resolution)
+
+        # Load distilled checkpoint if configured (Pipeline C)
+        checkpoint_path = self._cfg_get(
+            self.model_info.get("config", {}), "checkpoint", None
+        )
+        if checkpoint_path and os.path.exists(str(checkpoint_path)):
+            log.info(f"Loading distilled checkpoint: {checkpoint_path}")
+            ckpt = torch.load(str(checkpoint_path), map_location="cpu", weights_only=False)
+            state_dict = ckpt.get("student_state_dict", ckpt)
+            model.load_state_dict(state_dict, strict=False)
+            log.info(f"  Loaded {len(state_dict)} parameter tensors")
+
         model = model.to(self.device)
         model.eval()
 
