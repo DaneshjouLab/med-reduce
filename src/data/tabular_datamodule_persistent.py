@@ -225,6 +225,21 @@ class TabularDataModulePersistent(BaseDataModule):
             return int(self.full_cfg.data.image_size)
         return self._fallback_image_size
 
+    @property
+    def native_resolution(self) -> Optional[int]:
+        """Read native_resolution from cfg.data.native_resolution.
+
+        When set, images are downsampled to image_size then upsampled back to
+        native_resolution before being fed to the encoder. This simulates the
+        same downsample-upsample degradation used by the distillation pipeline.
+
+        Returns:
+            native_resolution from config, or None (no upsample step).
+        """
+        if self.full_cfg and hasattr(self.full_cfg, 'data') and hasattr(self.full_cfg.data, 'native_resolution'):
+            return int(self.full_cfg.data.native_resolution)
+        return None
+
     def setup(self, _stage: Optional[str] = None):
         """Initialize datasets with persistent splits."""
         log.info(f"\n{'='*60}")
@@ -237,12 +252,18 @@ class TabularDataModulePersistent(BaseDataModule):
             if self.num_train_images:
                 log.info(f"  Num train images: {self.num_train_images}")
         log.info(f"  Image size: {self.image_size}")
+        if self.native_resolution and self.native_resolution != self.image_size:
+            log.info(f"  Native resolution: {self.native_resolution} (downsample→upsample degradation)")
         if self.force_recompute_embeddings:
             log.info(f"  Force recompute: {self.force_recompute_embeddings} (will regenerate splits & embeddings)")
         log.info(f"{'='*60}\n")
 
+        resize_steps = [transforms.Resize((self.image_size, self.image_size))]
+        if self.native_resolution and self.native_resolution != self.image_size:
+            resize_steps.append(transforms.Resize((self.native_resolution, self.native_resolution)))
+
         val_test_transform = transforms.Compose([
-            transforms.Resize((self.image_size, self.image_size)),
+            *resize_steps,
             transforms.ToTensor(),
             transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                std=[0.229, 0.224, 0.225])
@@ -250,7 +271,7 @@ class TabularDataModulePersistent(BaseDataModule):
 
         if self.transform is not None:
             train_transform = transforms.Compose([
-                transforms.Resize((self.image_size, self.image_size)),
+                *resize_steps,
                 self.transform,
                 transforms.ToTensor(),
                 transforms.Normalize(mean=[0.485, 0.456, 0.406],

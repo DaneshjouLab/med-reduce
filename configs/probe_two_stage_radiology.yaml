@@ -60,7 +60,8 @@ datamodule:
   force_recompute_embeddings: true
 
 data:
-  image_size: 512  # Resolution R for this experiment
+  image_size: 512  # Resolution R for this experiment (degradation level)
+  native_resolution: 512  # Model input always this size; image_size controls degradation
   batch_size: 256
 
 model:

@@ -206,6 +206,21 @@ class TCGADataModule(BaseDataModule):
             return int(self.full_cfg.data.image_size)
         return self._fallback_resolution
 
+    @property
+    def native_resolution(self) -> int | None:
+        """Read native_resolution from cfg.data.native_resolution.
+
+        When set, images are downsampled to image_size then upsampled back to
+        native_resolution before being fed to the encoder.
+        """
+        if (
+            self.full_cfg
+            and hasattr(self.full_cfg, "data")
+            and hasattr(self.full_cfg.data, "native_resolution")
+        ):
+            return int(self.full_cfg.data.native_resolution)
+        return None
+
     # -----------------------------------------------------------------------
     # Stratification helper
     # -----------------------------------------------------------------------
@@ -225,12 +240,18 @@ class TCGADataModule(BaseDataModule):
         log.info(f"  Task: {self.task}")
         log.info(f"  Dataset size: {len(self.df)}")
         log.info(f"  Image size: {self.image_size}")
+        if self.native_resolution and self.native_resolution != self.image_size:
+            log.info(f"  Native resolution: {self.native_resolution} (downsample→upsample degradation)")
         log.info(f"  Split dir: {self.split_manager.dataset_dir}")
         log.info(f"{'='*60}\n")
 
         # --- Transforms -----------------------------------------------------
+        resize_steps = [transforms.Resize((self.image_size, self.image_size))]
+        if self.native_resolution and self.native_resolution != self.image_size:
+            resize_steps.append(transforms.Resize((self.native_resolution, self.native_resolution)))
+
         base_transform = transforms.Compose([
-            transforms.Resize((self.image_size, self.image_size)),
+            *resize_steps,
             transforms.ToTensor(),
             transforms.Normalize(
                 mean=[0.485, 0.456, 0.406],
