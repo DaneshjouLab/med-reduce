@@ -117,7 +117,12 @@ class DistillationWrapper:
     # ------------------------------------------------------------------
 
     def _cache_and_load_teacher_embeddings(self) -> TeacherEmbeddingLookup:
-        """Cache teacher embeddings at full resolution, then build lookup table."""
+        """Cache teacher embeddings for the full dataset (seed-independent), then build lookup.
+
+        Embeddings are cached once for ALL images in the dataset (split="full"),
+        so the cache is reused across seeds. Each seed's train/val split is a
+        subset of the cached image_ids — the lookup handles the filtering.
+        """
         log.info("\n--- Stage 1: Teacher Embedding Caching ---")
 
         cache = TeacherEmbeddingCache(
@@ -127,38 +132,21 @@ class DistillationWrapper:
             device=self.device,
         )
 
-        # Build a clean-image dataloader from the datamodule's full dataset
-        # using only the train split indices (same splits as LP baseline).
-        train_loader = self._make_clean_dataloader(split="train")
+        # Build a clean-image dataloader for the FULL dataset (no split filtering).
+        # This ensures the cache is seed-independent and covers all possible images.
+        full_loader = self._make_full_dataset_dataloader()
 
         cache.cache_embeddings(
-            dataloader=train_loader,
+            dataloader=full_loader,
             dataset_name=self.dataset_name,
-            split="train",
+            split="full",
             force_recompute=False,
         )
 
-        # Also cache val split for validation during distillation
-        val_loader = self._make_clean_dataloader(split="val")
-        cache.cache_embeddings(
-            dataloader=val_loader,
-            dataset_name=self.dataset_name,
-            split="val",
-            force_recompute=False,
-        )
-
-        # Load cached embeddings and build lookup for train + val
-        train_data = cache.load_embeddings(self.dataset_name, "train", device="cpu")
-        val_data = cache.load_embeddings(self.dataset_name, "val", device="cpu")
-
-        # Merge into a single lookup (train + val embeddings)
-        merged = {
-            "embeddings": torch.cat([train_data["embeddings"], val_data["embeddings"]], dim=0),
-            "labels": torch.cat([train_data["labels"], val_data["labels"]], dim=0),
-            "image_ids": train_data["image_ids"] + val_data["image_ids"],
-        }
-        lookup = TeacherEmbeddingLookup(merged)
-        self.teacher_embedding_dim = train_data["embeddings"].shape[1]
+        # Load and build lookup
+        data = cache.load_embeddings(self.dataset_name, "full", device="cpu")
+        lookup = TeacherEmbeddingLookup(data)
+        self.teacher_embedding_dim = data["embeddings"].shape[1]
 
         log.info(f"  Teacher embedding dim: {self.teacher_embedding_dim}")
         log.info(f"  Total cached samples: {len(lookup)}")
@@ -266,8 +254,11 @@ class DistillationWrapper:
     # Dataloader helpers
     # ------------------------------------------------------------------
 
-    def _make_clean_dataloader(self, split: str) -> DataLoader:
-        """Create a clean (no degradation) dataloader for teacher embedding extraction."""
+    def _make_full_dataset_dataloader(self) -> DataLoader:
+        """Create a clean dataloader for the FULL dataset (no split filtering).
+
+        Used for teacher embedding caching so the cache is seed-independent.
+        """
         clean_transform = transforms.Compose([
             transforms.Resize((self.teacher_resolution, self.teacher_resolution)),
             transforms.ToTensor(),
@@ -275,11 +266,23 @@ class DistillationWrapper:
                                  std=[0.229, 0.224, 0.225]),
         ])
 
-        dataset = self._get_split_dataset(split, transform=clean_transform)
+        # Load full dataset WITHOUT subsetting to any split
+        full_dataset = self.dm._load_full_dataset(split="train", transform=clean_transform)
+
+        # Apply same balancing as the datamodule if needed
+        if self.dm.balance_data:
+            from src.data.dataset_factory import balance_dataset
+            full_dataset.ds = balance_dataset(
+                dataset=full_dataset.ds,
+                filtered_classes=self.dm.filtered_classes,
+                num_train_images=self.dm.num_train_images or len(full_dataset.ds),
+                seed=self.dm.split_seed,
+            )
+
         batch_size = int(getattr(self.cfg.data, "batch_size", 256))
 
         return DataLoader(
-            dataset,
+            full_dataset,
             batch_size=batch_size,
             shuffle=False,
             num_workers=int(getattr(self.cfg.datamodule, "num_workers", 8)),
