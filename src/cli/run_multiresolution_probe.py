@@ -51,6 +51,7 @@ def run_hyperparameter_tuning(
     model_key: str = "dinov3",
     config_path: str = "configs/probe_two_stage.yaml",
     seed: int = 42,
+    extra_overrides: List[str] = None,
 ):
     """
     Run hyperparameter tuning at the highest resolution for a domain.
@@ -96,6 +97,10 @@ def run_hyperparameter_tuning(
     for key, value in MODEL_CONFIGS[model_key].items():
         cmd.append(f"{key}={value}")
 
+    # Add any extra Hydra overrides
+    if extra_overrides:
+        cmd.extend(extra_overrides)
+
     print(f"Running: {' '.join(cmd)}\n")
 
     result = subprocess.run(cmd, check=False)
@@ -114,6 +119,7 @@ def run_final_probing(
     config_path: str = "configs/probe_two_stage.yaml",
     hyperparam_file: str = None,
     seed: int = 42,
+    extra_overrides: List[str] = None,
 ):
     """
     Run final linear probing at multiple resolutions with tuned hyperparameters.
@@ -198,6 +204,10 @@ def run_final_probing(
         for key, value in MODEL_CONFIGS[model_key].items():
             cmd.append(f"{key}={value}")
 
+        # Add any extra Hydra overrides
+        if extra_overrides:
+            cmd.extend(extra_overrides)
+
         print(f"Running: {' '.join(cmd)}\n")
 
         # Run
@@ -280,6 +290,14 @@ def main():
         help="Random seeds for bootstrap runs (e.g., --seeds 42 123 456)",
     )
 
+    parser.add_argument(
+        "--extra-overrides",
+        type=str,
+        nargs="*",
+        default=[],
+        help="Additional Hydra overrides passed to run_probe_two_stage (e.g., datamodule.task=kras)",
+    )
+
     args = parser.parse_args()
 
     # Validate arguments
@@ -291,7 +309,7 @@ def main():
 
     # Run hyperparameter tuning (only once with the first seed)
     if args.tune_hyperparams:
-        run_hyperparameter_tuning(args.domain, args.model, args.config, seed=first_seed)
+        run_hyperparameter_tuning(args.domain, args.model, args.config, seed=first_seed, extra_overrides=args.extra_overrides)
 
         # Construct path to best_hyperparameters.json from first seed
         if hyperparam_file is None:
@@ -320,6 +338,7 @@ def main():
                 args.config,
                 hyperparam_file=hyperparam_file,
                 seed=seed,
+                extra_overrides=args.extra_overrides,
             )
 
 

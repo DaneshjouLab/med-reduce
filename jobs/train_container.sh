@@ -9,23 +9,28 @@
 #SBATCH --error=logs/%x_%j.err
 
 # =============================================================================
-# TRAINING BUDGET ESTIMATE (dermatology, dinov3, 3 seeds, 4 resolutions)
-# =============================================================================
+# USAGE:
+#   DOMAIN=dermatology sbatch jobs/train_container.sh
+#   DOMAIN=radiology   sbatch jobs/train_container.sh
+#   DOMAIN=pathology   sbatch jobs/train_container.sh
 #
-# 1. Hyperparameter Tuning (seed 42 only, 512px):
-#    - Grid: 3 lr × 3 wd × 2 bs = 18 configs
-#    - 5-fold CV × 100 epochs each
-#    - Estimated: ~3-4 hours (LP on embeddings is fast)
+# Optional overrides:
+#   MODEL=dinov2 DOMAIN=radiology sbatch jobs/train_container.sh
+#   RESOLUTIONS="512 256" DOMAIN=pathology sbatch jobs/train_container.sh
+#   SEEDS="42 123 456" DOMAIN=dermatology sbatch jobs/train_container.sh
 #
-# 2. Embedding Extraction:
-#    - 3 seeds × 4 resolutions × ~10 min = ~2 hours
-#    - DINOv3-ViT-S at 512px, batch_size=256
+# Pathology-specific: choose which TCGA tasks to run (default: all 6)
+#   DOMAIN=pathology sbatch jobs/train_container.sh                          # all tasks
+#   TASKS="luad_vs_lusc kras" DOMAIN=pathology sbatch jobs/train_container.sh  # subset
 #
-# 3. Final Linear Probing:
-#    - 3 seeds × 4 resolutions × 100 epochs
-#    - Estimated: ~1-2 hours
-#
-# TOTAL ESTIMATED: 6-8 hours (with 12h buffer for safety)
+# TRAINING BUDGET ESTIMATE (per domain, dinov3, 3 seeds, 4 resolutions)
+# -----------------------------------------------------------------------------
+# 1. Hyperparameter Tuning (seed 42 only, highest res):
+#    - Grid: 3 lr × 3 wd × 2 bs = 18 configs, 5-fold CV
+#    - Estimated: ~3-4 hours
+# 2. Embedding Extraction: 3 seeds × 4 resolutions × ~10 min = ~2 hours
+# 3. Final Linear Probing: 3 seeds × 4 resolutions = ~1-2 hours
+# TOTAL ESTIMATED: 6-8 hours (with buffer for safety)
 #
 # RESOURCES:
 #   - GPU: 1x (DINOv3-ViT-S ~4GB, embeddings fit in VRAM)
@@ -38,6 +43,36 @@
 # SPDX-FileCopyrightText: 2025 Stanford University and the project authors (see AUTHORS.md)
 #
 # SPDX-License-Identifier: MIT
+
+# =============================================================================
+# Domain configuration
+# =============================================================================
+DOMAIN="${DOMAIN:?ERROR: DOMAIN is required. Set DOMAIN=dermatology|radiology|pathology}"
+MODEL="${MODEL:-dinov3}"
+RESOLUTIONS="${RESOLUTIONS:-512 256 128 64}"
+SEEDS="${SEEDS:-42 123 456}"
+
+# Pathology-specific: TCGA tasks to run (ignored for other domains)
+# Override with e.g. TASKS="kras tp53" to run a subset
+TASKS="${TASKS:-luad_vs_lusc lgg_vs_gbm kras tp53 egfr idh}"
+
+# Validate domain and resolve config name
+case "$DOMAIN" in
+    dermatology|radiology|pathology)
+        CONFIG="probe_two_stage_${DOMAIN}"
+        ;;
+    *)
+        echo "ERROR: Unknown domain '$DOMAIN'. Must be one of: dermatology, radiology, pathology"
+        exit 1
+        ;;
+esac
+
+echo "INFO: Domain=$DOMAIN  Model=$MODEL  Config=$CONFIG"
+echo "INFO: Resolutions=$RESOLUTIONS"
+echo "INFO: Seeds=$SEEDS"
+if [ "$DOMAIN" = "pathology" ]; then
+    echo "INFO: Tasks=$TASKS"
+fi
 
 # Container-based execution instead of conda
 TOOL=$(command -v apptainer || command -v singularity)
@@ -161,15 +196,39 @@ fi
     # Main Training
     # ==========================================================================
     echo 'INFO: Starting Hydra run...'
+    echo \"INFO: Domain: $DOMAIN | Model: $MODEL\"
     echo \"INFO: Start time: \$(date '+%Y-%m-%d %H:%M:%S')\"
     export HYDRA_FULL_ERROR=1
 
-    python -m src.cli.run_multiresolution_probe \
-        --domain dermatology \
-        --model dinov3 \
-        --config probe_two_stage_dermatology \
-        --tune-hyperparams \
-        --resolutions 512 256 128 64
+    if [ \"$DOMAIN\" = 'pathology' ]; then
+        # Pathology: loop over TCGA tasks (each is a separate classification problem)
+        for TASK in $TASKS; do
+            echo ''
+            echo '============================================================'
+            echo \"INFO: Starting pathology task: \$TASK\"
+            echo '============================================================'
+
+            python -m src.cli.run_multiresolution_probe \
+                --domain $DOMAIN \
+                --model $MODEL \
+                --config $CONFIG \
+                --tune-hyperparams \
+                --resolutions $RESOLUTIONS \
+                --seeds $SEEDS \
+                --extra-overrides datamodule.task=\$TASK
+
+            echo \"INFO: Finished pathology task: \$TASK\"
+        done
+    else
+        # Dermatology / Radiology: single run, no task override
+        python -m src.cli.run_multiresolution_probe \
+            --domain $DOMAIN \
+            --model $MODEL \
+            --config $CONFIG \
+            --tune-hyperparams \
+            --resolutions $RESOLUTIONS \
+            --seeds $SEEDS
+    fi
 
 
     END_TIME=\$(date +%s)
@@ -179,7 +238,7 @@ fi
 
     echo ''
     echo '============================================================'
-    echo 'JOB COMPLETED'
+    echo \"JOB COMPLETED: $DOMAIN ($MODEL)\"
     echo '============================================================'
     echo \"End time: \$(date '+%Y-%m-%d %H:%M:%S')\"
     echo \"Total runtime: \${TOTAL_H}h \${TOTAL_M}m\"
