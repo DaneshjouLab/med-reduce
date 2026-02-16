@@ -19,11 +19,17 @@ You may pass a PIL->PIL transform (e.g., ResolutionReductionTransform) via `tran
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict, Optional, Sequence
 from torch.utils.data import Dataset  # pylint: disable=import-error
-from PIL import Image
+from PIL import Image, ImageFile
 import os
 import numpy as np
+
+# Tolerate truncated images (common in large medical datasets like CheXpert)
+ImageFile.LOAD_TRUNCATED_IMAGES = True
+
+logger = logging.getLogger(__name__)
 from datasets import load_dataset, Dataset, Image as HFImageFeature
 
 try:
