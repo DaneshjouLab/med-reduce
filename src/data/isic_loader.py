@@ -262,7 +262,10 @@ class ISICHFRawSplitLocal(Dataset):
         # Map image IDs to full paths and handle labels
         def map_to_full_path(example: Dict[str, Any]):
             image_id = example[image_id_column]
-            example["image"] = os.path.join(data_dir, f"{image_id}{image_extension}")
+            if image_id.endswith(image_extension):
+                example["image"] = os.path.join(data_dir, image_id)
+            else:
+                example["image"] = os.path.join(data_dir, f"{image_id}{image_extension}")
 
             if image_id_column != "image_id":
                 example["image_id"] = image_id
