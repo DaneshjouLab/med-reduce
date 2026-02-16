@@ -122,8 +122,8 @@ class TeacherEmbeddingCache:
             - image_ids: List[str] of unique image identifiers
         """
         model.eval()
-        embeddings = []
-        labels = []
+        emb_chunks = []
+        label_chunks = []
         image_ids = []
 
         with torch.no_grad():
@@ -158,8 +158,8 @@ class TeacherEmbeddingCache:
                     else:
                         raise ValueError("Cannot extract embeddings from this model")
 
-                embeddings.append(emb.cpu())
-                labels.append(batch_labels.cpu())
+                emb_chunks.append(emb.cpu())
+                label_chunks.append(batch_labels.cpu())
 
                 # Extract image IDs if available, otherwise use fallback indices
                 batch_size = emb.shape[0]
@@ -178,11 +178,12 @@ class TeacherEmbeddingCache:
                         )
 
                 # Early stop if max_samples reached
-                if max_samples and len(embeddings) * emb.shape[0] >= max_samples:
+                if max_samples and len(emb_chunks) * emb.shape[0] >= max_samples:
                     break
 
-        embeddings = torch.cat(embeddings, dim=0)
-        labels = torch.cat(labels, dim=0)
+        embeddings = torch.cat(emb_chunks, dim=0)
+        labels = torch.cat(label_chunks, dim=0)
+        del emb_chunks, label_chunks  # free the chunk lists
 
         if max_samples:
             embeddings = embeddings[:max_samples]

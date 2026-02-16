@@ -197,8 +197,8 @@ class EmbeddingCache:
         res_dir.mkdir(parents=True, exist_ok=True)
 
         model.eval()
-        all_embeddings = []
-        all_labels = []
+        emb_chunks = []
+        label_chunks = []
 
         try:
             from torch.amp import autocast
@@ -225,11 +225,12 @@ class EmbeddingCache:
                 with autocast(device_type=self.device.type, enabled=mixed_precision):
                     embeddings = self._extract_embeddings_from_model(model, images)
 
-                all_embeddings.append(embeddings.cpu().float())
-                all_labels.append(labels.cpu().long())
+                emb_chunks.append(embeddings.cpu().float())
+                label_chunks.append(labels.cpu().long())
 
-        embeddings = torch.cat(all_embeddings, dim=0)
-        labels = torch.cat(all_labels, dim=0)
+        embeddings = torch.cat(emb_chunks, dim=0)
+        labels = torch.cat(label_chunks, dim=0)
+        del emb_chunks, label_chunks  # free the chunk lists
 
         torch.save(
             {"embeddings": embeddings, "labels": labels},

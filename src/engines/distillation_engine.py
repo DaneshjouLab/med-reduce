@@ -104,7 +104,7 @@ def train_distillation(
                 if projection is not None:
                     student_emb = projection(student_emb)
 
-                teacher_emb = teacher_lookup.get_embeddings(image_ids).to(device)
+                teacher_emb = teacher_lookup.get_embeddings(image_ids).to(device).detach()
                 loss = loss_fn(student_emb, teacher_emb)
 
             if mixed_precision:
@@ -245,7 +245,7 @@ def _run_distillation_validation(
                 student_emb = extract_embeddings(student, pixel_values, student_model_type)
                 if projection is not None:
                     student_emb = projection(student_emb)
-                teacher_emb = teacher_lookup.get_embeddings(image_ids).to(device)
+                teacher_emb = teacher_lookup.get_embeddings(image_ids).to(device).detach()
                 loss = loss_fn(student_emb, teacher_emb)
 
             running_loss += float(loss.item()) * pixel_values.size(0)

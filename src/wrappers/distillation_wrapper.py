@@ -220,30 +220,19 @@ class DistillationWrapper:
             )
             return None
 
-        # Reconstruct image_ids from the dataset.
-        # The dataset's __getitem__ returns dicts with 'image_id'.
-        # We only need to read image_ids, so use a minimal transform.
+        # Reconstruct image_ids from the dataset metadata (no image loading).
         image_ids = self._get_image_ids_from_dataset()
 
-        # Build full-dataset arrays: combine train + test
-        total = len(train_indices) + len(test_indices)
-        emb_dim = train_emb.shape[1]
-        full_embeddings = torch.zeros(total, emb_dim)
-        full_labels = torch.zeros(total, dtype=train_labels.dtype)
-        full_image_ids = [""] * total
+        # Combine train + test embeddings via concatenation (vectorised)
+        full_embeddings = torch.cat([train_emb, test_emb], dim=0)
+        full_labels = torch.cat([train_labels, test_labels], dim=0)
 
-        # Map: position in combined array -> actual embedding
-        # train embeddings are at positions 0..len(train)-1 in the combined array
-        for i, idx in enumerate(train_indices):
-            full_embeddings[i] = train_emb[i]
-            full_labels[i] = train_labels[i]
-            full_image_ids[i] = str(image_ids[idx])
+        # Free the per-split tensors now that they're concatenated
+        del train_emb, test_emb, train_labels, test_labels
 
-        offset = len(train_indices)
-        for i, idx in enumerate(test_indices):
-            full_embeddings[offset + i] = test_emb[i]
-            full_labels[offset + i] = test_labels[i]
-            full_image_ids[offset + i] = str(image_ids[idx])
+        # Build image_id list in the same order: train indices then test indices
+        all_indices = list(train_indices) + list(test_indices)
+        full_image_ids = [str(image_ids[idx]) for idx in all_indices]
 
         self.teacher_embedding_dim = emb_dim
         log.info(f"  Reused LP cache: {total} embeddings (train={len(train_indices)}, test={len(test_indices)})")
@@ -257,18 +246,48 @@ class DistillationWrapper:
         return TeacherEmbeddingLookup(data)
 
     def _get_image_ids_from_dataset(self) -> list:
-        """Extract image_ids from the full dataset without heavy transforms.
+        """Extract image_ids from the full dataset without loading pixel data.
+
+        Tries to read image_ids directly from the underlying dataset's metadata
+        (CSV / manifest) to avoid loading and decoding every image. Falls back to
+        iterating the dataset with a minimal transform if metadata is unavailable.
 
         Returns a list where result[i] is the image_id for dataset index i.
         """
-        # Use a lightweight transform — we only need image_ids, not pixel data
+        full_dataset = self.dm._load_full_dataset(split="train", transform=None)
+
+        if self.dm.balance_data:
+            from src.data.dataset_factory import balance_dataset
+            full_dataset.ds = balance_dataset(
+                dataset=full_dataset.ds,
+                filtered_classes=self.dm.filtered_classes,
+                num_train_images=self.dm.num_train_images or len(full_dataset.ds),
+                seed=self.dm.split_seed,
+            )
+
+        # Fast path: read image_ids from the underlying dataset's metadata
+        # without loading any images.
+        inner = full_dataset.ds if hasattr(full_dataset, "ds") else full_dataset
+        if hasattr(inner, "image_ids"):
+            # Some datasets expose a pre-computed list of image_ids
+            image_ids = [str(x) for x in inner.image_ids]
+            log.info(f"  Read {len(image_ids)} image_ids from dataset.image_ids attribute")
+            return image_ids
+
+        if hasattr(inner, "df") and "image_id" in getattr(inner.df, "columns", []):
+            # Tabular datasets backed by a DataFrame with image_id column
+            image_ids = [str(x) for x in inner.df["image_id"].tolist()]
+            log.info(f"  Read {len(image_ids)} image_ids from dataset.df['image_id']")
+            return image_ids
+
+        # Slow fallback: iterate the dataset. Use a tiny transform to minimise
+        # decode cost, and only access the needed indices.
+        log.info("  Falling back to iterating dataset for image_ids (slow path)")
         light_transform = transforms.Compose([
             transforms.Resize((32, 32)),
             transforms.ToTensor(),
         ])
-
         full_dataset = self.dm._load_full_dataset(split="train", transform=light_transform)
-
         if self.dm.balance_data:
             from src.data.dataset_factory import balance_dataset
             full_dataset.ds = balance_dataset(
@@ -287,7 +306,7 @@ class DistillationWrapper:
                 img_id = f"sample_{i}"
             image_ids.append(str(img_id))
 
-        log.info(f"  Extracted {len(image_ids)} image_ids from dataset")
+        log.info(f"  Extracted {len(image_ids)} image_ids from dataset (slow path)")
         return image_ids
 
     # ------------------------------------------------------------------
