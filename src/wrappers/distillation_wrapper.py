@@ -57,6 +57,7 @@ class DistillationWrapper:
         self.dm.setup("fit")
 
         self.dataset_name = self.dm.dataset_identifier
+        self.task_name = getattr(cfg.datamodule, "task", None)
 
         # --- Split manager (same as LP baseline) ---
         split_dir = getattr(cfg, "split_dir", "./splits")
@@ -113,7 +114,9 @@ class DistillationWrapper:
         log.info("=" * 60)
         log.info("DISTILLATION COMPLETE")
         log.info(f"  Best val loss: {result['best_val_loss']:.6f}")
-        log.info(f"  Checkpoint: {self.run_dir}/distilled_student.pt")
+        student_name = self.student_info.get("name", "student")
+        suffix = f"_{self.task_name}" if self.task_name else ""
+        log.info(f"  Checkpoint: {self.run_dir}/distilled_{student_name}{suffix}.pt")
         log.info("=" * 60)
 
         return result
@@ -406,7 +409,9 @@ class DistillationWrapper:
             if projection is not None:
                 checkpoint["projection_state_dict"] = projection.state_dict()
 
-        ckpt_path = os.path.join(self.run_dir, "distilled_student.pt")
+        student_name = self.student_info.get("name", "student")
+        suffix = f"_{self.task_name}" if self.task_name else ""
+        ckpt_path = os.path.join(self.run_dir, f"distilled_{student_name}{suffix}.pt")
         torch.save(checkpoint, ckpt_path)
         log.info(f"  Saved checkpoint to {ckpt_path}")
 
@@ -425,6 +430,9 @@ class DistillationWrapper:
         lrs = history.get("lr", [])
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        student_name = self.student_info.get("name", "student")
+        suffix = f"_{self.task_name}" if self.task_name else ""
+        ckpt_path_ref = os.path.join(self.run_dir, f"distilled_{student_name}{suffix}.pt")
 
         results = {
             "experiment_info": {
@@ -460,17 +468,16 @@ class DistillationWrapper:
                 "val_loss": val_losses,
                 "lr": lrs,
             },
-            "checkpoint": os.path.join(self.run_dir, "distilled_student.pt"),
+            "checkpoint": ckpt_path_ref,
         }
 
-        student_name = self.student_info.get("name", "student")
-        results_path = os.path.join(self.run_dir, f"results_distillation_{student_name}.json")
+        results_path = os.path.join(self.run_dir, f"results_distillation_{student_name}{suffix}.json")
 
         if os.path.exists(results_path):
             import shutil
             backup_path = os.path.join(
                 self.run_dir,
-                f"results_distillation_{student_name}_backup_{timestamp}.json",
+                f"results_distillation_{student_name}{suffix}_backup_{timestamp}.json",
             )
             shutil.copy2(results_path, backup_path)
             log.warning(f"Results file exists. Backed up to: {backup_path}")
