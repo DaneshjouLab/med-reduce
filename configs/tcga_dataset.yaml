@@ -1,0 +1,44 @@
+# ── What to pull from GDC ──────────────────────────
+projects:
+  - TCGA-LUAD
+  - TCGA-LUSC
+  - TCGA-LGG
+  - TCGA-GBM
+
+data_dir: data/tcga
+access: open                 # "open" or "controlled"
+
+# ── Metadata to include in slide table ─────────────
+etl:
+  include_demographics: true
+  include_diagnosis: true
+  include_maf: true
+
+# ── Download settings ──────────────────────────────
+download:
+  enabled: true              # set false to skip downloads
+  slides: true
+  maf: true
+  token_path: null           # path to GDC token (controlled access)
+  n_processes: 4
+  max_files: null            # limit for testing (null = all)
+
+# ── Slide processing (SVS → JPG thumbnails) ───────
+slides:
+  thumbnail_size: [512, 512]
+  n_workers: 4
+
+# ── Gene mutation matrix ──────────────────────────
+gene_matrix:
+  enabled: true
+  genes: ["KRAS","TP53","EGFR","IDH"]                # null = all genes, or ["TP53", "KRAS", ...]
+
+# ── Pipeline control ──────────────────────────────
+# Which steps to run. Comment out to skip a step.
+steps:
+  - etl            # Query GDC API, build flat slide table
+  - manifest       # Generate download manifests
+  - download       # Download files via gdc-client
+  - process_slides # Create JPG thumbnails from SVS
+  - gene_matrix    # Build gene mutation matrix from MAF
+  - assemble       # Merge everything into final dataset

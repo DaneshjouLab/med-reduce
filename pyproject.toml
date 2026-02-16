@@ -47,6 +47,9 @@ dependencies = [
     "pynvml>=11.5",
     "thop>=0.1",
     "requests>=2.31",
+    "ipykernel",
+    "openslide-python>=1.4.3",
+    "openslide-bin>=4.0.0.11",
 ]
 
 [project.optional-dependencies]

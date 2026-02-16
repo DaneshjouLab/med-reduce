@@ -1,0 +1,88 @@
+# Two-Stage Linear Probing Configuration - TCGA Domain
+#
+# Pipeline:
+# (A) Data loading & split definition - consistent splits across all experiments
+# (B) Image preprocessing - clean images at target resolution
+# (C) Frozen DINOv3 encoder - extract and cache embeddings
+# (D) Linear Probing - two-stage process
+#     D1: Hyperparameter tuning at full resolution R* (5-fold CV)
+#     D2: Final training at each resolution R with fixed hyperparameters
+#
+# Usage:
+#   python -m src.cli.run_probe_two_stage --config-name=probe_two_stage_tcga datamodule.task=luad_vs_lusc
+#   python -m src.cli.run_probe_two_stage --config-name=probe_two_stage_tcga datamodule.task=kras
+
+domain: "tcga"
+
+# Split configuration
+split_dir: ./splits
+
+# Embedding cache configuration
+embedding_cache_dir: ./cache/embeddings
+
+# Runtime configuration
+runtime:
+  run_dir: ./runs/probe_two_stage_tcga
+
+datamodule:
+  _target_: src.data.tcga_datamodule.TCGADataModule
+  task: luad_vs_lusc
+  dataset_csv: data/tcga/tables/dataset.csv
+  data_dir: data/tcga/thumbnails
+  split_dir: ./splits
+  use_val_split: false
+  train_ratio: 0.8
+  force_recompute: false
+  num_workers: 8
+  batch_size: 64
+  pin_memory: true
+
+data:
+  image_size: 512
+  batch_size: 64
+
+model:
+  name: "dinov3"
+  model_id: "facebook/dinov3-vits16-pretrain-lvd1689m"
+  type: "dinov3"
+  config:
+    num_labels: 2
+    hidden_size: 384
+    dropout_rate: 0.1
+
+train:
+  epochs: 200
+  seed: 42
+  k_folds: 5
+  mixed_precision: true
+  metric_key: "val_auroc"
+
+  optimizer:
+    type: "adamw"
+    lr: 1e-3
+    weight_decay: 1e-4
+    betas: [0.9, 0.999]
+
+  scheduler:
+    type: "cosine"
+    warmup_epochs: 10
+    min_lr: 1e-6
+
+  hyperparam_search:
+    enabled: true
+    use_cv: true
+    param_grid:
+      lr: [1e-4, 3e-4, 1e-3]
+      weight_decay: [0, 1e-4, 1e-3]
+      batch_size: [32, 64]
+    load_from_file: null
+
+loss:
+  label_smoothing: 0.0
+  reduction: "mean"
+
+logging:
+  project: "reduced-perception"
+  run_name: "tcga_luad_vs_lusc_512px"
+  wandb_enabled: true
+  save_checkpoints: true
