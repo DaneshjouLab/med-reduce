@@ -23,7 +23,7 @@ embedding_cache_dir: /scratch/users/bikia/reduced-perception-rad-results/cache/e
 datamodule:
   _target_: src.data.tabular_datamodule_persistent.TabularDataModulePersistent
   dataset_name: null  # Set to null for local data
-  data_dir: /path/to/radiology/dataset/images
+  data_dir: /scratch/groups/roxanad/datasets/chexpert/combined_train_valid_chexpert_v1.0
   num_workers: 8
   pin_memory: true
   persistent_workers: false
@@ -33,9 +33,23 @@ datamodule:
   train_ratio: 0.8
 
   # Local dataset configuration
-  local_label_file: /path/to/radiology/dataset/labels.csv
+  local_label_file: /scratch/groups/roxanad/datasets/chexpert/train_valid_combined.csv
   local_image_id_column: image_id
-  local_label_column: ["class_0", "class_1"]  # Update with actual radiology class names
+  local_label_column: [
+    "Enlarged Cardiomediastinum",
+    "Cardiomegaly",
+    "Lung Opacity",
+    "Lung Lesion",
+    "Edema",
+    "Consolidation",
+    "Pneumonia",
+    "Atelectasis",
+    "Pneumothorax",
+    "Pleural Effusion",
+    "Pleural Other",
+    "Fracture",
+    "Support Devices",
+  ]
   local_image_extension: .jpg
 
   # Dataset filtering
@@ -54,7 +68,7 @@ model:
   model_id: "facebook/dinov3-vits16-pretrain-lvd1689m"
   type: "dinov3"
   config:
-    num_labels: 2  # Update based on radiology task
+    num_labels: 13
     hidden_size: 384
     dropout_rate: 0.1
 
