@@ -274,7 +274,7 @@ class ISICHFRawSplitLocal(Dataset):
                 #   - Class 0 (nevus): all columns are 0
                 #   - Class 1+: argmax of columns that are 1, offset by 1
                 # This maps: [0,0] -> 0 (nevus), [1,0] -> 1 (melanoma), [0,1] -> 2 (seb_kera)
-                label_values = [float(example[col]) for col in label_cols]
+                label_values = [float(example[col]) if example[col] is not None else 0.0 for col in label_cols]
                 if max(label_values) == 0:
                     # No positive label -> class 0 (e.g., nevus)
                     example["label"] = 0
@@ -283,7 +283,8 @@ class ISICHFRawSplitLocal(Dataset):
                     example["label"] = int(np.argmax(label_values)) + 1
             else:
                 # Single label column
-                example["label"] = int(float(example[label_cols]))
+                val = example[label_cols]
+                example["label"] = int(float(val)) if val is not None else 0
 
             return example
 
