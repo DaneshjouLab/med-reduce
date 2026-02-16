@@ -167,6 +167,7 @@ def train_probe_on_embeddings(
 
             if is_better:
                 best_metric = current_metric
+                del best_state_dict  # free previous snapshot before allocating new one
                 best_state_dict = {k: v.cpu().clone() for k, v in classifier.state_dict().items()}
 
     if best_state_dict is not None:
@@ -221,8 +222,10 @@ def _run_validation_on_embeddings(
     val_loss = val_loss / max(val_total, 1)
     val_acc = val_correct / max(val_total, 1)
 
-    all_labels = np.concatenate(all_labels)
-    all_probs = np.concatenate(all_probs)
+    all_labels_list, all_probs_list = all_labels, all_probs
+    all_labels = np.concatenate(all_labels_list)
+    all_probs = np.concatenate(all_probs_list)
+    del all_labels_list, all_probs_list  # free the chunk lists
 
     # Compute AUROC
     # For multi-class OvR AUROC, we need at least 2 classes in the ground truth.

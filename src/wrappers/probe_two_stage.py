@@ -868,10 +868,10 @@ class ProbeTwoStageWrapper:
 
         train_embeddings, train_labels = all_embeddings["train"]
         test_embeddings, test_labels = all_embeddings["test"]
+        del all_embeddings  # free the dict; individual tensors are still referenced
 
         # Compute num_classes from all labels (train + test) to ensure we capture all classes
-        all_labels = torch.cat([train_labels, test_labels])
-        num_classes = int(all_labels.max().item()) + 1
+        num_classes = int(max(train_labels.max().item(), test_labels.max().item())) + 1
 
         log.info("Computing class weights from training data...")
         self.class_weights = self._compute_class_weights(train_labels, num_classes=num_classes)

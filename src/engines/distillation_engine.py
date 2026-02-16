@@ -167,6 +167,7 @@ def train_distillation(
         # Best model tracking
         if val_loss < best_val_loss:
             best_val_loss = val_loss
+            del best_state  # free previous snapshot before allocating new one
             best_state = _snapshot_state(student, projection)
             log.info(f"  New best val_loss: {best_val_loss:.6f}")
 
