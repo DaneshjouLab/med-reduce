@@ -25,6 +25,7 @@ from src.engines.distillation_engine import train_distillation
 from src.losses.distillation import embedding_distillation_loss
 from src.models.factory import create_model, get_embedding_dim, extract_embeddings
 from src.utils.teacher_cache import TeacherEmbeddingCache, TeacherEmbeddingLookup
+from src.utils.embedding_cache import EmbeddingCache
 from src.utils.split_manager import SplitManager
 from src.utils.optim import make_optimizer_and_scheduler
 from src.utils.logging_core import setup_logging, get_logger, WandbLogger
@@ -73,6 +74,7 @@ class DistillationWrapper:
         self.alpha = float(getattr(distill_cfg, "alpha", 0.5))
         self.teacher_resolution = int(getattr(distill_cfg, "teacher_resolution", 512))
         self.teacher_cache_dir = str(getattr(distill_cfg, "teacher_cache_dir", "./cache/teacher_embeddings"))
+        self.lp_embedding_cache_dir = str(getattr(distill_cfg, "lp_embedding_cache_dir", ""))
 
         # --- Run dir ---
         base_run_dir = getattr(cfg.runtime, "run_dir", "./runs/distillation")
@@ -117,14 +119,27 @@ class DistillationWrapper:
     # ------------------------------------------------------------------
 
     def _cache_and_load_teacher_embeddings(self) -> TeacherEmbeddingLookup:
-        """Cache teacher embeddings for the full dataset (seed-independent), then build lookup.
+        """Load teacher embeddings, reusing LP baseline cache when available.
 
-        Embeddings are cached once for ALL images in the dataset (split="full"),
-        so the cache is reused across seeds. Each seed's train/val split is a
-        subset of the cached image_ids — the lookup handles the filtering.
+        Strategy:
+          1. Try to load from LP baseline's EmbeddingCache (already computed at 512px
+             during Pipeline A). The LP cache stores {embeddings, labels} per split
+             but lacks image_ids, so we reconstruct them from the dataset.
+          2. Fall back to TeacherEmbeddingCache (extracts from scratch) if LP cache
+             is not available.
+
+        In both cases, the result is a TeacherEmbeddingLookup with image_id-keyed
+        access for the distillation training loop.
         """
-        log.info("\n--- Stage 1: Teacher Embedding Caching ---")
+        log.info("\n--- Stage 1: Teacher Embedding Loading ---")
 
+        # Try LP baseline cache first
+        lookup = self._try_load_from_lp_cache()
+        if lookup is not None:
+            return lookup
+
+        # Fall back to dedicated teacher cache
+        log.info("LP cache not available — extracting teacher embeddings from scratch")
         cache = TeacherEmbeddingCache(
             cache_dir=self.teacher_cache_dir,
             teacher_model_info=self.teacher_info,
@@ -132,8 +147,6 @@ class DistillationWrapper:
             device=self.device,
         )
 
-        # Build a clean-image dataloader for the FULL dataset (no split filtering).
-        # This ensures the cache is seed-independent and covers all possible images.
         full_loader = self._make_full_dataset_dataloader()
 
         cache.cache_embeddings(
@@ -143,7 +156,6 @@ class DistillationWrapper:
             force_recompute=False,
         )
 
-        # Load and build lookup
         data = cache.load_embeddings(self.dataset_name, "full", device="cpu")
         lookup = TeacherEmbeddingLookup(data)
         self.teacher_embedding_dim = data["embeddings"].shape[1]
@@ -152,6 +164,131 @@ class DistillationWrapper:
         log.info(f"  Total cached samples: {len(lookup)}")
 
         return lookup
+
+    def _try_load_from_lp_cache(self) -> TeacherEmbeddingLookup | None:
+        """Try to load teacher embeddings from LP baseline's EmbeddingCache.
+
+        The LP pipeline caches DINOv3 embeddings at 512px per seed/split.
+        We load train + test embeddings, reconstruct image_ids from the dataset
+        ordering, and combine them into a full-dataset lookup.
+
+        Returns:
+            TeacherEmbeddingLookup if LP cache found and loaded, else None.
+        """
+        if not self.lp_embedding_cache_dir:
+            return None
+
+        teacher_name = self.teacher_info.get("name", "dinov3")
+        lp_cache = EmbeddingCache(
+            cache_dir=self.lp_embedding_cache_dir,
+            dataset_name=self.dataset_name,
+            model_name=teacher_name,
+            seed=self.seed,
+        )
+
+        resolution = self.teacher_resolution
+
+        # Check if LP cache has both train and test at teacher resolution
+        if not (lp_cache.exists(resolution, "train") and lp_cache.exists(resolution, "test")):
+            log.info(
+                f"LP cache not found for {teacher_name} at {resolution}px "
+                f"(seed={self.seed}) in {self.lp_embedding_cache_dir}"
+            )
+            return None
+
+        log.info(f"Found LP baseline cache — reusing {teacher_name} embeddings at {resolution}px")
+
+        # Load embeddings from LP cache (ordered by split indices, no shuffle)
+        train_emb, train_labels = lp_cache.load(resolution, "train")
+        test_emb, test_labels = lp_cache.load(resolution, "test")
+
+        # Load split indices to know which dataset positions each embedding maps to
+        splits = self.split_manager.load_splits()
+        train_indices = splits["train"]
+        test_indices = splits["test"]
+
+        if len(train_indices) != train_emb.shape[0]:
+            log.warning(
+                f"Train index count ({len(train_indices)}) != train embeddings ({train_emb.shape[0]}). "
+                "Skipping LP cache reuse."
+            )
+            return None
+        if len(test_indices) != test_emb.shape[0]:
+            log.warning(
+                f"Test index count ({len(test_indices)}) != test embeddings ({test_emb.shape[0]}). "
+                "Skipping LP cache reuse."
+            )
+            return None
+
+        # Reconstruct image_ids from the dataset.
+        # The dataset's __getitem__ returns dicts with 'image_id'.
+        # We only need to read image_ids, so use a minimal transform.
+        image_ids = self._get_image_ids_from_dataset()
+
+        # Build full-dataset arrays: combine train + test
+        total = len(train_indices) + len(test_indices)
+        emb_dim = train_emb.shape[1]
+        full_embeddings = torch.zeros(total, emb_dim)
+        full_labels = torch.zeros(total, dtype=train_labels.dtype)
+        full_image_ids = [""] * total
+
+        # Map: position in combined array -> actual embedding
+        # train embeddings are at positions 0..len(train)-1 in the combined array
+        for i, idx in enumerate(train_indices):
+            full_embeddings[i] = train_emb[i]
+            full_labels[i] = train_labels[i]
+            full_image_ids[i] = str(image_ids[idx])
+
+        offset = len(train_indices)
+        for i, idx in enumerate(test_indices):
+            full_embeddings[offset + i] = test_emb[i]
+            full_labels[offset + i] = test_labels[i]
+            full_image_ids[offset + i] = str(image_ids[idx])
+
+        self.teacher_embedding_dim = emb_dim
+        log.info(f"  Reused LP cache: {total} embeddings (train={len(train_indices)}, test={len(test_indices)})")
+        log.info(f"  Teacher embedding dim: {emb_dim}")
+
+        data = {
+            "embeddings": full_embeddings,
+            "labels": full_labels,
+            "image_ids": full_image_ids,
+        }
+        return TeacherEmbeddingLookup(data)
+
+    def _get_image_ids_from_dataset(self) -> list:
+        """Extract image_ids from the full dataset without heavy transforms.
+
+        Returns a list where result[i] is the image_id for dataset index i.
+        """
+        # Use a lightweight transform — we only need image_ids, not pixel data
+        light_transform = transforms.Compose([
+            transforms.Resize((32, 32)),
+            transforms.ToTensor(),
+        ])
+
+        full_dataset = self.dm._load_full_dataset(split="train", transform=light_transform)
+
+        if self.dm.balance_data:
+            from src.data.dataset_factory import balance_dataset
+            full_dataset.ds = balance_dataset(
+                dataset=full_dataset.ds,
+                filtered_classes=self.dm.filtered_classes,
+                num_train_images=self.dm.num_train_images or len(full_dataset.ds),
+                seed=self.dm.split_seed,
+            )
+
+        image_ids = []
+        for i in range(len(full_dataset)):
+            sample = full_dataset[i]
+            if isinstance(sample, dict):
+                img_id = sample.get("image_id", f"sample_{i}")
+            else:
+                img_id = f"sample_{i}"
+            image_ids.append(str(img_id))
+
+        log.info(f"  Extracted {len(image_ids)} image_ids from dataset")
+        return image_ids
 
     # ------------------------------------------------------------------
     # Stage 2: Student distillation training

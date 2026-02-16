@@ -41,6 +41,7 @@ distillation:
   alpha: 0.5               # MSE vs cosine balance (1.0 = pure MSE, 0.0 = pure cosine)
   teacher_resolution: 512   # Resolution for teacher embedding extraction
   teacher_cache_dir: /scratch/users/bikia/reduced-perception-rad-results/cache/teacher_embeddings
+  lp_embedding_cache_dir: /scratch/users/bikia/reduced-perception-rad-results/cache/embeddings
 
 # Dataset configuration (mirrors probe_two_stage_radiology.yaml)
 datamodule:
