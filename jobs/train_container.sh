@@ -2,7 +2,7 @@
 #SBATCH --job-name=probe_3seeds
 #SBATCH --partition=roxanad
 #SBATCH --gres=gpu:1
-#SBATCH --time=26:00:00
+#SBATCH --time=60:00:00
 #SBATCH --mem=48G
 #SBATCH --cpus-per-task=8
 #SBATCH --output=logs/%x_%j.out
@@ -138,7 +138,7 @@ fi
     # Resource Monitoring (runs in background)
     # ==========================================================================
     START_TIME=\$(date +%s)
-    SLURM_TIME_LIMIT_SEC=\$((12 * 60 * 60))  # 12 hours in seconds
+    SLURM_TIME_LIMIT_SEC=\$((60 * 60 * 60))  # 60 hours in seconds
 
     monitor_resources() {
         while true; do

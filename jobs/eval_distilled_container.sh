@@ -2,7 +2,7 @@
 #SBATCH --job-name=eval_distilled_3seeds
 #SBATCH --partition=roxanad
 #SBATCH --gres=gpu:1
-#SBATCH --time=12:00:00
+#SBATCH --time=60:00:00
 #SBATCH --mem=48G
 #SBATCH --cpus-per-task=8
 #SBATCH --output=logs/%x_%j.out
@@ -140,7 +140,7 @@ fi
     # Resource Monitoring
     # ==========================================================================
     START_TIME=\$(date +%s)
-    SLURM_TIME_LIMIT_SEC=\$((12 * 60 * 60))
+    SLURM_TIME_LIMIT_SEC=\$((60 * 60 * 60))
 
     monitor_resources() {
         while true; do

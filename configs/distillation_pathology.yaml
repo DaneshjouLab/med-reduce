@@ -1,0 +1,93 @@
+# Distillation Pipeline Configuration — Pathology (TCGA)
+#
+# Pipeline:
+#   1. Cache teacher (DINOv3) embeddings at 512px on train split
+#   2. Train student (ResNet18/TinyViT) end-to-end on degraded images
+#      to match teacher embeddings
+#   3. Save distilled student checkpoint
+#
+# Usage:
+#   python -m src.cli.run_distillation --config-name=distillation_pathology
+#   python -m src.cli.run_distillation --config-name=distillation_pathology datamodule.task=kras
+#
+# Available tasks (override with datamodule.task=<task>):
+#   luad_vs_lusc  - Lung adeno vs squamous (project_id classification)
+#   lgg_vs_gbm    - Low-grade glioma vs glioblastoma (project_id classification)
+#   kras          - KRAS mutation prediction (0/1)
+#   tp53          - TP53 mutation prediction (0/1)
+#   egfr          - EGFR mutation prediction (0/1)
+#   idh           - IDH mutation prediction (0/1)
+
+# Runtime configuration
+runtime:
+  run_dir: /scratch/users/bikia/reduced-perception-path-results/runs/distillation
+
+domain: "pathology"
+
+# Split configuration (same as LP baseline for consistency)
+split_dir: /scratch/users/bikia/reduced-perception-path-results/splits
+
+# Teacher model (frozen, used only for embedding extraction)
+teacher:
+  name: "dinov3"
+  model_id: "facebook/dinov3-vits16-pretrain-lvd1689m"
+  type: "dinov3"
+  config:
+    num_labels: 2
+    hidden_size: 384
+
+# Student model (trained end-to-end)
+student:
+  name: "resnet18"
+  model_id: "resnet18"
+  type: "timm"
+  config:
+    num_labels: 2
+    pretrained: true
+
+# Distillation settings
+distillation:
+  alpha: 0.5               # MSE vs cosine balance (1.0 = pure MSE, 0.0 = pure cosine)
+  teacher_resolution: 512   # Resolution for teacher embedding extraction
+  teacher_cache_dir: /scratch/users/bikia/reduced-perception-path-results/cache/teacher_embeddings
+
+# Dataset configuration (mirrors probe_two_stage_pathology.yaml)
+datamodule:
+  _target_: src.data.tcga_datamodule.TCGADataModule
+  task: luad_vs_lusc
+  dataset_csv: /scratch/groups/roxanad/datasets/tcga/tables/dataset.csv
+  data_dir: /scratch/groups/roxanad/datasets/tcga/thumbnails
+  split_dir: /scratch/users/bikia/reduced-perception-path-results/splits
+  use_val_split: false
+  train_ratio: 0.8
+  force_recompute: false
+  num_workers: 8
+  batch_size: 64
+  pin_memory: true
+
+data:
+  image_size: 512
+  batch_size: 64
+
+train:
+  epochs: 100
+  seed: 42
+  mixed_precision: true
+  grad_clip: null
+  log_interval: 50
+
+  optimizer:
+    name: "adamw"
+    lr: 1e-4
+    weight_decay: 1e-4
+    betas: [0.9, 0.999]
+
+  scheduler:
+    name: "cosine"
+    warmup_epochs: 5
+    min_lr: 1e-6
+
+logging:
+  project: "reduced-perception"
+  wandb_enabled: true
+  run_name: "distillation_pathology_resnet18"

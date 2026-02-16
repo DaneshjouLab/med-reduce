@@ -78,6 +78,8 @@ reduced-perception/
 │   ├── config_segmentation.yaml          # Segmentation task config
 │   ├── config_segmentation_vit.yaml      # Segmentation with ViT backbone
 │   ├── distillation_dermatology.yaml     # Distillation config for dermatology
+│   ├── distillation_pathology.yaml       # Distillation config for pathology
+│   ├── distillation_radiology.yaml       # Distillation config for radiology
 │   ├── probe_two_stage_dermatology.yaml  # Two-stage probing for dermatology
 │   ├── probe_two_stage_radiology.yaml    # Two-stage probing for radiology
 │   ├── probe_two_stage_pathology.yaml    # Two-stage probing for pathology
@@ -276,29 +278,30 @@ for SEED in 42 123 456; do
       train.seed=${SEED}
 done
 
-# Dermatology — TinyViT student (override student config)
+# Radiology — ResNet18 student
+for SEED in 42 123 456; do
+  python -m src.cli.run_distillation \
+      --config-name=distillation_radiology \
+      train.seed=${SEED}
+done
+
+# Pathology — ResNet18 student (per task)
+for TASK in luad_vs_lusc lgg_vs_gbm kras tp53 egfr idh; do
+  for SEED in 42 123 456; do
+    python -m src.cli.run_distillation \
+        --config-name=distillation_pathology \
+        train.seed=${SEED} \
+        datamodule.task=${TASK}
+  done
+done
+
+# Any domain — TinyViT student (override student config)
 for SEED in 42 123 456; do
   python -m src.cli.run_distillation \
       --config-name=distillation_dermatology \
       train.seed=${SEED} \
       student.name=tiny_vit \
       student.model_id=tiny_vit_21m_224
-done
-```
-
-For pathology, create `configs/distillation_pathology.yaml` (copy from dermatology, update `datamodule`, `domain`, `num_labels`) or override inline:
-
-```bash
-for TASK in luad_vs_lusc lgg_vs_gbm kras tp53 egfr idh; do
-  for SEED in 42 123 456; do
-    python -m src.cli.run_distillation \
-        --config-name=distillation_dermatology \
-        domain=pathology \
-        train.seed=${SEED} \
-        datamodule._target_=src.data.tcga_datamodule.TCGADataModule \
-        datamodule.task=${TASK} \
-        student.config.num_labels=2
-  done
 done
 ```
 
