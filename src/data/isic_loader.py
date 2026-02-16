@@ -330,7 +330,7 @@ class ISICHFRawSplitLocal(Dataset):
 
     def __getitem__(self, idx: int) -> Dict[str, Any]:
         item = self.ds[idx]
-        image = _to_pil(item[self.image_column])
+        image = _to_pil(item[self.image_column]).convert("RGB")
         label = int(item[self.label_column])
 
         if self.transform:
