@@ -56,7 +56,7 @@ RESOLUTIONS="${RESOLUTIONS:-512 256 128 64}"
 SEEDS="${SEEDS:-42 123 456}"
 
 # Pathology-specific: TCGA tasks (ignored for other domains)
-TASKS="${TASKS:-luad_vs_lusc lgg_vs_gbm kras tp53 egfr idh}"
+TASKS="${TASKS:-luad_vs_lusc lgg_vs_gbm kras tp53 egfr}"
 
 # Number of classes and distillation checkpoint directory per domain
 case "$DOMAIN" in

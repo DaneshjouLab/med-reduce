@@ -987,7 +987,8 @@ class ProbeTwoStageWrapper:
             },
         }
 
-        results_path = os.path.join(self.run_dir, f"results_{self.model_name}_{self.current_resolution}px.json")
+        # Include dataset name in filename to avoid overwriting across pathology tasks
+        results_path = os.path.join(self.run_dir, f"results_{self.dataset_name}_{self.model_name}_{self.current_resolution}px.json")
 
         # Backup existing results if they exist
         if os.path.exists(results_path):

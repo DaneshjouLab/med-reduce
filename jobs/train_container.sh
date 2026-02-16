@@ -19,7 +19,7 @@
 #   RESOLUTIONS="512 256" DOMAIN=pathology sbatch jobs/train_container.sh
 #   SEEDS="42 123 456" DOMAIN=dermatology sbatch jobs/train_container.sh
 #
-# Pathology-specific: choose which TCGA tasks to run (default: all 6)
+# Pathology-specific: choose which TCGA tasks to run (default: all 5)
 #   DOMAIN=pathology sbatch jobs/train_container.sh                          # all tasks
 #   TASKS="luad_vs_lusc kras" DOMAIN=pathology sbatch jobs/train_container.sh  # subset
 #
@@ -54,7 +54,7 @@ SEEDS="${SEEDS:-42 123 456}"
 
 # Pathology-specific: TCGA tasks to run (ignored for other domains)
 # Override with e.g. TASKS="kras tp53" to run a subset
-TASKS="${TASKS:-luad_vs_lusc lgg_vs_gbm kras tp53 egfr idh}"
+TASKS="${TASKS:-luad_vs_lusc lgg_vs_gbm kras tp53 egfr}"
 
 # Validate domain and resolve config name
 case "$DOMAIN" in

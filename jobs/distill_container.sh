@@ -21,7 +21,7 @@
 #   SEEDS="42" DOMAIN=dermatology sbatch jobs/distill_container.sh
 #   ALPHA=0.7 DOMAIN=dermatology sbatch jobs/distill_container.sh
 #
-# Pathology-specific: choose which TCGA tasks to run (default: all 6)
+# Pathology-specific: choose which TCGA tasks to run (default: all 5)
 #   TASKS="luad_vs_lusc kras" DOMAIN=pathology sbatch jobs/distill_container.sh
 #
 # TRAINING BUDGET ESTIMATE (per domain, per student, 3 seeds)
@@ -52,7 +52,7 @@ ALPHA="${ALPHA:-0.5}"
 EPOCHS="${EPOCHS:-100}"
 
 # Pathology-specific: TCGA tasks to run (ignored for other domains)
-TASKS="${TASKS:-luad_vs_lusc lgg_vs_gbm kras tp53 egfr idh}"
+TASKS="${TASKS:-luad_vs_lusc lgg_vs_gbm kras tp53 egfr}"
 
 # Validate domain and resolve config name
 case "$DOMAIN" in
