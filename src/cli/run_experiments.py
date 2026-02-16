@@ -49,7 +49,7 @@ def build_hydra_overrides(model_key: str, resolution: int, mode: str) -> List[st
     # Logging overrides
     run_name = f"{model_key}_{mode}_{resolution}"
     overrides.extend([
-        f"logging.run_name={run_name}",
+        f"++logging.run_name={run_name}",
         f"runtime.run_dir=./runs/{run_name}",
     ])
     

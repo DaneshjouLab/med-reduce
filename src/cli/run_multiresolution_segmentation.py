@@ -105,7 +105,7 @@ def run_hyperparameter_tuning(
         f"--config-name={config_name}",
         f"data.image_size={highest_res}",
         "train.hyperparam_search.enabled=true",
-        f"logging.run_name={model_key}_segmentation_{domain}_{highest_res}px_search",
+        f"++logging.run_name={model_key}_segmentation_{domain}_{highest_res}px_search",
     ]
 
     # Add dataset paths
@@ -204,7 +204,7 @@ def run_final_segmentation(
             f"data.image_size={resolution}",
             "train.hyperparam_search.enabled=false",
             f"train.hyperparam_search.load_from_file={hyperparam_file}",
-            f"logging.run_name={model_key}_segmentation_{domain}_{resolution}px_eval",
+            f"++logging.run_name={model_key}_segmentation_{domain}_{resolution}px_eval",
         ]
 
         # Add dataset paths

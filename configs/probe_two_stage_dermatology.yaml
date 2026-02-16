@@ -104,5 +104,6 @@ loss:
 
 logging:
   project: "reduced-perception" # <----- Update for your W&B project name
+  run_name: "dinov3_dermatology_512px"
   wandb_enabled: true
   save_checkpoints: true

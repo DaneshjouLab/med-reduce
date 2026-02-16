@@ -85,7 +85,7 @@ def run_hyperparameter_tuning(
         f"data.image_size={highest_res}",
         "train.hyperparam_search.enabled=true",
         f"train.seed={seed}",
-        f"logging.run_name={model_key}_{domain}_{highest_res}px_seed{seed}_R*search",
+        f"++logging.run_name={model_key}_{domain}_{highest_res}px_seed{seed}_R*search",
     ]
 
     if dataset is not None:
@@ -192,7 +192,7 @@ def run_final_probing(
             "train.hyperparam_search.enabled=false",
             f"++train.hyperparam_search.load_from_file={hyperparam_file}",
             f"train.seed={seed}",
-            f"logging.run_name={model_key}_{domain}_{resolution}px_seed{seed}_eval",
+            f"++logging.run_name={model_key}_{domain}_{resolution}px_seed{seed}_eval",
         ]
 
         if dataset is not None:
