@@ -59,13 +59,8 @@ class DistillationWrapper:
         self.dataset_name = self.dm.dataset_identifier
         self.task_name = getattr(cfg.datamodule, "task", None)
 
-        # --- Split manager (same as LP baseline) ---
-        split_dir = getattr(cfg, "split_dir", "./splits")
-        self.split_manager = SplitManager(
-            split_dir=split_dir,
-            dataset_name=self.dataset_name,
-            seed=self.seed,
-        )
+        # --- Split manager (reuse the datamodule's split manager for consistency) ---
+        self.split_manager = self.dm.split_manager
 
         # --- Model configs ---
         self.teacher_info = dict(cfg.teacher)
