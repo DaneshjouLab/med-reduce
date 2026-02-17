@@ -51,6 +51,7 @@ class DistillationWrapper:
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.domain = getattr(cfg, "domain", "dermatology")
         self.seed = int(getattr(cfg.train, "seed", 42))
+        self.smoke_test = bool(getattr(cfg, "smoke_test", False))
 
         # --- Data module (same splits as LP baseline) ---
         self.dm = hydra.utils.instantiate(cfg.datamodule, full_cfg=cfg)
@@ -95,6 +96,8 @@ class DistillationWrapper:
         """Execute the full distillation pipeline."""
         log.info("=" * 60)
         log.info("DISTILLATION PIPELINE")
+        if self.smoke_test:
+            log.info("  *** SMOKE TEST MODE — 10 samples, 2 epochs ***")
         log.info("=" * 60)
 
         # Stage 1: Cache teacher embeddings
@@ -366,6 +369,8 @@ class DistillationWrapper:
         loaders = {"train": train_loader, "val": val_loader}
 
         epochs = int(getattr(self.cfg.train, "epochs", 100))
+        if self.smoke_test:
+            epochs = min(epochs, 2)
         grad_clip = getattr(self.cfg.train, "grad_clip", None)
         mixed_precision = bool(getattr(self.cfg.train, "mixed_precision", True))
         log_interval = int(getattr(self.cfg.train, "log_interval", 50))
@@ -616,6 +621,11 @@ class DistillationWrapper:
             indices = splits["test"]
         else:
             raise ValueError(f"Unknown split: {split}")
+
+        if self.smoke_test:
+            SMOKE_N = 10
+            indices = indices[:SMOKE_N]
+            log.info(f"  [SMOKE TEST] Truncated {split} split to {len(indices)} samples")
 
         return Subset(full_dataset, indices)
 

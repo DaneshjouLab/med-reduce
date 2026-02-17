@@ -2,7 +2,7 @@
 #SBATCH --job-name=distill_3seeds
 #SBATCH --partition=roxanad
 #SBATCH --gres=gpu:1
-#SBATCH --time=60:00:00
+#SBATCH --time=12:00:00
 #SBATCH --mem=48G
 #SBATCH --cpus-per-task=8
 #SBATCH --output=logs/%x_%j.out
@@ -53,6 +53,7 @@ STUDENT_NAME="${STUDENT_NAME:-$(echo "$STUDENT" | sed 's/_[0-9].*$//')}"
 SEEDS="${SEEDS:-42 123 456}"
 ALPHA="${ALPHA:-0.5}"
 EPOCHS="${EPOCHS:-100}"
+EXTRAS="${EXTRAS:-}"  # Extra Hydra overrides (e.g. EXTRAS="smoke_test=true")
 
 # Pathology-specific: TCGA tasks to run (ignored for other domains)
 TASKS="${TASKS:-luad_vs_lusc lgg_vs_gbm kras tp53 egfr}"
@@ -201,7 +202,8 @@ fi
                     train.epochs=$EPOCHS \
                     student.name=$STUDENT_NAME \
                     student.model_id=$STUDENT \
-                    datamodule.task=\$TASK
+                    datamodule.task=\$TASK \
+                    $EXTRAS
                 echo \"INFO: Finished seed \$SEED for task \$TASK\"
             done
 
@@ -220,7 +222,8 @@ fi
                 distillation.alpha=$ALPHA \
                 train.epochs=$EPOCHS \
                 student.name=$STUDENT_NAME \
-                student.model_id=$STUDENT
+                student.model_id=$STUDENT \
+                $EXTRAS
 
             echo \"INFO: Finished seed \$SEED\"
         done
