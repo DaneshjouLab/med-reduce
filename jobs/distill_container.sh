@@ -18,6 +18,7 @@
 #
 # Optional overrides:
 #   STUDENT=tiny_vit_21m_224 DOMAIN=dermatology sbatch jobs/distill_container.sh
+#   STUDENT=tiny_vit_21m_224 DOMAIN=pathology sbatch jobs/distill_container.sh
 #   SEEDS="42" DOMAIN=dermatology sbatch jobs/distill_container.sh
 #   ALPHA=0.7 DOMAIN=dermatology sbatch jobs/distill_container.sh
 #
@@ -47,6 +48,8 @@
 # =============================================================================
 DOMAIN="${DOMAIN:?ERROR: DOMAIN is required. Set DOMAIN=dermatology|radiology|pathology}"
 STUDENT="${STUDENT:-resnet18}"
+# Derive a short name for filenames (e.g. tiny_vit_21m_224 → tiny_vit, resnet18 → resnet18)
+STUDENT_NAME="${STUDENT_NAME:-$(echo "$STUDENT" | sed 's/_[0-9].*$//')}"
 SEEDS="${SEEDS:-42 123 456}"
 ALPHA="${ALPHA:-0.5}"
 EPOCHS="${EPOCHS:-100}"
@@ -65,7 +68,7 @@ case "$DOMAIN" in
         ;;
 esac
 
-echo "INFO: Domain=$DOMAIN  Student=$STUDENT  Config=$CONFIG"
+echo "INFO: Domain=$DOMAIN  Student=$STUDENT  Name=$STUDENT_NAME  Config=$CONFIG"
 echo "INFO: Seeds=$SEEDS  Alpha=$ALPHA  Epochs=$EPOCHS"
 if [ "$DOMAIN" = "pathology" ]; then
     echo "INFO: Tasks=$TASKS"
@@ -196,6 +199,7 @@ fi
                     train.seed=\$SEED \
                     distillation.alpha=$ALPHA \
                     train.epochs=$EPOCHS \
+                    student.name=$STUDENT_NAME \
                     student.model_id=$STUDENT \
                     datamodule.task=\$TASK
                 echo \"INFO: Finished seed \$SEED for task \$TASK\"
@@ -215,6 +219,7 @@ fi
                 train.seed=\$SEED \
                 distillation.alpha=$ALPHA \
                 train.epochs=$EPOCHS \
+                student.name=$STUDENT_NAME \
                 student.model_id=$STUDENT
 
             echo \"INFO: Finished seed \$SEED\"
