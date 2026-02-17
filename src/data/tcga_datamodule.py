@@ -99,7 +99,7 @@ class TCGASlideDataset(Dataset):
         image = Image.open(img_path).convert("RGB")
         if self.transform:
             image = self.transform(image)
-        return {"pixel_values": image, "label": int(row["label"])}
+        return {"pixel_values": image, "label": int(row["label"]), "image_id": str(row["slide_id"])}
 
 
 # ---------------------------------------------------------------------------
