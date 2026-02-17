@@ -210,6 +210,9 @@ class DistillationWrapper:
         test_emb, test_labels = lp_cache.load(resolution, "test")
 
         # Load split indices to know which dataset positions each embedding maps to
+        if not self.split_manager.exists():
+            log.warning("Splits not found — cannot reuse LP cache without split indices")
+            return None
         splits = self.split_manager.load_splits()
         train_indices = splits["train"]
         test_indices = splits["test"]

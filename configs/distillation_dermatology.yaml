@@ -12,12 +12,12 @@
 
 # Runtime configuration
 runtime:
-  run_dir: ./runs/distillation
+  run_dir: /scratch/users/bikia/reduced-perception-derm-results/runs/distillation
 
 domain: "dermatology"
 
 # Split configuration (same as LP baseline for consistency)
-split_dir: ./splits
+split_dir: /scratch/users/bikia/reduced-perception-derm-results/splits
 
 # Teacher model (frozen, used only for embedding extraction)
 teacher:
@@ -53,7 +53,7 @@ datamodule:
   pin_memory: true
   persistent_workers: false
   prefetch_factor: 2
-  split_dir: ./splits
+  split_dir: /scratch/users/bikia/reduced-perception-derm-results/splits
   use_val_split: false
   train_ratio: 0.8
 
