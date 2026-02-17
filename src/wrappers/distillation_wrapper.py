@@ -241,6 +241,8 @@ class DistillationWrapper:
         all_indices = list(train_indices) + list(test_indices)
         full_image_ids = [str(image_ids[idx]) for idx in all_indices]
 
+        emb_dim = full_embeddings.shape[1]
+        total = full_embeddings.shape[0]
         self.teacher_embedding_dim = emb_dim
         log.info(f"  Reused LP cache: {total} embeddings (train={len(train_indices)}, test={len(test_indices)})")
         log.info(f"  Teacher embedding dim: {emb_dim}")
@@ -261,16 +263,21 @@ class DistillationWrapper:
 
         Returns a list where result[i] is the image_id for dataset index i.
         """
-        full_dataset = self.dm._load_full_dataset(split="train", transform=None)
+        # Use pre-built full_dataset when available (e.g. TCGADataModule sets
+        # self.full_dataset in setup()), otherwise load via the TabularDataModule API.
+        if hasattr(self.dm, "full_dataset") and not hasattr(self.dm, "_load_full_dataset"):
+            full_dataset = self.dm.full_dataset
+        else:
+            full_dataset = self.dm._load_full_dataset(split="train", transform=None)
 
-        if self.dm.balance_data:
-            from src.data.dataset_factory import balance_dataset
-            full_dataset.ds = balance_dataset(
-                dataset=full_dataset.ds,
-                filtered_classes=self.dm.filtered_classes,
-                num_train_images=self.dm.num_train_images or len(full_dataset.ds),
-                seed=self.dm.split_seed,
-            )
+            if getattr(self.dm, "balance_data", False):
+                from src.data.dataset_factory import balance_dataset
+                full_dataset.ds = balance_dataset(
+                    dataset=full_dataset.ds,
+                    filtered_classes=self.dm.filtered_classes,
+                    num_train_images=self.dm.num_train_images or len(full_dataset.ds),
+                    seed=self.dm.split_seed,
+                )
 
         # Fast path: read image_ids from the underlying dataset's metadata
         # without loading any images.
@@ -281,28 +288,31 @@ class DistillationWrapper:
             log.info(f"  Read {len(image_ids)} image_ids from dataset.image_ids attribute")
             return image_ids
 
-        if hasattr(inner, "df") and "image_id" in getattr(inner.df, "columns", []):
-            # Tabular datasets backed by a DataFrame with image_id column
-            image_ids = [str(x) for x in inner.df["image_id"].tolist()]
-            log.info(f"  Read {len(image_ids)} image_ids from dataset.df['image_id']")
-            return image_ids
+        if hasattr(inner, "df"):
+            # Tabular datasets backed by a DataFrame — try image_id or slide_id
+            for col in ("image_id", "slide_id"):
+                if col in getattr(inner.df, "columns", []):
+                    image_ids = [str(x) for x in inner.df[col].tolist()]
+                    log.info(f"  Read {len(image_ids)} image_ids from dataset.df['{col}']")
+                    return image_ids
 
         # Slow fallback: iterate the dataset. Use a tiny transform to minimise
         # decode cost, and only access the needed indices.
         log.info("  Falling back to iterating dataset for image_ids (slow path)")
-        light_transform = transforms.Compose([
-            transforms.Resize((32, 32)),
-            transforms.ToTensor(),
-        ])
-        full_dataset = self.dm._load_full_dataset(split="train", transform=light_transform)
-        if self.dm.balance_data:
-            from src.data.dataset_factory import balance_dataset
-            full_dataset.ds = balance_dataset(
-                dataset=full_dataset.ds,
-                filtered_classes=self.dm.filtered_classes,
-                num_train_images=self.dm.num_train_images or len(full_dataset.ds),
-                seed=self.dm.split_seed,
-            )
+        if hasattr(self.dm, "_load_full_dataset"):
+            light_transform = transforms.Compose([
+                transforms.Resize((32, 32)),
+                transforms.ToTensor(),
+            ])
+            full_dataset = self.dm._load_full_dataset(split="train", transform=light_transform)
+            if getattr(self.dm, "balance_data", False):
+                from src.data.dataset_factory import balance_dataset
+                full_dataset.ds = balance_dataset(
+                    dataset=full_dataset.ds,
+                    filtered_classes=self.dm.filtered_classes,
+                    num_train_images=self.dm.num_train_images or len(full_dataset.ds),
+                    seed=self.dm.split_seed,
+                )
 
         image_ids = []
         for i in range(len(full_dataset)):
@@ -511,17 +521,21 @@ class DistillationWrapper:
         ])
 
         # Load full dataset WITHOUT subsetting to any split
-        full_dataset = self.dm._load_full_dataset(split="train", transform=clean_transform)
+        if hasattr(self.dm, "_load_full_dataset"):
+            full_dataset = self.dm._load_full_dataset(split="train", transform=clean_transform)
 
-        # Apply same balancing as the datamodule if needed
-        if self.dm.balance_data:
-            from src.data.dataset_factory import balance_dataset
-            full_dataset.ds = balance_dataset(
-                dataset=full_dataset.ds,
-                filtered_classes=self.dm.filtered_classes,
-                num_train_images=self.dm.num_train_images or len(full_dataset.ds),
-                seed=self.dm.split_seed,
-            )
+            # Apply same balancing as the datamodule if needed
+            if getattr(self.dm, "balance_data", False):
+                from src.data.dataset_factory import balance_dataset
+                full_dataset.ds = balance_dataset(
+                    dataset=full_dataset.ds,
+                    filtered_classes=self.dm.filtered_classes,
+                    num_train_images=self.dm.num_train_images or len(full_dataset.ds),
+                    seed=self.dm.split_seed,
+                )
+        else:
+            full_dataset = self.dm.full_dataset
+            full_dataset.transform = clean_transform
 
         batch_size = int(getattr(self.cfg.data, "batch_size", 256))
 
@@ -568,17 +582,22 @@ class DistillationWrapper:
         from torch.utils.data import Subset
 
         # Load full dataset with the desired transform
-        full_dataset = self.dm._load_full_dataset(split="train", transform=transform)
+        if hasattr(self.dm, "_load_full_dataset"):
+            full_dataset = self.dm._load_full_dataset(split="train", transform=transform)
 
-        # Apply same balancing as the datamodule if needed
-        if self.dm.balance_data:
-            from src.data.dataset_factory import balance_dataset
-            full_dataset.ds = balance_dataset(
-                dataset=full_dataset.ds,
-                filtered_classes=self.dm.filtered_classes,
-                num_train_images=self.dm.num_train_images or len(full_dataset.ds),
-                seed=self.dm.split_seed,
-            )
+            # Apply same balancing as the datamodule if needed
+            if getattr(self.dm, "balance_data", False):
+                from src.data.dataset_factory import balance_dataset
+                full_dataset.ds = balance_dataset(
+                    dataset=full_dataset.ds,
+                    filtered_classes=self.dm.filtered_classes,
+                    num_train_images=self.dm.num_train_images or len(full_dataset.ds),
+                    seed=self.dm.split_seed,
+                )
+        else:
+            # TCGADataModule (and similar): reuse the pre-built dataset, swap transform
+            full_dataset = self.dm.full_dataset
+            full_dataset.transform = transform
 
         # Load the persistent split indices
         splits = self.split_manager.load_splits()

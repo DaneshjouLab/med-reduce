@@ -240,10 +240,13 @@ def extract_embeddings(model: nn.Module, pixel_values: torch.Tensor, model_type:
 
     if model_type == "timm":
         feats = model.forward_features(pixel_values)
-        if feats.dim() == 3:
+        if feats.dim() == 4:
+            # CNN-style: [B, D, H, W] → global average pool to [B, D]
+            feats = feats.mean(dim=[2, 3])
+        elif feats.dim() == 3:
             # Transformer-style: [B, tokens, D] → use CLS or global avg pool
-            return feats[:, 0] if feats.shape[1] > 1 else feats.squeeze(1)
-        return feats  # CNN-style: [B, D] already
+            feats = feats[:, 0] if feats.shape[1] > 1 else feats.squeeze(1)
+        return feats  # [B, D]
 
     raise ValueError(f"Unknown model_type: {model_type}")
 
