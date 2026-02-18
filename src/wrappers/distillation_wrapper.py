@@ -425,6 +425,18 @@ class DistillationWrapper:
         student_name = self.student_info.get("name", "student")
         suffix = f"_{self.task_name}" if self.task_name else ""
         ckpt_path = os.path.join(self.run_dir, f"distilled_{student_name}{suffix}.pt")
+
+        # Backup existing checkpoint before overwriting
+        if os.path.exists(ckpt_path):
+            from datetime import datetime
+            backup_path = os.path.join(
+                self.run_dir,
+                f"distilled_{student_name}{suffix}_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pt",
+            )
+            import shutil
+            shutil.copy2(ckpt_path, backup_path)
+            log.warning(f"Checkpoint exists. Backed up to: {backup_path}")
+
         torch.save(checkpoint, ckpt_path)
         log.info(f"  Saved checkpoint to {ckpt_path}")
 

@@ -89,6 +89,13 @@ class ProbeTwoStageWrapper:
         self.model_info = cfg.model
         self.model_name = self.model_info.get("name", "dinov3")
 
+        # Extract label names for per-class metrics (multi-label / multi-class)
+        label_col = getattr(self.dm, "local_label_column", None)
+        if isinstance(label_col, (list, tuple)):
+            self.label_names = list(label_col)
+        else:
+            self.label_names = None
+
         self.seed = int(getattr(cfg.train, "seed", 42))
 
         split_dir = getattr(cfg, "split_dir", "./splits")
@@ -352,15 +359,20 @@ class ProbeTwoStageWrapper:
         model = create_model(self.model_info, resolution=resolution)
 
         # Load distilled checkpoint if configured (Pipeline C)
+        # Supports {seed} placeholder, e.g. ".../seed_{seed}/distilled_resnet18.pt"
         checkpoint_path = self._cfg_get(
             self.model_info.get("config", {}), "checkpoint", None
         )
-        if checkpoint_path and os.path.exists(str(checkpoint_path)):
-            log.info(f"Loading distilled checkpoint: {checkpoint_path}")
-            ckpt = torch.load(str(checkpoint_path), map_location="cpu", weights_only=False)
-            state_dict = ckpt.get("student_state_dict", ckpt)
-            model.load_state_dict(state_dict, strict=False)
-            log.info(f"  Loaded {len(state_dict)} parameter tensors")
+        if checkpoint_path:
+            checkpoint_path = str(checkpoint_path).replace("{seed}", str(self.seed))
+            if os.path.exists(checkpoint_path):
+                log.info(f"Loading distilled checkpoint: {checkpoint_path}")
+                ckpt = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+                state_dict = ckpt.get("student_state_dict", ckpt)
+                model.load_state_dict(state_dict, strict=False)
+                log.info(f"  Loaded {len(state_dict)} parameter tensors")
+            else:
+                log.warning(f"Checkpoint not found: {checkpoint_path}")
 
         model = model.to(self.device)
         model.eval()
@@ -845,6 +857,7 @@ class ProbeTwoStageWrapper:
             log_interval=int(getattr(self.cfg.train, "log_interval", 50)),
             wandb_logger=self.wandb,
             metric_key=str(getattr(self.cfg.train, "metric_key", "val_acc")),
+            label_names=self.label_names,
         )
 
         log.info(f"✓ Final probe at {resolution}px: {result['best_metric']:.4f}")
@@ -973,6 +986,7 @@ class ProbeTwoStageWrapper:
                 "final_val_acc": final_val_acc,
                 "final_val_f1": final_val_f1,
                 "final_val_loss": final_val_loss,
+                "per_class_auroc": training_result.get("per_class_auroc"),
             },
             "efficiency_metrics": self.efficiency_metrics,
             "hyperparameters": {
@@ -994,7 +1008,7 @@ class ProbeTwoStageWrapper:
         if os.path.exists(results_path):
             backup_path = os.path.join(
                 self.run_dir,
-                f"results_{self.model_name}_{self.current_resolution}px_backup_{timestamp}.json"
+                f"results_{self.dataset_name}_{self.model_name}_{self.current_resolution}px_backup_{timestamp}.json"
             )
             import shutil
             shutil.copy2(results_path, backup_path)

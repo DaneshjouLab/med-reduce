@@ -48,6 +48,7 @@ def train_probe_on_embeddings(
     log_interval: int = 50,
     wandb_logger=None,
     metric_key: str = "val_acc",
+    label_names: list[str] | None = None,
 ) -> Dict[str, Any]:
     """
     Train a linear classifier on pre-computed embeddings.
@@ -122,12 +123,13 @@ def train_probe_on_embeddings(
 
         train_loss = running_loss / max(n_seen, 1)
 
-        val_loss, val_acc, val_auroc, val_f1 = _run_validation_on_embeddings(
+        val_loss, val_acc, val_auroc, val_f1, per_class_auroc_dict = _run_validation_on_embeddings(
             classifier=classifier,
             loaders=loaders,
             loss_fn=loss_fn,
             device=device,
             mixed_precision=mixed_precision,
+            label_names=label_names,
         )
 
         if sched is not None:
@@ -180,6 +182,7 @@ def train_probe_on_embeddings(
         "best_metric": best_metric,
         "history": history,
         "final_lr": optimizer.param_groups[0]["lr"],
+        "per_class_auroc": per_class_auroc_dict,
     }
 
 
@@ -189,7 +192,8 @@ def _run_validation_on_embeddings(
     loss_fn,
     device: torch.device,
     mixed_precision: bool = True,
-) -> Tuple[float, float, float, float]:
+    label_names: list[str] | None = None,
+) -> Tuple[float, float, float, float, dict | None]:
     classifier.eval()
 
     val_loss = 0.0
@@ -232,6 +236,8 @@ def _run_validation_on_embeddings(
     unique_labels_in_val = np.unique(all_labels)
     num_classes = all_probs.shape[1]
 
+    per_class_auroc_dict = None  # {label_name_or_index: auroc}
+
     if len(unique_labels_in_val) < 2:
         log.warning(
             f"Cannot compute AUROC - only {len(unique_labels_in_val)} class(es) present in validation set "
@@ -249,12 +255,16 @@ def _run_validation_on_embeddings(
                 # that are present in this validation set for robustness.
                 # This is the standard approach when not all classes appear in every fold.
                 per_class_auroc = []
+                per_class_auroc_dict = {}
                 for cls in unique_labels_in_val:
                     y_true_binary = (all_labels == cls).astype(int)
                     y_score_cls = all_probs[:, cls]
                     try:
                         cls_auroc = roc_auc_score(y_true_binary, y_score_cls)
                         per_class_auroc.append(cls_auroc)
+                        # Use label name if available, otherwise class index
+                        cls_name = label_names[int(cls)] if label_names and int(cls) < len(label_names) else str(int(cls))
+                        per_class_auroc_dict[cls_name] = float(cls_auroc)
                     except ValueError:
                         pass
 
@@ -274,4 +284,4 @@ def _run_validation_on_embeddings(
         log.warning(f"Could not compute F1: {e}")
         val_f1 = float('nan')
 
-    return val_loss, val_acc, val_auroc, val_f1
+    return val_loss, val_acc, val_auroc, val_f1, per_class_auroc_dict

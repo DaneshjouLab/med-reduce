@@ -49,8 +49,12 @@
 # =============================================================================
 DOMAIN="${DOMAIN:?ERROR: DOMAIN is required. Set DOMAIN=dermatology|radiology|pathology}"
 MODEL="${MODEL:-dinov3}"
+STUDENT="${STUDENT:-resnet18}"
+STUDENT_NAME="${STUDENT_NAME:-$(echo "$STUDENT" | sed 's/_[0-9].*$//')}"
 RESOLUTIONS="${RESOLUTIONS:-512 256 128 64}"
 SEEDS="${SEEDS:-42 123 456}"
+EXTRAS="${EXTRAS:-}"  # Extra Hydra overrides (e.g. EXTRAS="runtime.run_dir=/path/to/v2")
+CHECKPOINT_DIR="${CHECKPOINT_DIR:-}"  # Dir with distilled checkpoints for probe_distilled mode
 
 # Pathology-specific: TCGA tasks to run (ignored for other domains)
 # Override with e.g. TASKS="kras tp53" to run a subset
@@ -208,6 +212,10 @@ fi
             echo \"INFO: Starting pathology task: \$TASK\"
             echo '============================================================'
 
+            CKPT_OVERRIDE=\"\"
+            if [ -n \"$CHECKPOINT_DIR\" ]; then
+                CKPT_OVERRIDE=\"model.config.checkpoint=${CHECKPOINT_DIR}/seed_{seed}/distilled_${STUDENT_NAME}_\${TASK}.pt\"
+            fi
             python -m src.cli.run_multiresolution_probe \
                 --domain $DOMAIN \
                 --model $MODEL \
@@ -215,19 +223,29 @@ fi
                 --tune-hyperparams \
                 --resolutions $RESOLUTIONS \
                 --seeds $SEEDS \
-                --extra-overrides datamodule.task=\$TASK
+                --extra-overrides datamodule.task=\$TASK \$CKPT_OVERRIDE $EXTRAS
+
 
             echo \"INFO: Finished pathology task: \$TASK\"
         done
     else
         # Dermatology / Radiology: single run, no task override
+        CKPT_OVERRIDE=\"\"
+        if [ -n \"$CHECKPOINT_DIR\" ]; then
+            CKPT_OVERRIDE=\"model.config.checkpoint=${CHECKPOINT_DIR}/seed_{seed}/distilled_${STUDENT_NAME}.pt\"
+        fi
+        EXTRA_ARGS=\"\"
+        if [ -n \"$EXTRAS\" ] || [ -n \"\$CKPT_OVERRIDE\" ]; then
+            EXTRA_ARGS=\"--extra-overrides \$CKPT_OVERRIDE $EXTRAS\"
+        fi
         python -m src.cli.run_multiresolution_probe \
             --domain $DOMAIN \
             --model $MODEL \
             --config $CONFIG \
             --tune-hyperparams \
             --resolutions $RESOLUTIONS \
-            --seeds $SEEDS
+            --seeds $SEEDS \
+            \$EXTRA_ARGS
     fi
 
 
