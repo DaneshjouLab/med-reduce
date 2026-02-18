@@ -146,9 +146,10 @@ for row_idx, (domain, sublabel, fname, images, metrics) in enumerate(rows):
             transform=ax.transData,
         )
         ax.add_patch(badge)
+        badge_fontsize = 11
         ax.text(
             40, 18, f"{res}px",
-            ha="center", va="center", fontsize=14, fontweight="bold",
+            ha="center", va="center", fontsize=badge_fontsize, fontweight="bold",
             color="white", transform=ax.transData,
         )
 

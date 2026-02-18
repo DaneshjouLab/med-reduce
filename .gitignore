@@ -215,3 +215,4 @@ config.yaml
 .huggingface/
 
 results/**
+figures/**

@@ -9,7 +9,7 @@ from omegaconf import OmegaConf
 
 
 # Model configurations
-MODELS = ["vit", "dinov2", "dinov3"]
+MODELS = ["vit", "dinov2", "dinov3", "resnet18", "tiny_vit_21m_224"]
 MODEL_CONFIGS = {
     "vit": {
         "model.name": "vit",
@@ -26,6 +26,18 @@ MODEL_CONFIGS = {
         "model.name": "dinov3",
         "model.model_id": "facebook/dinov3-vits16-pretrain-lvd1689m",
         "model.type": "dinov3",
+    },
+    "resnet18": {
+        "model.name": "resnet18",
+        "model.model_id": "resnet18",
+        "model.type": "timm",
+        "model.config.pretrained": "false",
+    },
+    "tiny_vit_21m_224": {
+        "model.name": "tiny_vit",
+        "model.model_id": "tiny_vit_21m_224",
+        "model.type": "timm",
+        "model.config.pretrained": "false",
     }
 }
 
