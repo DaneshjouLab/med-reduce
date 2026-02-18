@@ -263,7 +263,7 @@ def main():
         "--model",
         type=str,
         default="dinov3",
-        choices=MODELS,
+        choices=list(MODEL_CONFIGS.keys()),
         help="Model to use (default: dinov3)",
     )
 
