@@ -31,13 +31,13 @@ MODEL_CONFIGS = {
         "model.name": "resnet18",
         "model.model_id": "resnet18",
         "model.type": "timm",
-        "model.config.pretrained": "false",
+        "+model.config.pretrained": "false",
     },
     "tiny_vit_21m_224": {
         "model.name": "tiny_vit",
         "model.model_id": "tiny_vit_21m_224",
         "model.type": "timm",
-        "model.config.pretrained": "false",
+        "+model.config.pretrained": "false",
     }
 }
 

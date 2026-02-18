@@ -214,7 +214,7 @@ fi
 
             CKPT_OVERRIDE=\"\"
             if [ -n \"$CHECKPOINT_DIR\" ]; then
-                CKPT_OVERRIDE=\"model.config.checkpoint_dir=${CHECKPOINT_DIR} model.config.checkpoint_pattern=distilled_${STUDENT_NAME}_\${TASK}.pt\"
+                CKPT_OVERRIDE=\"+model.config.checkpoint_dir=${CHECKPOINT_DIR} +model.config.checkpoint_pattern=distilled_${STUDENT_NAME}_\${TASK}.pt\"
             fi
             python -m src.cli.run_multiresolution_probe \
                 --domain $DOMAIN \
@@ -232,7 +232,7 @@ fi
         # Dermatology / Radiology: single run, no task override
         CKPT_OVERRIDE=\"\"
         if [ -n \"$CHECKPOINT_DIR\" ]; then
-            CKPT_OVERRIDE=\"model.config.checkpoint_dir=${CHECKPOINT_DIR} model.config.checkpoint_pattern=distilled_${STUDENT_NAME}.pt\"
+            CKPT_OVERRIDE=\"+model.config.checkpoint_dir=${CHECKPOINT_DIR} +model.config.checkpoint_pattern=distilled_${STUDENT_NAME}.pt\"
         fi
         EXTRA_ARGS=\"\"
         if [ -n \"$EXTRAS\" ] || [ -n \"\$CKPT_OVERRIDE\" ]; then
