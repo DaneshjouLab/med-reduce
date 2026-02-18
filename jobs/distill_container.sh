@@ -2,7 +2,7 @@
 #SBATCH --job-name=distill_3seeds
 #SBATCH --partition=roxanad
 #SBATCH --gres=gpu:1
-#SBATCH --time=12:00:00
+#SBATCH --time=64:00:00
 #SBATCH --mem=48G
 #SBATCH --cpus-per-task=8
 #SBATCH --output=logs/%x_%j.out
@@ -19,6 +19,7 @@
 # Optional overrides:
 #   STUDENT=tiny_vit_21m_224 DOMAIN=dermatology sbatch jobs/distill_container.sh
 #   STUDENT=tiny_vit_21m_224 DOMAIN=pathology sbatch jobs/distill_container.sh
+#   STUDENT=tiny_vit_21m_224 DOMAIN=radiology sbatch jobs/distill_container.sh
 #   SEEDS="42" DOMAIN=dermatology sbatch jobs/distill_container.sh
 #   ALPHA=0.7 DOMAIN=dermatology sbatch jobs/distill_container.sh
 #
