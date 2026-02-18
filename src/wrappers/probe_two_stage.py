@@ -359,12 +359,19 @@ class ProbeTwoStageWrapper:
         model = create_model(self.model_info, resolution=resolution)
 
         # Load distilled checkpoint if configured (Pipeline C)
-        # Supports {seed} placeholder, e.g. ".../seed_{seed}/distilled_resnet18.pt"
-        checkpoint_path = self._cfg_get(
-            self.model_info.get("config", {}), "checkpoint", None
-        )
+        # Option 1: direct path via model.config.checkpoint
+        # Option 2: checkpoint_dir + checkpoint_pattern (auto-resolves seed)
+        model_config = self.model_info.get("config", {})
+        checkpoint_path = self._cfg_get(model_config, "checkpoint", None)
+
+        if not checkpoint_path:
+            ckpt_dir = self._cfg_get(model_config, "checkpoint_dir", None)
+            ckpt_pattern = self._cfg_get(model_config, "checkpoint_pattern", None)
+            if ckpt_dir and ckpt_pattern:
+                checkpoint_path = os.path.join(str(ckpt_dir), f"seed_{self.seed}", str(ckpt_pattern))
+
         if checkpoint_path:
-            checkpoint_path = str(checkpoint_path).replace("{seed}", str(self.seed))
+            checkpoint_path = str(checkpoint_path)
             if os.path.exists(checkpoint_path):
                 log.info(f"Loading distilled checkpoint: {checkpoint_path}")
                 ckpt = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
