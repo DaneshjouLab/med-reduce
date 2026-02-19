@@ -86,7 +86,7 @@ datamodule:
 data:
   multi_label: true
   image_size: 512
-  batch_size: 64
+  batch_size: 32
 
 train:
   epochs: 100

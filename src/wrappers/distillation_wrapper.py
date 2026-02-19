@@ -684,11 +684,10 @@ class DistillationWrapper:
 
         Each training image produces 4 views:
           - View 0: clean 512px (Resize only — no crop, no flip, no degradation)
-          - View 1: degraded + blur (Gaussian blur, kernel=23, sigma 0.1-2.0)
-          - View 2: degraded + rotation (±25 degrees)
-          - View 3: degraded + crop strong (scale 0.3-1.0)
+          - View 1: degraded only (random downsample 20-80%, upsample back to 512px)
+          - View 2: degraded + blur (Gaussian blur, kernel=23, sigma 0.1-2.0)
+          - View 3: degraded + crop (scale 0.5-1.0)
 
-        Degraded views use bicubic RandomResizedCrop to ensure fixed output size.
         Validation uses a single deterministic degraded view (no augmentation).
         """
         image_size = int(getattr(self.cfg.data, "image_size", 512))
@@ -704,32 +703,25 @@ class DistillationWrapper:
             *_to_tensor,
         ])
 
-        # --- View 1: degraded + blur ---
+        # --- View 1: degraded only (random downsample 20-80%, upsample back) ---
+        degraded_view = transforms.Compose([
+            transforms.Resize((image_size, image_size)),
+            ResolutionReductionTransform(),  # random factor 0.2-0.8
+            *_to_tensor,
+        ])
+
+        # --- View 2: degraded + blur ---
         blur_view = transforms.Compose([
-            transforms.RandomResizedCrop(
-                image_size, scale=(0.6, 1.0),
-                interpolation=transforms.InterpolationMode.BICUBIC,
-            ),
+            transforms.Resize((image_size, image_size)),
             ResolutionReductionTransform(),
             transforms.GaussianBlur(kernel_size=23, sigma=(0.1, 2.0)),
             *_to_tensor,
         ])
 
-        # --- View 2: degraded + rotation (±25°) ---
-        rot_view = transforms.Compose([
+        # --- View 3: degraded + crop (scale 0.5-1.0) ---
+        crop_view = transforms.Compose([
             transforms.RandomResizedCrop(
-                image_size, scale=(0.6, 1.0),
-                interpolation=transforms.InterpolationMode.BICUBIC,
-            ),
-            ResolutionReductionTransform(),
-            transforms.RandomRotation(25),
-            *_to_tensor,
-        ])
-
-        # --- View 3: degraded + crop strong (scale 0.3-1.0) ---
-        crop_strong_view = transforms.Compose([
-            transforms.RandomResizedCrop(
-                image_size, scale=(0.3, 1.0),
+                image_size, scale=(0.5, 1.0),
                 interpolation=transforms.InterpolationMode.BICUBIC,
             ),
             ResolutionReductionTransform(),
@@ -737,10 +729,10 @@ class DistillationWrapper:
         ])
 
         view_transforms = [
-            clean_view,         # 0: clean 512px
-            blur_view,          # 1: degraded + blur
-            rot_view,           # 2: degraded + rotation ±25°
-            crop_strong_view,   # 3: degraded + crop strong
+            clean_view,     # 0: clean 512px
+            degraded_view,  # 1: degraded only
+            blur_view,      # 2: degraded + blur
+            crop_view,      # 3: degraded + crop (0.5-1.0)
         ]
         n_views = len(view_transforms)
 
@@ -757,7 +749,7 @@ class DistillationWrapper:
             log.info(
                 f"  Multi-view training: {n_views} views/image "
                 f"({len(base_dataset)} base -> {len(dataset)} samples): "
-                f"clean_512, degraded+blur, degraded+rot25, degraded+crop_strong"
+                f"clean_512, degraded, degraded+blur, degraded+crop"
             )
         else:
             # Validation: single deterministic degraded view, no augmentation
