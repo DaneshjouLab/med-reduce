@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import argparse
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -56,6 +57,48 @@ DOMAIN_CONFIG = {
         "default_resolutions": [512, 256, 128, 64],
     },
 }
+
+
+def _resolve_dataset_name(config, extra_overrides=None):
+    """
+    Resolve the dataset_identifier that the wrapper will use, without
+    instantiating the datamodule.  This mirrors the logic in each datamodule's
+    __init__ so the CLI can construct the correct hyperparam subdir path.
+
+    Returns e.g. "images", "combined_train_valid_chexpert_v1.0", "tcga_kras".
+    """
+    dm_cfg = config.datamodule
+
+    # Pathology (TCGADataModule): identifier = f"tcga_{task}"
+    target = str(dm_cfg.get("_target_", ""))
+    if "tcga_datamodule" in target.lower() or "TCGADataModule" in target:
+        task = dm_cfg.get("task", "luad_vs_lusc")
+        # Allow extra_overrides to override the task
+        if extra_overrides:
+            for ov in extra_overrides:
+                if ov.startswith("datamodule.task="):
+                    task = ov.split("=", 1)[1]
+        return f"tcga_{task}"
+
+    # Dermatology / Radiology (TabularDataModulePersistent): identifier = basename(data_dir)
+    data_dir = dm_cfg.get("data_dir", None)
+    if extra_overrides:
+        for ov in extra_overrides:
+            if ov.startswith("datamodule.data_dir="):
+                data_dir = ov.split("=", 1)[1]
+    if data_dir:
+        return os.path.basename(str(data_dir).rstrip("/\\"))
+
+    # Fallback: dataset_name (HuggingFace)
+    dataset_name = dm_cfg.get("dataset_name", None)
+    if extra_overrides:
+        for ov in extra_overrides:
+            if ov.startswith("datamodule.dataset_name="):
+                dataset_name = ov.split("=", 1)[1]
+    if dataset_name:
+        return str(dataset_name).replace("/", "_")
+
+    return "unknown"
 
 
 def run_hyperparameter_tuning(
@@ -176,8 +219,11 @@ def run_final_probing(
                 for ov in extra_overrides:
                     if ov.startswith("runtime.run_dir="):
                         run_dir = ov.split("=", 1)[1]
-            # Use seed in the path to hyperparam file
-            hyperparam_file = f"{run_dir}/seed_{seed}/hyperparam_search/best_hyperparameters.json"
+            # Resolve dataset_name and model_name for task-specific subdir
+            dataset_name = _resolve_dataset_name(config, extra_overrides)
+            model_name = MODEL_CONFIGS[model_key].get("model.name", model_key)
+            hp_subdir = f"{dataset_name}_{model_name}"
+            hyperparam_file = f"{run_dir}/seed_{seed}/hyperparam_search/{hp_subdir}/best_hyperparameters.json"
 
         # Resolve hyperparam_file relative to project root
         hyperparam_file = str((project_root / hyperparam_file).resolve())
@@ -348,7 +394,11 @@ def main():
                 for ov in args.extra_overrides:
                     if ov.startswith("runtime.run_dir="):
                         run_dir = ov.split("=", 1)[1]
-            hyperparam_file = str((project_root / f"{run_dir}/seed_{first_seed}/hyperparam_search/best_hyperparameters.json").resolve())
+            # Resolve dataset_name and model_name for hyperparam subdir
+            model_name = MODEL_CONFIGS[args.model].get("model.name", args.model)
+            dataset_name = _resolve_dataset_name(config, args.extra_overrides)
+            hp_subdir = f"{dataset_name}_{model_name}"
+            hyperparam_file = str((project_root / f"{run_dir}/seed_{first_seed}/hyperparam_search/{hp_subdir}/best_hyperparameters.json").resolve())
 
     # Run final probing for ALL seeds using shared hyperparams
     if args.resolutions:

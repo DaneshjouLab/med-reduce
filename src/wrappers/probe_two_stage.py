@@ -168,7 +168,7 @@ class ProbeTwoStageWrapper:
                 else:
                     log.info(f"✓ Hyperparameter search at highest resolution: {self.current_resolution}px")
 
-                self.search_dir = os.path.join(self.run_dir, "hyperparam_search")
+                self.search_dir = os.path.join(self.run_dir, "hyperparam_search", f"{self.dataset_name}_{self.model_name}")
                 os.makedirs(self.search_dir, exist_ok=True)
 
             # Load pre-tuned hyperparameters if available
