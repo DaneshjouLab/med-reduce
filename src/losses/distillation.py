@@ -19,7 +19,9 @@ def embedding_distillation_loss(alpha: float = 0.5):
         Callable loss(student_emb [B,D], teacher_emb [B,D]) -> scalar Tensor
     """
     def _loss(student_emb: Tensor, teacher_emb: Tensor) -> Tensor:
-        mse = F.mse_loss(student_emb, teacher_emb)
-        cosine = (1 - F.cosine_similarity(student_emb, teacher_emb)).mean()
+        s = F.normalize(student_emb, dim=-1)
+        t = F.normalize(teacher_emb, dim=-1)
+        mse = F.mse_loss(s, t)
+        cosine = (1 - F.cosine_similarity(s, t)).mean()
         return alpha * mse + (1 - alpha) * cosine
     return _loss

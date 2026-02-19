@@ -20,7 +20,7 @@ import hydra
 from pathlib import Path
 from omegaconf import OmegaConf
 from torchvision import transforms
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Dataset, Sampler
 
 from src.engines.distillation_engine import train_distillation
 from src.losses.distillation import embedding_distillation_loss
@@ -33,6 +33,122 @@ from src.utils.logging_core import setup_logging, get_logger, WandbLogger
 from src.transformations.transforms import ResolutionReductionTransform
 
 log = get_logger(__name__)
+
+
+class MultiViewDataset(Dataset):
+    """Wraps a base dataset to produce multiple augmented views per image.
+
+    Each original sample is returned ``n_views`` times with independently
+    sampled augmentations.  The ``image_id`` is preserved so that the
+    teacher-embedding lookup still works.
+    """
+
+    def __init__(self, base_dataset: Dataset, view_transforms: list, n_views: int = 2):
+        """
+        Args:
+            base_dataset: Underlying dataset returning dicts with
+                ``pixel_values``, ``label``, and optionally ``image_id``.
+            view_transforms: List of ``torchvision.transforms.Compose``
+                pipelines, one per view.  Cycled if ``n_views`` exceeds the
+                list length.
+            n_views: Number of augmented copies per image (>= 1).
+        """
+        self.base = base_dataset
+        self.view_transforms = view_transforms
+        self.n_views = max(1, n_views)
+
+    def __len__(self):
+        return len(self.base) * self.n_views
+
+    def __getitem__(self, idx):
+        base_idx = idx // self.n_views
+        view_idx = idx % self.n_views
+
+        # Access the raw PIL image directly (bypassing the base dataset's
+        # transform) so we can apply our own view-specific transform.
+        raw = self._get_raw_item(base_idx)
+        image = raw["image"]
+        tfm = self.view_transforms[view_idx % len(self.view_transforms)]
+        image = tfm(image)
+
+        result = {"pixel_values": image, "label": raw["label"]}
+        if "image_id" in raw:
+            result["image_id"] = raw["image_id"]
+        return result
+
+    # ------------------------------------------------------------------
+
+    def _get_raw_item(self, base_idx):
+        """Return the raw PIL image + metadata without the base transform."""
+        ds = self.base
+        # Unwrap torch Subset
+        while hasattr(ds, "dataset"):
+            if hasattr(ds, "indices"):
+                base_idx = ds.indices[base_idx]
+            ds = ds.dataset
+
+        # ds is now the leaf dataset (ISICHFRawSplitLocal / TCGASlideDataset / …)
+        from PIL import Image as PILImage
+
+        if hasattr(ds, "ds"):
+            # HuggingFace-backed (ISICHFRawSplitLocal)
+            row = ds.ds[base_idx]
+            img = row.get(ds.image_column, row.get("image"))
+            if not isinstance(img, PILImage.Image):
+                img = PILImage.open(img).convert("RGB")
+            else:
+                img = img.convert("RGB")
+            label = row.get(ds.label_column if hasattr(ds, "label_column") else "label", 0)
+            if isinstance(label, (list, tuple)):
+                import torch
+                label = torch.tensor(label, dtype=torch.float32)
+            else:
+                label = int(label)
+            image_id = row.get("image_id")
+        elif hasattr(ds, "df"):
+            # TCGASlideDataset
+            row = ds.df.iloc[base_idx]
+            img_path = ds.thumbnails_dir / f"{row['slide_id']}.jpg"
+            img = PILImage.open(img_path).convert("RGB")
+            label = int(row["label"])
+            image_id = str(row["slide_id"])
+        else:
+            raise TypeError(f"Unsupported base dataset type: {type(ds)}")
+
+        out = {"image": img, "label": label}
+        if image_id is not None:
+            out["image_id"] = str(image_id)
+        return out
+
+
+class GroupedViewBatchSampler(Sampler):
+    """Batch sampler that keeps all views of the same image in the same batch.
+
+    Given a ``MultiViewDataset`` with *N* base images and *V* views each,
+    this sampler shuffles the *N* image indices and yields batches where each
+    batch contains ``batch_size_images * V`` samples (all views of
+    ``batch_size_images`` images grouped together).
+    """
+
+    def __init__(self, n_images: int, n_views: int, batch_size_images: int, shuffle: bool = True):
+        self.n_images = n_images
+        self.n_views = n_views
+        self.batch_size_images = batch_size_images
+        self.shuffle = shuffle
+
+    def __iter__(self):
+        import numpy as np
+        order = np.random.permutation(self.n_images) if self.shuffle else np.arange(self.n_images)
+        for start in range(0, self.n_images, self.batch_size_images):
+            image_indices = order[start : start + self.batch_size_images]
+            # Expand each image index into its n_views consecutive dataset indices
+            batch = []
+            for img_idx in image_indices:
+                batch.extend(range(img_idx * self.n_views, (img_idx + 1) * self.n_views))
+            yield batch
+
+    def __len__(self):
+        return (self.n_images + self.batch_size_images - 1) // self.batch_size_images
 
 
 class DistillationWrapper:
@@ -564,28 +680,163 @@ class DistillationWrapper:
         )
 
     def _make_degraded_dataloader(self, split: str, shuffle: bool = True) -> DataLoader:
-        """Create a dataloader with degradation transforms for student training."""
+        """Create a dataloader with multi-view augmented transforms for student training.
+
+        Each training image produces 7 views:
+          - View 0: clean (full-resolution, no degradation)
+          - View 1: degraded + blur (Gaussian blur, kernel=23, sigma 0.1-2.0)
+          - View 2: degraded + rotation mild (±10 degrees)
+          - View 3: degraded + rotation strong (±25 degrees)
+          - View 4: degraded + crop mild (scale 0.6-1.0)
+          - View 5: degraded + crop strong (scale 0.3-1.0)
+          - View 6: degraded only (no extra augmentation)
+
+        All training views use RandomResizedCrop with bicubic interpolation.
+        Validation uses a single deterministic degraded view (no augmentation).
+        """
         image_size = int(getattr(self.cfg.data, "image_size", 512))
 
-        degraded_transform = transforms.Compose([
-            transforms.Resize((image_size, image_size)),
-            ResolutionReductionTransform(),
-            transforms.ToTensor(),
-            transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                 std=[0.229, 0.224, 0.225]),
+        _norm = transforms.Normalize(
+            mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225],
+        )
+        _to_tensor = [transforms.ToTensor(), _norm]
+
+        # --- View 0: clean (full-res, bicubic crop, no degradation) ---
+        clean_view = transforms.Compose([
+            transforms.RandomResizedCrop(
+                image_size, scale=(0.6, 1.0),
+                interpolation=transforms.InterpolationMode.BICUBIC,
+            ),
+            transforms.RandomHorizontalFlip(),
+            *_to_tensor,
         ])
 
-        dataset = self._get_split_dataset(split, transform=degraded_transform)
+        # --- View 1: degraded + blur ---
+        blur_view = transforms.Compose([
+            transforms.RandomResizedCrop(
+                image_size, scale=(0.6, 1.0),
+                interpolation=transforms.InterpolationMode.BICUBIC,
+            ),
+            ResolutionReductionTransform(),
+            transforms.GaussianBlur(kernel_size=23, sigma=(0.1, 2.0)),
+            *_to_tensor,
+        ])
+
+        # --- View 2: degraded + rotation mild (±10°) ---
+        rot_mild_view = transforms.Compose([
+            transforms.RandomResizedCrop(
+                image_size, scale=(0.6, 1.0),
+                interpolation=transforms.InterpolationMode.BICUBIC,
+            ),
+            ResolutionReductionTransform(),
+            transforms.RandomRotation(10),
+            *_to_tensor,
+        ])
+
+        # --- View 3: degraded + rotation strong (±25°) ---
+        rot_strong_view = transforms.Compose([
+            transforms.RandomResizedCrop(
+                image_size, scale=(0.6, 1.0),
+                interpolation=transforms.InterpolationMode.BICUBIC,
+            ),
+            ResolutionReductionTransform(),
+            transforms.RandomRotation(25),
+            *_to_tensor,
+        ])
+
+        # --- View 4: degraded + crop mild (scale 0.6-1.0) ---
+        crop_mild_view = transforms.Compose([
+            transforms.RandomResizedCrop(
+                image_size, scale=(0.6, 1.0),
+                interpolation=transforms.InterpolationMode.BICUBIC,
+            ),
+            ResolutionReductionTransform(),
+            *_to_tensor,
+        ])
+
+        # --- View 5: degraded + crop strong (scale 0.3-1.0) ---
+        crop_strong_view = transforms.Compose([
+            transforms.RandomResizedCrop(
+                image_size, scale=(0.3, 1.0),
+                interpolation=transforms.InterpolationMode.BICUBIC,
+            ),
+            ResolutionReductionTransform(),
+            *_to_tensor,
+        ])
+
+        # --- View 6: degraded only (no extra augmentation) ---
+        degraded_only_view = transforms.Compose([
+            transforms.RandomResizedCrop(
+                image_size, scale=(0.6, 1.0),
+                interpolation=transforms.InterpolationMode.BICUBIC,
+            ),
+            ResolutionReductionTransform(),
+            *_to_tensor,
+        ])
+
+        view_transforms = [
+            clean_view,         # 0: clean
+            blur_view,          # 1: degraded + blur
+            rot_mild_view,      # 2: degraded + rotation mild
+            rot_strong_view,    # 3: degraded + rotation strong
+            crop_mild_view,     # 4: degraded + crop mild
+            crop_strong_view,   # 5: degraded + crop strong
+            degraded_only_view, # 6: degraded only
+        ]
+        n_views = len(view_transforms)
+
+        # Base dataset with a dummy transform (MultiViewDataset bypasses it
+        # and applies its own transforms to the raw PIL image).
+        base_dataset = self._get_split_dataset(split, transform=transforms.Compose([
+            transforms.Resize((image_size, image_size)),
+            transforms.ToTensor(),
+            _norm,
+        ]))
+
+        if split == "train":
+            dataset = MultiViewDataset(base_dataset, view_transforms, n_views=n_views)
+            log.info(
+                f"  Multi-view training: {n_views} views/image "
+                f"({len(base_dataset)} base -> {len(dataset)} samples): "
+                f"clean, blur, rot±10, rot±25, crop(0.6-1.0), crop(0.3-1.0), degraded-only"
+            )
+        else:
+            # Validation: single deterministic degraded view, no augmentation
+            val_transform = transforms.Compose([
+                transforms.Resize((image_size, image_size)),
+                ResolutionReductionTransform(reduction_factor=0.5),
+                transforms.ToTensor(),
+                _norm,
+            ])
+            dataset = self._get_split_dataset(split, transform=val_transform)
+
         batch_size = int(getattr(self.cfg.data, "batch_size", 64))
 
-        return DataLoader(
-            dataset,
-            batch_size=batch_size,
-            shuffle=shuffle,
-            num_workers=int(getattr(self.cfg.datamodule, "num_workers", 8)),
-            pin_memory=True,
-            drop_last=False,
-        )
+        if split == "train":
+            # Use grouped batch sampler so all 7 views of the same image
+            # always appear together in the same batch.
+            n_base = len(base_dataset)
+            batch_sampler = GroupedViewBatchSampler(
+                n_images=n_base,
+                n_views=n_views,
+                batch_size_images=batch_size,  # images per batch (actual samples = batch_size * n_views)
+                shuffle=shuffle,
+            )
+            return DataLoader(
+                dataset,
+                batch_sampler=batch_sampler,
+                num_workers=int(getattr(self.cfg.datamodule, "num_workers", 8)),
+                pin_memory=True,
+            )
+        else:
+            return DataLoader(
+                dataset,
+                batch_size=batch_size,
+                shuffle=False,
+                num_workers=int(getattr(self.cfg.datamodule, "num_workers", 8)),
+                pin_memory=True,
+                drop_last=False,
+            )
 
     def _get_split_dataset(self, split: str, transform):
         """

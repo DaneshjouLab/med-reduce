@@ -84,6 +84,7 @@ datamodule:
   force_recompute_embeddings: false
 
 data:
+  multi_label: true
   image_size: 512
   batch_size: 64
 
