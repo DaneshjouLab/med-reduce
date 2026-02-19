@@ -682,16 +682,12 @@ class DistillationWrapper:
     def _make_degraded_dataloader(self, split: str, shuffle: bool = True) -> DataLoader:
         """Create a dataloader with multi-view augmented transforms for student training.
 
-        Each training image produces 7 views:
-          - View 0: clean (full-resolution, no degradation)
+        Each training image produces 3 views:
+          - View 0: clean (full-resolution) + RandomResizedCrop + HorizontalFlip
           - View 1: degraded + blur (Gaussian blur, kernel=23, sigma 0.1-2.0)
-          - View 2: degraded + rotation mild (±10 degrees)
-          - View 3: degraded + rotation strong (±25 degrees)
-          - View 4: degraded + crop mild (scale 0.6-1.0)
-          - View 5: degraded + crop strong (scale 0.3-1.0)
-          - View 6: degraded only (no extra augmentation)
+          - View 2: degraded + crop strong (scale 0.3-1.0)
 
-        All training views use RandomResizedCrop with bicubic interpolation.
+        All training views use bicubic RandomResizedCrop to ensure fixed output size.
         Validation uses a single deterministic degraded view (no augmentation).
         """
         image_size = int(getattr(self.cfg.data, "image_size", 512))
@@ -722,39 +718,7 @@ class DistillationWrapper:
             *_to_tensor,
         ])
 
-        # --- View 2: degraded + rotation mild (±10°) ---
-        rot_mild_view = transforms.Compose([
-            transforms.RandomResizedCrop(
-                image_size, scale=(0.6, 1.0),
-                interpolation=transforms.InterpolationMode.BICUBIC,
-            ),
-            ResolutionReductionTransform(),
-            transforms.RandomRotation(10),
-            *_to_tensor,
-        ])
-
-        # --- View 3: degraded + rotation strong (±25°) ---
-        rot_strong_view = transforms.Compose([
-            transforms.RandomResizedCrop(
-                image_size, scale=(0.6, 1.0),
-                interpolation=transforms.InterpolationMode.BICUBIC,
-            ),
-            ResolutionReductionTransform(),
-            transforms.RandomRotation(25),
-            *_to_tensor,
-        ])
-
-        # --- View 4: degraded + crop mild (scale 0.6-1.0) ---
-        crop_mild_view = transforms.Compose([
-            transforms.RandomResizedCrop(
-                image_size, scale=(0.6, 1.0),
-                interpolation=transforms.InterpolationMode.BICUBIC,
-            ),
-            ResolutionReductionTransform(),
-            *_to_tensor,
-        ])
-
-        # --- View 5: degraded + crop strong (scale 0.3-1.0) ---
+        # --- View 2: degraded + crop strong (scale 0.3-1.0) ---
         crop_strong_view = transforms.Compose([
             transforms.RandomResizedCrop(
                 image_size, scale=(0.3, 1.0),
@@ -764,24 +728,10 @@ class DistillationWrapper:
             *_to_tensor,
         ])
 
-        # --- View 6: degraded only (no extra augmentation) ---
-        degraded_only_view = transforms.Compose([
-            transforms.RandomResizedCrop(
-                image_size, scale=(0.6, 1.0),
-                interpolation=transforms.InterpolationMode.BICUBIC,
-            ),
-            ResolutionReductionTransform(),
-            *_to_tensor,
-        ])
-
         view_transforms = [
             clean_view,         # 0: clean
             blur_view,          # 1: degraded + blur
-            rot_mild_view,      # 2: degraded + rotation mild
-            rot_strong_view,    # 3: degraded + rotation strong
-            crop_mild_view,     # 4: degraded + crop mild
-            crop_strong_view,   # 5: degraded + crop strong
-            degraded_only_view, # 6: degraded only
+            crop_strong_view,   # 2: degraded + crop strong
         ]
         n_views = len(view_transforms)
 
@@ -798,7 +748,7 @@ class DistillationWrapper:
             log.info(
                 f"  Multi-view training: {n_views} views/image "
                 f"({len(base_dataset)} base -> {len(dataset)} samples): "
-                f"clean, blur, rot±10, rot±25, crop(0.6-1.0), crop(0.3-1.0), degraded-only"
+                f"clean, degraded+blur, degraded+crop_strong"
             )
         else:
             # Validation: single deterministic degraded view, no augmentation
