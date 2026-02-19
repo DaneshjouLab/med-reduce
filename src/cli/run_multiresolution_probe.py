@@ -171,6 +171,11 @@ def run_final_probing(
         hyperparam_file = config.train.hyperparam_search.get('load_from_file')
         if not hyperparam_file:
             run_dir = config.runtime.get('run_dir', './runs/probe_two_stage')
+            # Check if runtime.run_dir was overridden via extra_overrides
+            if extra_overrides:
+                for ov in extra_overrides:
+                    if ov.startswith("runtime.run_dir="):
+                        run_dir = ov.split("=", 1)[1]
             # Use seed in the path to hyperparam file
             hyperparam_file = f"{run_dir}/seed_{seed}/hyperparam_search/best_hyperparameters.json"
 
@@ -338,6 +343,11 @@ def main():
             config = OmegaConf.load(resolved_config_path)
 
             run_dir = config.runtime.get('run_dir', './runs/probe_two_stage')
+            # Check if runtime.run_dir was overridden via extra_overrides
+            if args.extra_overrides:
+                for ov in args.extra_overrides:
+                    if ov.startswith("runtime.run_dir="):
+                        run_dir = ov.split("=", 1)[1]
             hyperparam_file = str((project_root / f"{run_dir}/seed_{first_seed}/hyperparam_search/best_hyperparameters.json").resolve())
 
     # Run final probing for ALL seeds using shared hyperparams
