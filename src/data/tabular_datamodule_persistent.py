@@ -77,6 +77,11 @@ class TabularDataModulePersistent(BaseDataModule):
         # Store fallback but prefer cfg.data.image_size at runtime
         self._fallback_image_size = image_size
 
+        # Multi-label flag (e.g. CheXpert radiology)
+        self.multi_label = False
+        if full_cfg and hasattr(full_cfg, 'data'):
+            self.multi_label = getattr(full_cfg.data, 'multi_label', False)
+
         super().__init__(
             cfg=full_cfg,
             dataset_name=dataset_name,
@@ -159,6 +164,7 @@ class TabularDataModulePersistent(BaseDataModule):
                 transform=transform,
                 filter_fn=self.filter_fn,
                 keep_indices=self.keep_indices,
+                multi_label=self.multi_label,
             )
         else:
             raise ValueError(f"Unknown data source: {self.data_source}")
@@ -177,7 +183,11 @@ class TabularDataModulePersistent(BaseDataModule):
                     if label_col in inner_ds.column_names:
                         labels = inner_ds[label_col]  # Returns list of all labels
                         log.info(f"Extracted {len(labels)} labels from HF Dataset column '{label_col}'")
-                        return np.array(labels)
+                        labels_array = np.array(labels)
+                        # Multi-label: use argmax for stratification only
+                        if labels_array.ndim == 2:
+                            return np.argmax(labels_array, axis=1)
+                        return labels_array
 
                 if hasattr(inner_ds, 'targets'):
                     return np.array(inner_ds.targets)

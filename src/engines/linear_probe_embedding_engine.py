@@ -49,6 +49,7 @@ def train_probe_on_embeddings(
     wandb_logger=None,
     metric_key: str = "val_acc",
     label_names: list[str] | None = None,
+    multi_label: bool = False,
 ) -> Dict[str, Any]:
     """
     Train a linear classifier on pre-computed embeddings.
@@ -130,6 +131,7 @@ def train_probe_on_embeddings(
             device=device,
             mixed_precision=mixed_precision,
             label_names=label_names,
+            multi_label=multi_label,
         )
 
         if sched is not None:
@@ -193,6 +195,7 @@ def _run_validation_on_embeddings(
     device: torch.device,
     mixed_precision: bool = True,
     label_names: list[str] | None = None,
+    multi_label: bool = False,
 ) -> Tuple[float, float, float, float, dict | None]:
     classifier.eval()
 
@@ -214,12 +217,19 @@ def _run_validation_on_embeddings(
                 loss = loss_fn(logits, labels)
 
             val_loss += float(loss.item()) * labels.size(0)
-            preds = logits.argmax(dim=1)
-            val_correct += (preds == labels).sum().item()
-            val_total += labels.size(0)
 
-            # Convert to float32 before softmax to avoid precision issues with mixed precision
-            probs = torch.softmax(logits.float(), dim=1)
+            if multi_label:
+                # Multi-label: sigmoid probabilities, exact-match accuracy
+                probs = torch.sigmoid(logits.float())
+                preds = (probs > 0.5).float()
+                val_correct += (preds == labels).all(dim=1).sum().item()
+            else:
+                # Single-label: softmax probabilities, argmax accuracy
+                probs = torch.softmax(logits.float(), dim=1)
+                preds = logits.argmax(dim=1)
+                val_correct += (preds == labels).sum().item()
+
+            val_total += labels.size(0)
             all_labels.append(labels.cpu().numpy())
             all_probs.append(probs.cpu().numpy())
 
@@ -231,57 +241,80 @@ def _run_validation_on_embeddings(
     all_probs = np.concatenate(all_probs_list)
     del all_labels_list, all_probs_list  # free the chunk lists
 
-    # Compute AUROC
-    # For multi-class OvR AUROC, we need at least 2 classes in the ground truth.
-    unique_labels_in_val = np.unique(all_labels)
-    num_classes = all_probs.shape[1]
+    per_class_auroc_dict = None
 
-    per_class_auroc_dict = None  # {label_name_or_index: auroc}
+    if multi_label:
+        # Multi-label AUROC: per-label, then macro-average
+        n_labels = all_probs.shape[1]
+        per_class_auroc = []
+        per_class_auroc_dict = {}
+        for i in range(n_labels):
+            y_true_i = all_labels[:, i]
+            y_score_i = all_probs[:, i]
+            # Need both 0s and 1s for AUROC
+            if len(np.unique(y_true_i)) < 2:
+                continue
+            try:
+                auc_i = roc_auc_score(y_true_i, y_score_i)
+                per_class_auroc.append(auc_i)
+                name = label_names[i] if label_names and i < len(label_names) else str(i)
+                per_class_auroc_dict[name] = float(auc_i)
+            except ValueError:
+                pass
 
-    if len(unique_labels_in_val) < 2:
-        log.warning(
-            f"Cannot compute AUROC - only {len(unique_labels_in_val)} class(es) present in validation set "
-            f"(classes: {unique_labels_in_val.tolist()}). Returning NaN to exclude from averaging."
-        )
-        val_auroc = float('nan')
-    else:
+        val_auroc = float(np.mean(per_class_auroc)) if per_class_auroc else float('nan')
+
+        # Multi-label F1
         try:
-            if num_classes == 2:
-                # Binary classification: use probability of positive class
-                val_auroc = roc_auc_score(all_labels, all_probs[:, 1])
-            else:
-                # Multi-class OvR: sklearn requires all classes in labels to have samples
-                # for the default behavior. We compute macro-average only over classes
-                # that are present in this validation set for robustness.
-                # This is the standard approach when not all classes appear in every fold.
-                per_class_auroc = []
-                per_class_auroc_dict = {}
-                for cls in unique_labels_in_val:
-                    y_true_binary = (all_labels == cls).astype(int)
-                    y_score_cls = all_probs[:, cls]
-                    try:
-                        cls_auroc = roc_auc_score(y_true_binary, y_score_cls)
-                        per_class_auroc.append(cls_auroc)
-                        # Use label name if available, otherwise class index
-                        cls_name = label_names[int(cls)] if label_names and int(cls) < len(label_names) else str(int(cls))
-                        per_class_auroc_dict[cls_name] = float(cls_auroc)
-                    except ValueError:
-                        pass
-
-                if per_class_auroc:
-                    val_auroc = float(np.mean(per_class_auroc))
-                else:
-                    val_auroc = float('nan')
+            all_preds = (all_probs > 0.5).astype(int)
+            val_f1 = f1_score(all_labels, all_preds, average='macro')
         except ValueError as e:
-            log.warning(f"Could not compute AUROC: {e}")
-            val_auroc = float('nan')
+            log.warning(f"Could not compute F1: {e}")
+            val_f1 = float('nan')
 
-    # Compute Macro F1
-    try:
-        all_preds = np.argmax(all_probs, axis=1)
-        val_f1 = f1_score(all_labels, all_preds, average='macro')
-    except ValueError as e:
-        log.warning(f"Could not compute F1: {e}")
-        val_f1 = float('nan')
+    else:
+        # Single-label AUROC and F1 (unchanged)
+        unique_labels_in_val = np.unique(all_labels)
+        num_classes = all_probs.shape[1]
+
+        if len(unique_labels_in_val) < 2:
+            log.warning(
+                f"Cannot compute AUROC - only {len(unique_labels_in_val)} class(es) present in validation set "
+                f"(classes: {unique_labels_in_val.tolist()}). Returning NaN to exclude from averaging."
+            )
+            val_auroc = float('nan')
+        else:
+            try:
+                if num_classes == 2:
+                    val_auroc = roc_auc_score(all_labels, all_probs[:, 1])
+                else:
+                    per_class_auroc = []
+                    per_class_auroc_dict = {}
+                    for cls in unique_labels_in_val:
+                        y_true_binary = (all_labels == cls).astype(int)
+                        y_score_cls = all_probs[:, cls]
+                        try:
+                            cls_auroc = roc_auc_score(y_true_binary, y_score_cls)
+                            per_class_auroc.append(cls_auroc)
+                            cls_name = label_names[int(cls)] if label_names and int(cls) < len(label_names) else str(int(cls))
+                            per_class_auroc_dict[cls_name] = float(cls_auroc)
+                        except ValueError:
+                            pass
+
+                    if per_class_auroc:
+                        val_auroc = float(np.mean(per_class_auroc))
+                    else:
+                        val_auroc = float('nan')
+            except ValueError as e:
+                log.warning(f"Could not compute AUROC: {e}")
+                val_auroc = float('nan')
+
+        # Compute Macro F1
+        try:
+            all_preds = np.argmax(all_probs, axis=1)
+            val_f1 = f1_score(all_labels, all_preds, average='macro')
+        except ValueError as e:
+            log.warning(f"Could not compute F1: {e}")
+            val_f1 = float('nan')
 
     return val_loss, val_acc, val_auroc, val_f1, per_class_auroc_dict

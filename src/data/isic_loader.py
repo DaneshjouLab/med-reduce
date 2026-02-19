@@ -237,6 +237,7 @@ class ISICHFRawSplitLocal(Dataset):
         transform: Optional[Any] = None,
         filter_fn: Optional[Any] = None,
         keep_indices: Optional[Sequence[int]] = None,
+        multi_label: bool = False,
     ):
         # Load CSV
         if os.path.isabs(label_file):
@@ -278,18 +279,18 @@ class ISICHFRawSplitLocal(Dataset):
 
             # Handle label columns
             if isinstance(label_cols, list):
-                # Multi-label case: convert to single integer label
-                # For ISIC-style labels (melanoma, seborrheic_keratosis):
-                #   - Class 0 (nevus): all columns are 0
-                #   - Class 1+: argmax of columns that are 1, offset by 1
-                # This maps: [0,0] -> 0 (nevus), [1,0] -> 1 (melanoma), [0,1] -> 2 (seb_kera)
                 label_values = [float(example[col]) if example[col] is not None else 0.0 for col in label_cols]
-                if max(label_values) == 0:
-                    # No positive label -> class 0 (e.g., nevus)
-                    example["label"] = 0
+                if multi_label:
+                    # True multi-label: keep as list of floats [C]
+                    example["label"] = label_values
                 else:
-                    # Positive label found -> class index + 1
-                    example["label"] = int(np.argmax(label_values)) + 1
+                    # Single-label via argmax (ISIC-style):
+                    #   - Class 0 (nevus): all columns are 0
+                    #   - Class 1+: argmax of columns that are 1, offset by 1
+                    if max(label_values) == 0:
+                        example["label"] = 0
+                    else:
+                        example["label"] = int(np.argmax(label_values)) + 1
             else:
                 # Single label column
                 val = example[label_cols]
@@ -301,7 +302,10 @@ class ISICHFRawSplitLocal(Dataset):
         cols_to_remove = []
         if image_id_column != "image_id":
             cols_to_remove.append(image_id_column)
-        if isinstance(label_cols, list):
+        if isinstance(label_cols, list) and not multi_label:
+            cols_to_remove.extend(label_cols)
+        elif isinstance(label_cols, list) and multi_label:
+            # multi-label: individual columns consumed into "label" list, safe to remove
             cols_to_remove.extend(label_cols)
         elif label_cols != "label":
             cols_to_remove.append(label_cols)
@@ -320,14 +324,19 @@ class ISICHFRawSplitLocal(Dataset):
             self.class_names = None
 
         # If we have multi-label columns, create class names from them
-        # Class 0 is the "negative" class (e.g., nevus), followed by each label column
         if isinstance(label_cols, list):
-            self.class_names = ("nevus",) + tuple(label_cols)
+            if multi_label:
+                # True multi-label: one output per label column
+                self.class_names = tuple(label_cols)
+            else:
+                # Single-label via argmax: Class 0 is "negative" (e.g., nevus)
+                self.class_names = ("nevus",) + tuple(label_cols)
 
         self.ds = ds
         self.data_dir = data_dir
         self.image_column = "image"
         self.label_column = "label"
+        self.multi_label = multi_label
         self.transform = transform
         self._indices = list(range(len(self.ds)))
 
@@ -335,9 +344,14 @@ class ISICHFRawSplitLocal(Dataset):
         return len(self.ds)
 
     def __getitem__(self, idx: int) -> Dict[str, Any]:
+        import torch
         item = self.ds[idx]
         image = _to_pil(item[self.image_column]).convert("RGB")
-        label = int(item[self.label_column])
+
+        if self.multi_label:
+            label = torch.tensor(item[self.label_column], dtype=torch.float32)
+        else:
+            label = int(item[self.label_column])
 
         if self.transform:
             image = self.transform(image)

@@ -33,3 +33,24 @@ def cross_entropy_loss(
             label_smoothing=label_smoothing,
         )
     return _loss
+
+
+def bce_with_logits_loss(
+    pos_weight: Optional[Tensor] = None,
+    reduction: str = "mean",
+):
+    """
+    Binary cross-entropy with logits for multi-label classification.
+
+    Args:
+        pos_weight: shape [C] tensor of per-label positive weights.
+        reduction: 'none' | 'mean' | 'sum'
+
+    Returns:
+        Callable loss(logits [B,C], targets [B,C])
+    """
+    def _loss(logits: Tensor, targets: Tensor) -> Tensor:
+        return F.binary_cross_entropy_with_logits(
+            logits, targets, pos_weight=pos_weight, reduction=reduction,
+        )
+    return _loss

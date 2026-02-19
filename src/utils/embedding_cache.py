@@ -226,7 +226,10 @@ class EmbeddingCache:
                     embeddings = self._extract_embeddings_from_model(model, images)
 
                 emb_chunks.append(embeddings.cpu().float())
-                label_chunks.append(labels.cpu().long())
+                if labels.ndim > 1:
+                    label_chunks.append(labels.cpu().float())   # [B, C] multi-label
+                else:
+                    label_chunks.append(labels.cpu().long())    # [B] single-label
 
         embeddings = torch.cat(emb_chunks, dim=0)
         labels = torch.cat(label_chunks, dim=0)

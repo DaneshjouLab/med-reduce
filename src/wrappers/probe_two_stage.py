@@ -48,7 +48,7 @@ from src.engines.linear_probe_embedding_engine import train_probe_on_embeddings
 from src.utils.logging_core import setup_logging, get_logger, WandbLogger
 from src.utils.optim import make_optimizer_and_scheduler
 from src.utils.training_utils import profile_model, calculate_inference_latency, get_gpu_memory
-from src.losses.classification import cross_entropy_loss
+from src.losses.classification import cross_entropy_loss, bce_with_logits_loss
 from src.models.factory import create_model, freeze_backbone
 from src.utils.embedding_cache import EmbeddingCache
 from src.utils.split_manager import SplitManager
@@ -95,6 +95,8 @@ class ProbeTwoStageWrapper:
             self.label_names = list(label_col)
         else:
             self.label_names = None
+
+        self.multi_label = getattr(cfg.data, "multi_label", False)
 
         self.seed = int(getattr(cfg.train, "seed", 42))
 
@@ -195,34 +197,60 @@ class ProbeTwoStageWrapper:
         """
         Compute class weights for balanced loss function.
 
-        Uses inverse frequency: weight_i = n_samples / (n_classes * count_i)
+        For single-label: inverse frequency weight_i = n_samples / (n_classes * count_i)
+        For multi-label: pos_weight[i] = neg_count_i / pos_count_i per label column
 
         Args:
-            train_labels: Training labels
-            num_classes: Total number of classes. If None, inferred from max label + 1.
+            train_labels: Training labels — [N] long for single-label, [N, C] float for multi-label
+            num_classes: Total number of classes. If None, inferred from labels.
 
         Returns:
-            Tensor of class weights (one per class)
+            Tensor of class/pos weights
         """
+        if self.multi_label:
+            # Multi-label: compute pos_weight per label = neg_count / pos_count
+            labels_np = train_labels.cpu().numpy()  # [N, C]
+            n_samples, n_labels = labels_np.shape
+            pos_counts = labels_np.sum(axis=0)  # [C]
+            neg_counts = n_samples - pos_counts  # [C]
+
+            pos_weight = np.ones(n_labels, dtype=np.float64)
+            for i in range(n_labels):
+                if pos_counts[i] > 0:
+                    pos_weight[i] = neg_counts[i] / pos_counts[i]
+
+            pos_weight_tensor = torch.tensor(pos_weight, dtype=torch.float32, device=self.device)
+
+            log.info(f"\n{'='*60}")
+            log.info("Multi-Label Pos-Weight Computation")
+            log.info(f"{'='*60}")
+            log.info(f"Training set size: {n_samples}")
+            log.info(f"Number of labels: {n_labels}")
+            for i in range(n_labels):
+                name = self.label_names[i] if self.label_names and i < len(self.label_names) else str(i)
+                pct = pos_counts[i] / n_samples * 100 if n_samples > 0 else 0
+                log.info(f"  {name}: {int(pos_counts[i])} pos ({pct:.1f}%) -> pos_weight: {pos_weight[i]:.4f}")
+            log.info(f"{'='*60}\n")
+
+            return pos_weight_tensor
+
+        # Single-label path (unchanged)
         train_labels_np = train_labels.cpu().numpy()
         n_samples = len(train_labels_np)
 
         if num_classes is None:
             num_classes = int(train_labels_np.max()) + 1
 
-        # Count samples per class (including classes with 0 samples)
         class_counts = np.zeros(num_classes, dtype=np.float64)
         unique_classes, counts = np.unique(train_labels_np, return_counts=True)
         for cls, count in zip(unique_classes, counts):
             class_counts[cls] = count
 
-        # Compute weights, handling classes with 0 samples
         class_weights = np.zeros(num_classes, dtype=np.float64)
         for i in range(num_classes):
             if class_counts[i] > 0:
                 class_weights[i] = n_samples / (num_classes * class_counts[i])
             else:
-                # Assign weight of 0 for missing classes (won't affect loss since no samples)
                 class_weights[i] = 0.0
 
         class_weights_tensor = torch.tensor(class_weights, dtype=torch.float32, device=self.device)
@@ -554,7 +582,7 @@ class ProbeTwoStageWrapper:
             }
 
             embedding_dim = train_embeddings.shape[1]
-            num_classes = int(train_labels.max().item()) + 1
+            num_classes = train_labels.shape[1] if self.multi_label else int(train_labels.max().item()) + 1
             classifier = self._create_linear_classifier(embedding_dim, num_classes)
 
             optimizer, (scheduler, sched_meta) = make_optimizer_and_scheduler(
@@ -564,12 +592,18 @@ class ProbeTwoStageWrapper:
             train_fold_labels = train_labels[train_fold_rel]
             fold_class_weights = self._compute_class_weights(train_fold_labels, num_classes=num_classes)
 
-            loss_fn = cross_entropy_loss(
-                label_smoothing=float(getattr(trial_cfg.loss, "label_smoothing", 0.0)),
-                class_weight=fold_class_weights,
-                ignore_index=-100,
-                reduction="mean",
-            )
+            if self.multi_label:
+                loss_fn = bce_with_logits_loss(
+                    pos_weight=fold_class_weights,
+                    reduction="mean",
+                )
+            else:
+                loss_fn = cross_entropy_loss(
+                    label_smoothing=float(getattr(trial_cfg.loss, "label_smoothing", 0.0)),
+                    class_weight=fold_class_weights,
+                    ignore_index=-100,
+                    reduction="mean",
+                )
 
             result = train_probe_on_embeddings(
                 classifier=classifier,
@@ -584,6 +618,7 @@ class ProbeTwoStageWrapper:
                 log_interval=int(getattr(trial_cfg.train, "log_interval", 50)),
                 wandb_logger=None,
                 metric_key=str(getattr(trial_cfg.train, "metric_key", "val_acc")),
+                multi_label=self.multi_label,
             )
 
             fold_metrics.append(result["best_metric"])
@@ -844,7 +879,7 @@ class ProbeTwoStageWrapper:
         }
 
         embedding_dim = train_embeddings.shape[1]
-        num_classes = int(train_labels.max().item()) + 1
+        num_classes = train_labels.shape[1] if self.multi_label else int(train_labels.max().item()) + 1
         classifier = self._create_linear_classifier(embedding_dim, num_classes)
 
         optimizer, (scheduler, sched_meta) = make_optimizer_and_scheduler(
@@ -865,6 +900,7 @@ class ProbeTwoStageWrapper:
             wandb_logger=self.wandb,
             metric_key=str(getattr(self.cfg.train, "metric_key", "val_acc")),
             label_names=self.label_names,
+            multi_label=self.multi_label,
         )
 
         log.info(f"✓ Final probe at {resolution}px: {result['best_metric']:.4f}")
@@ -891,17 +927,26 @@ class ProbeTwoStageWrapper:
         del all_embeddings  # free the dict; individual tensors are still referenced
 
         # Compute num_classes from all labels (train + test) to ensure we capture all classes
-        num_classes = int(max(train_labels.max().item(), test_labels.max().item())) + 1
+        if self.multi_label:
+            num_classes = train_labels.shape[1]
+        else:
+            num_classes = int(max(train_labels.max().item(), test_labels.max().item())) + 1
 
         log.info("Computing class weights from training data...")
         self.class_weights = self._compute_class_weights(train_labels, num_classes=num_classes)
 
-        self.loss_fn = cross_entropy_loss(
-            label_smoothing=float(getattr(self.cfg.loss, "label_smoothing", 0.0)),
-            class_weight=self.class_weights,
-            ignore_index=int(getattr(self.cfg.loss, "ignore_index", -100)),
-            reduction=str(getattr(self.cfg.loss, "reduction", "mean")),
-        )
+        if self.multi_label:
+            self.loss_fn = bce_with_logits_loss(
+                pos_weight=self.class_weights,
+                reduction=str(getattr(self.cfg.loss, "reduction", "mean")),
+            )
+        else:
+            self.loss_fn = cross_entropy_loss(
+                label_smoothing=float(getattr(self.cfg.loss, "label_smoothing", 0.0)),
+                class_weight=self.class_weights,
+                ignore_index=int(getattr(self.cfg.loss, "ignore_index", -100)),
+                reduction=str(getattr(self.cfg.loss, "reduction", "mean")),
+            )
 
         if self.hyperparam_search_enabled:
             best_params, _ = self._run_hyperparam_search(
@@ -911,22 +956,34 @@ class ProbeTwoStageWrapper:
 
             self.cfg = self._apply_hyperparams_to_cfg(best_params)
             # Recreate loss function with updated label smoothing and class weights
-            self.loss_fn = cross_entropy_loss(
-                label_smoothing=float(getattr(self.cfg.loss, "label_smoothing", 0.0)),
-                class_weight=self.class_weights,
-                ignore_index=-100,
-                reduction="mean",
-            )
+            if self.multi_label:
+                self.loss_fn = bce_with_logits_loss(
+                    pos_weight=self.class_weights,
+                    reduction="mean",
+                )
+            else:
+                self.loss_fn = cross_entropy_loss(
+                    label_smoothing=float(getattr(self.cfg.loss, "label_smoothing", 0.0)),
+                    class_weight=self.class_weights,
+                    ignore_index=-100,
+                    reduction="mean",
+                )
 
         elif self.pretuned_hyperparams:
             log.info("📌 Applying pre-tuned hyperparameters")
             self.cfg = self._apply_hyperparams_to_cfg(self.pretuned_hyperparams)
-            self.loss_fn = cross_entropy_loss(
-                label_smoothing=float(getattr(self.cfg.loss, "label_smoothing", 0.0)),
-                class_weight=self.class_weights,
-                ignore_index=-100,
-                reduction="mean",
-            )
+            if self.multi_label:
+                self.loss_fn = bce_with_logits_loss(
+                    pos_weight=self.class_weights,
+                    reduction="mean",
+                )
+            else:
+                self.loss_fn = cross_entropy_loss(
+                    label_smoothing=float(getattr(self.cfg.loss, "label_smoothing", 0.0)),
+                    class_weight=self.class_weights,
+                    ignore_index=-100,
+                    reduction="mean",
+                )
 
         result = self._train_final_probe(
             train_embeddings=train_embeddings,
