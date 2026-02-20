@@ -86,6 +86,15 @@ def train_distillation(
     history = {"train_loss": [], "val_loss": [], "lr": []}
 
     for epoch in range(1, epochs + 1):
+        # Update epoch on batch sampler (deterministic shuffling) and
+        # dataset (progressive degradation curriculum)
+        train_loader = loaders["train"]
+        if hasattr(train_loader, "batch_sampler") and hasattr(train_loader.batch_sampler, "set_epoch"):
+            train_loader.batch_sampler.set_epoch(epoch)
+        train_dataset = train_loader.dataset
+        if hasattr(train_dataset, "set_epoch"):
+            train_dataset.set_epoch(epoch)
+
         # --- Training ---
         student.train()
         if projection is not None:

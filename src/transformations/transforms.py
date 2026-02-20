@@ -27,21 +27,64 @@ class ResolutionReductionTransform:  # pylint: disable=too-few-public-methods
         else:
             reduction_factor = self.reduction_factor
 
-        # Clamp reduction factor to valid range
-        reduction_factor = max(0.1, min(1.0, reduction_factor))
+        return _apply_resolution_reduction(img, reduction_factor)
 
-        # Calculate new size
-        original_width, original_height = img.size
-        new_width = int(original_width * reduction_factor)
-        new_height = int(original_height * reduction_factor)
 
-        # Ensure minimum size of 1x1
-        new_width = max(1, new_width)
-        new_height = max(1, new_height)
+class ProgressiveResolutionReduction:
+    """Resolution reduction with curriculum: starts mild, ramps to full degradation.
 
-        # Downsample and then upsample back to original size
-        downsampled = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
-        return downsampled.resize((original_width, original_height), Image.Resampling.LANCZOS)
+    During warmup epochs the random degradation range is interpolated from
+    ``(start_min, start_max)`` to ``(end_min, end_max)``.  After warmup the
+    range stays at the final values.
+
+    Args:
+        warmup_epochs: Number of epochs over which to ramp degradation.
+        start_min: Minimum reduction factor at epoch 0 (close to 1 = mild).
+        start_max: Maximum reduction factor at epoch 0.
+        end_min:   Minimum reduction factor after warmup (most aggressive).
+        end_max:   Maximum reduction factor after warmup.
+    """
+
+    def __init__(
+        self,
+        warmup_epochs: int = 30,
+        start_min: float = 0.7,
+        start_max: float = 0.95,
+        end_min: float = 0.2,
+        end_max: float = 0.8,
+    ):
+        self.warmup_epochs = max(1, warmup_epochs)
+        self.start_min = start_min
+        self.start_max = start_max
+        self.end_min = end_min
+        self.end_max = end_max
+        self._epoch = 0
+
+    def set_epoch(self, epoch: int):
+        self._epoch = epoch
+
+    def _current_range(self) -> Tuple[float, float]:
+        t = min(self._epoch / self.warmup_epochs, 1.0)
+        lo = self.start_min + t * (self.end_min - self.start_min)
+        hi = self.start_max + t * (self.end_max - self.start_max)
+        return lo, hi
+
+    def __call__(self, img: Image.Image) -> Image.Image:
+        lo, hi = self._current_range()
+        factor = np.random.uniform(lo, hi)
+        return _apply_resolution_reduction(img, factor)
+
+
+def _apply_resolution_reduction(img: Image.Image, reduction_factor: float) -> Image.Image:
+    """Core downsample-then-upsample logic shared by all resolution transforms."""
+    reduction_factor = max(0.1, min(1.0, reduction_factor))
+
+    original_width, original_height = img.size
+    new_width = max(1, int(original_width * reduction_factor))
+    new_height = max(1, int(original_height * reduction_factor))
+
+    downsampled = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
+    return downsampled.resize((original_width, original_height), Image.Resampling.LANCZOS)
 
 class JPEGCompressionTransform:  # pylint: disable=too-few-public-methods
     """Apply JPEG compression to images."""

@@ -30,7 +30,7 @@ from src.utils.embedding_cache import EmbeddingCache
 from src.utils.split_manager import SplitManager
 from src.utils.optim import make_optimizer_and_scheduler
 from src.utils.logging_core import setup_logging, get_logger, WandbLogger
-from src.transformations.transforms import ResolutionReductionTransform
+from src.transformations.transforms import ResolutionReductionTransform, ProgressiveResolutionReduction
 
 log = get_logger(__name__)
 
@@ -56,6 +56,15 @@ class MultiViewDataset(Dataset):
         self.base = base_dataset
         self.view_transforms = view_transforms
         self.n_views = max(1, n_views)
+
+    def set_epoch(self, epoch: int):
+        """Propagate epoch to any transforms that support progressive scheduling."""
+        for tfm in self.view_transforms:
+            # Walk into Compose pipelines to find ProgressiveResolutionReduction
+            inner_transforms = getattr(tfm, "transforms", [tfm])
+            for t in inner_transforms:
+                if hasattr(t, "set_epoch"):
+                    t.set_epoch(epoch)
 
     def __len__(self):
         return len(self.base) * self.n_views
@@ -130,15 +139,25 @@ class GroupedViewBatchSampler(Sampler):
     ``batch_size_images`` images grouped together).
     """
 
-    def __init__(self, n_images: int, n_views: int, batch_size_images: int, shuffle: bool = True):
+    def __init__(self, n_images: int, n_views: int, batch_size_images: int, shuffle: bool = True, seed: int | None = None):
         self.n_images = n_images
         self.n_views = n_views
         self.batch_size_images = batch_size_images
         self.shuffle = shuffle
+        self.seed = seed
+        self._epoch = 0
+
+    def set_epoch(self, epoch: int):
+        """Set epoch for deterministic but different shuffling each epoch."""
+        self._epoch = epoch
 
     def __iter__(self):
         import numpy as np
-        order = np.random.permutation(self.n_images) if self.shuffle else np.arange(self.n_images)
+        if self.shuffle:
+            rng = np.random.RandomState(self.seed + self._epoch if self.seed is not None else None)
+            order = rng.permutation(self.n_images)
+        else:
+            order = np.arange(self.n_images)
         for start in range(0, self.n_images, self.batch_size_images):
             image_indices = order[start : start + self.batch_size_images]
             # Expand each image index into its n_views consecutive dataset indices
@@ -684,18 +703,28 @@ class DistillationWrapper:
 
         Each training image produces 4 views:
           - View 0: clean 512px (Resize only — no crop, no flip, no degradation)
-          - View 1: degraded only (random downsample 20-80%, upsample back to 512px)
+          - View 1: degraded only (progressive curriculum: mild -> full)
           - View 2: degraded + blur (Gaussian blur, kernel=23, sigma 0.1-2.0)
           - View 3: degraded + crop (scale 0.5-1.0)
+
+        Degradation views use progressive curriculum: starts near-clean and
+        ramps to full degradation over the first 30 epochs.
 
         Validation uses a single deterministic degraded view (no augmentation).
         """
         image_size = int(getattr(self.cfg.data, "image_size", 512))
+        warmup = int(getattr(self.cfg.distillation, "degradation_warmup_epochs", 30))
 
         _norm = transforms.Normalize(
             mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225],
         )
         _to_tensor = [transforms.ToTensor(), _norm]
+
+        # --- Progressive degradation transforms (shared across views) ---
+        prog_degrade_1 = ProgressiveResolutionReduction(warmup_epochs=warmup)
+        prog_degrade_2 = ProgressiveResolutionReduction(warmup_epochs=warmup)
+        prog_degrade_3 = ProgressiveResolutionReduction(warmup_epochs=warmup)
+        self._progressive_transforms = [prog_degrade_1, prog_degrade_2, prog_degrade_3]
 
         # --- View 0: clean (plain resize, no augmentation, no degradation) ---
         clean_view = transforms.Compose([
@@ -703,17 +732,17 @@ class DistillationWrapper:
             *_to_tensor,
         ])
 
-        # --- View 1: degraded only (random downsample 20-80%, upsample back) ---
+        # --- View 1: degraded only (progressive curriculum) ---
         degraded_view = transforms.Compose([
             transforms.Resize((image_size, image_size)),
-            ResolutionReductionTransform(),  # random factor 0.2-0.8
+            prog_degrade_1,
             *_to_tensor,
         ])
 
         # --- View 2: degraded + blur ---
         blur_view = transforms.Compose([
             transforms.Resize((image_size, image_size)),
-            ResolutionReductionTransform(),
+            prog_degrade_2,
             transforms.GaussianBlur(kernel_size=23, sigma=(0.1, 2.0)),
             *_to_tensor,
         ])
@@ -724,15 +753,15 @@ class DistillationWrapper:
                 image_size, scale=(0.5, 1.0),
                 interpolation=transforms.InterpolationMode.BICUBIC,
             ),
-            ResolutionReductionTransform(),
+            prog_degrade_3,
             *_to_tensor,
         ])
 
         view_transforms = [
             clean_view,     # 0: clean 512px
-            degraded_view,  # 1: degraded only
-            blur_view,      # 2: degraded + blur
-            crop_view,      # 3: degraded + crop (0.5-1.0)
+            degraded_view,  # 1: degraded only (progressive)
+            blur_view,      # 2: degraded + blur (progressive)
+            crop_view,      # 3: degraded + crop (progressive)
         ]
         n_views = len(view_transforms)
 
@@ -772,6 +801,7 @@ class DistillationWrapper:
                 n_views=n_views,
                 batch_size_images=batch_size,  # images per batch (actual samples = batch_size * n_views)
                 shuffle=shuffle,
+                seed=self.seed,
             )
             return DataLoader(
                 dataset,
@@ -820,17 +850,18 @@ class DistillationWrapper:
         splits = self.split_manager.load_splits()
 
         if split == "train":
-            indices = splits["train"]
+            if "val" in splits:
+                indices = splits["train"]
+            else:
+                # Exclude val samples from train when val is carved from train
+                import numpy as np
+                val_indices = self._get_or_create_val_indices(splits["train"])
+                indices = np.setdiff1d(splits["train"], val_indices)
         elif split == "val":
             if "val" in splits:
                 indices = splits["val"]
             else:
-                # Reproduce the same val carve-out logic as the datamodule
-                import numpy as np
-                train_indices = splits["train"]
-                n_val = max(1, int(len(train_indices) * 0.1))
-                np.random.seed(self.dm.split_seed)
-                indices = np.random.choice(train_indices, n_val, replace=False)
+                indices = self._get_or_create_val_indices(splits["train"])
         elif split == "test":
             indices = splits["test"]
         else:
@@ -842,6 +873,31 @@ class DistillationWrapper:
             log.info(f"  [SMOKE TEST] Truncated {split} split to {len(indices)} samples")
 
         return Subset(full_dataset, indices)
+
+    def _get_or_create_val_indices(self, train_indices) -> "np.ndarray":
+        """Carve a val split from train indices and persist to disk.
+
+        On first call, creates val_indices.npy in the split directory so that
+        every subsequent run (same seed) gets the exact same val set.
+        """
+        import numpy as np
+
+        val_path = self.split_manager.dataset_dir / "val_indices.npy"
+
+        if val_path.exists():
+            indices = np.load(val_path)
+            log.info(f"  Loaded persisted val split ({len(indices)} samples) from {val_path}")
+            return indices
+
+        # First time: carve out 10% of train as val (deterministic via split seed)
+        n_val = max(1, int(len(train_indices) * 0.1))
+        rng = np.random.RandomState(self.dm.split_seed)
+        indices = rng.choice(train_indices, n_val, replace=False)
+
+        np.save(val_path, indices)
+        log.info(f"  Created and saved val split ({len(indices)} samples) to {val_path}")
+
+        return indices
 
 
 def run(cfg: Any) -> Dict[str, Any]:
