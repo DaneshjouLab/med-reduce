@@ -443,6 +443,53 @@ class TeacherEmbeddingLookup:
         return len(self.image_ids)
 
 
+class MultiResolutionTeacherLookup:
+    """Teacher embedding lookup that stores embeddings at multiple resolutions.
+
+    During distillation each view targets a specific resolution.  The training
+    loop calls ``get_embeddings(image_ids, resolution)`` to retrieve the teacher
+    embedding extracted at that resolution.
+
+    Example::
+
+        lookup = MultiResolutionTeacherLookup()
+        lookup.add_resolution(512, data_512)
+        lookup.add_resolution(256, data_256)
+
+        teacher_emb = lookup.get_embeddings(image_ids, resolution=256)
+    """
+
+    def __init__(self):
+        # resolution -> TeacherEmbeddingLookup
+        self._lookups: Dict[int, TeacherEmbeddingLookup] = {}
+        self.resolutions: list[int] = []
+
+    def add_resolution(self, resolution: int, cache_data: Dict[str, Any]):
+        """Register embeddings for a resolution."""
+        self._lookups[resolution] = TeacherEmbeddingLookup(cache_data)
+        self.resolutions = sorted(self._lookups.keys(), reverse=True)
+        log.info(f"  Added teacher embeddings at {resolution}px ({len(cache_data['image_ids'])} samples)")
+
+    def get_embeddings(self, image_ids: list, resolution: int) -> torch.Tensor:
+        """Retrieve teacher embeddings for *image_ids* at *resolution*."""
+        if resolution not in self._lookups:
+            raise KeyError(
+                f"Resolution {resolution}px not in teacher lookup. "
+                f"Available: {self.resolutions}"
+            )
+        return self._lookups[resolution].get_embeddings(image_ids)
+
+    @property
+    def embedding_dim(self) -> int:
+        """Embedding dimension (same across all resolutions)."""
+        first = next(iter(self._lookups.values()))
+        return first.embeddings.shape[1]
+
+    def __len__(self) -> int:
+        first = next(iter(self._lookups.values()))
+        return len(first)
+
+
 def create_clean_image_dataloader(
     dataset_name: str,
     data_dir: Optional[str],

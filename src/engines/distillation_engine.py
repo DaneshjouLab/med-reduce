@@ -86,14 +86,10 @@ def train_distillation(
     history = {"train_loss": [], "val_loss": [], "lr": []}
 
     for epoch in range(1, epochs + 1):
-        # Update epoch on batch sampler (deterministic shuffling) and
-        # dataset (progressive degradation curriculum)
+        # Update epoch on batch sampler for deterministic shuffling
         train_loader = loaders["train"]
         if hasattr(train_loader, "batch_sampler") and hasattr(train_loader.batch_sampler, "set_epoch"):
             train_loader.batch_sampler.set_epoch(epoch)
-        train_dataset = train_loader.dataset
-        if hasattr(train_dataset, "set_epoch"):
-            train_dataset.set_epoch(epoch)
 
         # --- Training ---
         student.train()
@@ -103,7 +99,7 @@ def train_distillation(
         running_loss, n_seen = 0.0, 0
 
         for step, batch in enumerate(loaders["train"], start=1):
-            pixel_values, image_ids = _unpack_batch(batch, device)
+            pixel_values, image_ids, target_resolutions = _unpack_batch(batch, device)
 
             optimizer.zero_grad(set_to_none=True)
 
@@ -113,7 +109,9 @@ def train_distillation(
                 if projection is not None:
                     student_emb = projection(student_emb)
 
-                teacher_emb = teacher_lookup.get_embeddings(image_ids).to(device).detach()
+                teacher_emb = _get_teacher_embeddings(
+                    teacher_lookup, image_ids, target_resolutions, device,
+                )
                 loss = loss_fn(student_emb, teacher_emb)
 
             if mixed_precision:
@@ -197,20 +195,66 @@ def train_distillation(
 # Internal helpers
 # ---------------------------------------------------------------------------
 
-def _unpack_batch(batch, device) -> Tuple[torch.Tensor, list]:
-    """Extract pixel_values and image_ids from a batch."""
+def _unpack_batch(batch, device) -> Tuple[torch.Tensor, list, list]:
+    """Extract pixel_values, image_ids, and target_resolutions from a batch."""
     if isinstance(batch, dict):
         pixel_values = batch["pixel_values"].to(device)
         image_ids = batch.get("image_id", [])
+        target_resolutions = batch.get("target_resolution", [])
     else:
         pixel_values = batch[0].to(device)
         image_ids = batch[2] if len(batch) > 2 else []
+        target_resolutions = []
 
     # Normalise image_ids to a list of strings
     if isinstance(image_ids, torch.Tensor):
         image_ids = image_ids.tolist()
     image_ids = [str(x) for x in image_ids]
-    return pixel_values, image_ids
+
+    # Normalise target_resolutions to a list of ints
+    if isinstance(target_resolutions, torch.Tensor):
+        target_resolutions = target_resolutions.tolist()
+    target_resolutions = [int(x) for x in target_resolutions] if target_resolutions else []
+
+    return pixel_values, image_ids, target_resolutions
+
+
+def _get_teacher_embeddings(
+    teacher_lookup, image_ids: list, target_resolutions: list, device: torch.device,
+) -> torch.Tensor:
+    """Retrieve teacher embeddings, dispatching by resolution when available.
+
+    If *target_resolutions* is non-empty and the lookup supports per-resolution
+    access (``MultiResolutionTeacherLookup``), samples are grouped by resolution
+    and looked up in bulk, then reassembled in original order.
+
+    Falls back to a single ``get_embeddings(image_ids)`` call for legacy
+    single-resolution lookups or when no resolution info is provided.
+    """
+    has_multi_res = hasattr(teacher_lookup, "resolutions") and target_resolutions
+    if not has_multi_res:
+        # Legacy path: single-resolution lookup
+        return teacher_lookup.get_embeddings(image_ids).to(device).detach()
+
+    # Group by resolution for efficient batched lookup
+    from collections import defaultdict
+    groups: dict[int, list[int]] = defaultdict(list)  # res -> [position indices]
+    for i, res in enumerate(target_resolutions):
+        groups[res].append(i)
+
+    # Pre-allocate output tensor (filled per group)
+    first_res = next(iter(groups))
+    sample_emb = teacher_lookup.get_embeddings([image_ids[groups[first_res][0]]], first_res)
+    emb_dim = sample_emb.shape[1]
+    out = torch.empty(len(image_ids), emb_dim, device=device)
+
+    for res, positions in groups.items():
+        ids = [image_ids[p] for p in positions]
+        embs = teacher_lookup.get_embeddings(ids, res).to(device).detach()
+        for j, p in enumerate(positions):
+            out[p] = embs[j]
+
+    return out
 
 
 def _trainable_params(student, projection):
@@ -249,13 +293,15 @@ def _run_distillation_validation(
 
     with torch.no_grad():
         for batch in loader:
-            pixel_values, image_ids = _unpack_batch(batch, device)
+            pixel_values, image_ids, target_resolutions = _unpack_batch(batch, device)
 
             with autocast(device_type=device.type, enabled=mixed_precision):
                 student_emb = extract_embeddings(student, pixel_values, student_model_type)
                 if projection is not None:
                     student_emb = projection(student_emb)
-                teacher_emb = teacher_lookup.get_embeddings(image_ids).to(device).detach()
+                teacher_emb = _get_teacher_embeddings(
+                    teacher_lookup, image_ids, target_resolutions, device,
+                )
                 loss = loss_fn(student_emb, teacher_emb)
 
             running_loss += float(loss.item()) * pixel_values.size(0)

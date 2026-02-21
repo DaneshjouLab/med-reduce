@@ -25,12 +25,12 @@ from torch.utils.data import DataLoader, Dataset, Sampler
 from src.engines.distillation_engine import train_distillation
 from src.losses.distillation import embedding_distillation_loss
 from src.models.factory import create_model, get_embedding_dim, extract_embeddings
-from src.utils.teacher_cache import TeacherEmbeddingCache, TeacherEmbeddingLookup
+from src.utils.teacher_cache import TeacherEmbeddingCache, TeacherEmbeddingLookup, MultiResolutionTeacherLookup
 from src.utils.embedding_cache import EmbeddingCache
 from src.utils.split_manager import SplitManager
 from src.utils.optim import make_optimizer_and_scheduler
 from src.utils.logging_core import setup_logging, get_logger, WandbLogger
-from src.transformations.transforms import ResolutionReductionTransform, ProgressiveResolutionReduction
+from src.transformations.transforms import ResolutionReductionTransform
 
 log = get_logger(__name__)
 
@@ -43,7 +43,8 @@ class MultiViewDataset(Dataset):
     teacher-embedding lookup still works.
     """
 
-    def __init__(self, base_dataset: Dataset, view_transforms: list, n_views: int = 2):
+    def __init__(self, base_dataset: Dataset, view_transforms: list, n_views: int = 2,
+                 view_resolutions: list[int] | None = None):
         """
         Args:
             base_dataset: Underlying dataset returning dicts with
@@ -52,19 +53,14 @@ class MultiViewDataset(Dataset):
                 pipelines, one per view.  Cycled if ``n_views`` exceeds the
                 list length.
             n_views: Number of augmented copies per image (>= 1).
+            view_resolutions: Target teacher resolution for each view.
+                Used by the training loop to look up the matching teacher
+                embedding.  If None, all views target the max resolution.
         """
         self.base = base_dataset
         self.view_transforms = view_transforms
         self.n_views = max(1, n_views)
-
-    def set_epoch(self, epoch: int):
-        """Propagate epoch to any transforms that support progressive scheduling."""
-        for tfm in self.view_transforms:
-            # Walk into Compose pipelines to find ProgressiveResolutionReduction
-            inner_transforms = getattr(tfm, "transforms", [tfm])
-            for t in inner_transforms:
-                if hasattr(t, "set_epoch"):
-                    t.set_epoch(epoch)
+        self.view_resolutions = view_resolutions or [512] * n_views
 
     def __len__(self):
         return len(self.base) * self.n_views
@@ -80,7 +76,11 @@ class MultiViewDataset(Dataset):
         tfm = self.view_transforms[view_idx % len(self.view_transforms)]
         image = tfm(image)
 
-        result = {"pixel_values": image, "label": raw["label"]}
+        result = {
+            "pixel_values": image,
+            "label": raw["label"],
+            "target_resolution": self.view_resolutions[view_idx % len(self.view_resolutions)],
+        }
         if "image_id" in raw:
             result["image_id"] = raw["image_id"]
         return result
@@ -170,6 +170,23 @@ class GroupedViewBatchSampler(Sampler):
         return (self.n_images + self.batch_size_images - 1) // self.batch_size_images
 
 
+class _ResolutionTaggedDataset(Dataset):
+    """Thin wrapper that injects a fixed ``target_resolution`` into every sample."""
+
+    def __init__(self, base_dataset: Dataset, target_resolution: int):
+        self.base = base_dataset
+        self.target_resolution = target_resolution
+
+    def __len__(self):
+        return len(self.base)
+
+    def __getitem__(self, idx):
+        sample = self.base[idx]
+        if isinstance(sample, dict):
+            sample["target_resolution"] = self.target_resolution
+        return sample
+
+
 class DistillationWrapper:
     """
     Orchestrates the distillation pipeline:
@@ -208,6 +225,7 @@ class DistillationWrapper:
         self.teacher_resolution = int(getattr(distill_cfg, "teacher_resolution", 512))
         self.teacher_cache_dir = str(getattr(distill_cfg, "teacher_cache_dir", "./cache/teacher_embeddings"))
         self.lp_embedding_cache_dir = str(getattr(distill_cfg, "lp_embedding_cache_dir", ""))
+        self.target_resolutions = list(getattr(distill_cfg, "target_resolutions", [512, 256, 128, 64]))
 
         # --- Run dir ---
         base_run_dir = getattr(cfg.runtime, "run_dir", "./runs/distillation")
@@ -258,27 +276,25 @@ class DistillationWrapper:
     # Stage 1: Teacher embedding caching
     # ------------------------------------------------------------------
 
-    def _cache_and_load_teacher_embeddings(self) -> TeacherEmbeddingLookup:
-        """Load teacher embeddings, reusing LP baseline cache when available.
+    def _cache_and_load_teacher_embeddings(self) -> MultiResolutionTeacherLookup:
+        """Load teacher embeddings at multiple resolutions.
 
         Strategy:
-          1. Try to load from LP baseline's EmbeddingCache (already computed at 512px
-             during Pipeline A). The LP cache stores {embeddings, labels} per split
-             but lacks image_ids, so we reconstruct them from the dataset.
-          2. Fall back to TeacherEmbeddingCache (extracts from scratch) if LP cache
-             is not available.
+          1. Try to load from LP baseline's EmbeddingCache (already computed at
+             512/256/128/64px during Pipeline A).
+          2. Fall back to TeacherEmbeddingCache (extracts from scratch) if LP
+             cache is not available.
 
-        In both cases, the result is a TeacherEmbeddingLookup with image_id-keyed
-        access for the distillation training loop.
+        Returns a MultiResolutionTeacherLookup with per-resolution access.
         """
-        log.info("\n--- Stage 1: Teacher Embedding Loading ---")
+        log.info("\n--- Stage 1: Teacher Embedding Loading (multi-resolution) ---")
 
         # Try LP baseline cache first
         lookup = self._try_load_from_lp_cache()
         if lookup is not None:
             return lookup
 
-        # Fall back to dedicated teacher cache
+        # Fall back to dedicated teacher cache (single resolution only)
         log.info("LP cache not available — extracting teacher embeddings from scratch")
         cache = TeacherEmbeddingCache(
             cache_dir=self.teacher_cache_dir,
@@ -297,23 +313,35 @@ class DistillationWrapper:
         )
 
         data = cache.load_embeddings(self.dataset_name, "full", device="cpu")
-        lookup = TeacherEmbeddingLookup(data)
         self.teacher_embedding_dim = data["embeddings"].shape[1]
+
+        # Wrap single-resolution data in MultiResolutionTeacherLookup
+        lookup = MultiResolutionTeacherLookup()
+        lookup.add_resolution(self.teacher_resolution, data)
+        # Use the same embeddings for all target resolutions (fallback)
+        for res in self.target_resolutions:
+            if res != self.teacher_resolution:
+                lookup.add_resolution(res, data)
+        log.warning(
+            "LP cache not available — using teacher@%dpx for all resolutions. "
+            "For best results, run LP baseline first to cache multi-resolution embeddings.",
+            self.teacher_resolution,
+        )
 
         log.info(f"  Teacher embedding dim: {self.teacher_embedding_dim}")
         log.info(f"  Total cached samples: {len(lookup)}")
 
         return lookup
 
-    def _try_load_from_lp_cache(self) -> TeacherEmbeddingLookup | None:
-        """Try to load teacher embeddings from LP baseline's EmbeddingCache.
+    def _try_load_from_lp_cache(self) -> MultiResolutionTeacherLookup | None:
+        """Try to load teacher embeddings at multiple resolutions from LP cache.
 
-        The LP pipeline caches DINOv3 embeddings at 512px per seed/split.
-        We load train + test embeddings, reconstruct image_ids from the dataset
-        ordering, and combine them into a full-dataset lookup.
+        The LP pipeline caches DINOv3 embeddings at 512/256/128/64px per seed.
+        We load all available resolutions and combine them into a
+        MultiResolutionTeacherLookup.
 
         Returns:
-            TeacherEmbeddingLookup if LP cache found and loaded, else None.
+            MultiResolutionTeacherLookup if at least one resolution found, else None.
         """
         if not self.lp_embedding_cache_dir:
             return None
@@ -326,23 +354,21 @@ class DistillationWrapper:
             seed=self.seed,
         )
 
-        resolution = self.teacher_resolution
-
-        # Check if LP cache has both train and test at teacher resolution
-        if not (lp_cache.exists(resolution, "train") and lp_cache.exists(resolution, "test")):
+        # Check which resolutions are available
+        available = [
+            res for res in self.target_resolutions
+            if lp_cache.exists(res, "train") and lp_cache.exists(res, "test")
+        ]
+        if not available:
             log.info(
-                f"LP cache not found for {teacher_name} at {resolution}px "
+                f"LP cache not found for {teacher_name} at any target resolution "
                 f"(seed={self.seed}) in {self.lp_embedding_cache_dir}"
             )
             return None
 
-        log.info(f"Found LP baseline cache — reusing {teacher_name} embeddings at {resolution}px")
+        log.info(f"Found LP baseline cache — loading {teacher_name} at {available}")
 
-        # Load embeddings from LP cache (ordered by split indices, no shuffle)
-        train_emb, train_labels = lp_cache.load(resolution, "train")
-        test_emb, test_labels = lp_cache.load(resolution, "test")
-
-        # Load split indices to know which dataset positions each embedding maps to
+        # Load split indices
         if not self.split_manager.exists():
             log.warning("Splits not found — cannot reuse LP cache without split indices")
             return None
@@ -350,45 +376,40 @@ class DistillationWrapper:
         train_indices = splits["train"]
         test_indices = splits["test"]
 
-        if len(train_indices) != train_emb.shape[0]:
-            log.warning(
-                f"Train index count ({len(train_indices)}) != train embeddings ({train_emb.shape[0]}). "
-                "Skipping LP cache reuse."
-            )
-            return None
-        if len(test_indices) != test_emb.shape[0]:
-            log.warning(
-                f"Test index count ({len(test_indices)}) != test embeddings ({test_emb.shape[0]}). "
-                "Skipping LP cache reuse."
-            )
-            return None
-
-        # Reconstruct image_ids from the dataset metadata (no image loading).
+        # Reconstruct image_ids once
         image_ids = self._get_image_ids_from_dataset()
-
-        # Combine train + test embeddings via concatenation (vectorised)
-        full_embeddings = torch.cat([train_emb, test_emb], dim=0)
-        full_labels = torch.cat([train_labels, test_labels], dim=0)
-
-        # Free the per-split tensors now that they're concatenated
-        del train_emb, test_emb, train_labels, test_labels
-
-        # Build image_id list in the same order: train indices then test indices
         all_indices = list(train_indices) + list(test_indices)
         full_image_ids = [str(image_ids[idx]) for idx in all_indices]
 
-        emb_dim = full_embeddings.shape[1]
-        total = full_embeddings.shape[0]
-        self.teacher_embedding_dim = emb_dim
-        log.info(f"  Reused LP cache: {total} embeddings (train={len(train_indices)}, test={len(test_indices)})")
-        log.info(f"  Teacher embedding dim: {emb_dim}")
+        lookup = MultiResolutionTeacherLookup()
 
-        data = {
-            "embeddings": full_embeddings,
-            "labels": full_labels,
-            "image_ids": full_image_ids,
-        }
-        return TeacherEmbeddingLookup(data)
+        for res in available:
+            train_emb, train_labels = lp_cache.load(res, "train")
+            test_emb, test_labels = lp_cache.load(res, "test")
+
+            if len(train_indices) != train_emb.shape[0] or len(test_indices) != test_emb.shape[0]:
+                log.warning(f"Index/embedding count mismatch at {res}px — skipping")
+                continue
+
+            full_embeddings = torch.cat([train_emb, test_emb], dim=0)
+            full_labels = torch.cat([train_labels, test_labels], dim=0)
+            del train_emb, test_emb, train_labels, test_labels
+
+            data = {
+                "embeddings": full_embeddings,
+                "labels": full_labels,
+                "image_ids": full_image_ids,
+            }
+            lookup.add_resolution(res, data)
+
+        if not lookup.resolutions:
+            return None
+
+        self.teacher_embedding_dim = lookup.embedding_dim
+        log.info(f"  Teacher embedding dim: {self.teacher_embedding_dim}")
+        log.info(f"  Resolutions loaded: {lookup.resolutions}")
+
+        return lookup
 
     def _get_image_ids_from_dataset(self) -> list:
         """Extract image_ids from the full dataset without loading pixel data.
@@ -699,70 +720,47 @@ class DistillationWrapper:
         )
 
     def _make_degraded_dataloader(self, split: str, shuffle: bool = True) -> DataLoader:
-        """Create a dataloader with multi-view augmented transforms for student training.
+        """Create a dataloader with multi-view resolution-targeted transforms.
 
-        Each training image produces 4 views:
-          - View 0: clean 512px (Resize only — no crop, no flip, no degradation)
-          - View 1: degraded only (progressive curriculum: mild -> full)
-          - View 2: degraded + blur (Gaussian blur, kernel=23, sigma 0.1-2.0)
-          - View 3: degraded + crop (scale 0.5-1.0)
+        Each training image produces one view per target resolution.  Every
+        view is matched against the teacher embedding extracted at that same
+        resolution, so the student learns resolution-appropriate features.
 
-        Degradation views use progressive curriculum: starts near-clean and
-        ramps to full degradation over the first 30 epochs.
+          - View 0 (512px): clean resize (no degradation)
+          - View 1 (256px): downsample to 256px then upsample back to 512px
+          - View 2 (128px): downsample to 128px then upsample back to 512px
+          - View 3 ( 64px): downsample to  64px then upsample back to 512px
 
-        Validation uses a single deterministic degraded view (no augmentation).
+        Validation uses a single deterministic degraded view (256px equivalent).
         """
         image_size = int(getattr(self.cfg.data, "image_size", 512))
-        warmup = int(getattr(self.cfg.distillation, "degradation_warmup_epochs", 30))
 
         _norm = transforms.Normalize(
             mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225],
         )
         _to_tensor = [transforms.ToTensor(), _norm]
 
-        # --- Progressive degradation transforms (shared across views) ---
-        prog_degrade_1 = ProgressiveResolutionReduction(warmup_epochs=warmup)
-        prog_degrade_2 = ProgressiveResolutionReduction(warmup_epochs=warmup)
-        prog_degrade_3 = ProgressiveResolutionReduction(warmup_epochs=warmup)
-        self._progressive_transforms = [prog_degrade_1, prog_degrade_2, prog_degrade_3]
+        # Build one view per target resolution
+        view_transforms = []
+        view_resolutions = []
 
-        # --- View 0: clean (plain resize, no augmentation, no degradation) ---
-        clean_view = transforms.Compose([
-            transforms.Resize((image_size, image_size)),
-            *_to_tensor,
-        ])
+        for res in sorted(self.target_resolutions, reverse=True):
+            factor = res / image_size  # e.g. 256/512 = 0.5
+            if factor >= 1.0:
+                # Clean view (no degradation)
+                tfm = transforms.Compose([
+                    transforms.Resize((image_size, image_size)),
+                    *_to_tensor,
+                ])
+            else:
+                tfm = transforms.Compose([
+                    transforms.Resize((image_size, image_size)),
+                    ResolutionReductionTransform(reduction_factor=factor),
+                    *_to_tensor,
+                ])
+            view_transforms.append(tfm)
+            view_resolutions.append(res)
 
-        # --- View 1: degraded only (progressive curriculum) ---
-        degraded_view = transforms.Compose([
-            transforms.Resize((image_size, image_size)),
-            prog_degrade_1,
-            *_to_tensor,
-        ])
-
-        # --- View 2: degraded + blur ---
-        blur_view = transforms.Compose([
-            transforms.Resize((image_size, image_size)),
-            prog_degrade_2,
-            transforms.GaussianBlur(kernel_size=23, sigma=(0.1, 2.0)),
-            *_to_tensor,
-        ])
-
-        # --- View 3: degraded + crop (scale 0.5-1.0) ---
-        crop_view = transforms.Compose([
-            transforms.RandomResizedCrop(
-                image_size, scale=(0.5, 1.0),
-                interpolation=transforms.InterpolationMode.BICUBIC,
-            ),
-            prog_degrade_3,
-            *_to_tensor,
-        ])
-
-        view_transforms = [
-            clean_view,     # 0: clean 512px
-            degraded_view,  # 1: degraded only (progressive)
-            blur_view,      # 2: degraded + blur (progressive)
-            crop_view,      # 3: degraded + crop (progressive)
-        ]
         n_views = len(view_transforms)
 
         # Base dataset with a dummy transform (MultiViewDataset bypasses it
@@ -774,26 +772,32 @@ class DistillationWrapper:
         ]))
 
         if split == "train":
-            dataset = MultiViewDataset(base_dataset, view_transforms, n_views=n_views)
+            dataset = MultiViewDataset(
+                base_dataset, view_transforms, n_views=n_views,
+                view_resolutions=view_resolutions,
+            )
+            res_str = ", ".join(f"{r}px" for r in view_resolutions)
             log.info(
-                f"  Multi-view training: {n_views} views/image "
-                f"({len(base_dataset)} base -> {len(dataset)} samples): "
-                f"clean_512, degraded, degraded+blur, degraded+crop"
+                f"  Multi-resolution training: {n_views} views/image "
+                f"({len(base_dataset)} base -> {len(dataset)} samples): [{res_str}]"
             )
         else:
-            # Validation: single deterministic degraded view, no augmentation
+            # Validation: single deterministic degraded view (256px equivalent)
+            val_resolution = 256
+            val_factor = val_resolution / image_size
             val_transform = transforms.Compose([
                 transforms.Resize((image_size, image_size)),
-                ResolutionReductionTransform(reduction_factor=0.5),
+                ResolutionReductionTransform(reduction_factor=val_factor),
                 transforms.ToTensor(),
                 _norm,
             ])
-            dataset = self._get_split_dataset(split, transform=val_transform)
+            base_val = self._get_split_dataset(split, transform=val_transform)
+            dataset = _ResolutionTaggedDataset(base_val, target_resolution=val_resolution)
 
         batch_size = int(getattr(self.cfg.data, "batch_size", 64))
 
         if split == "train":
-            # Use grouped batch sampler so all 7 views of the same image
+            # Use grouped batch sampler so all views of the same image
             # always appear together in the same batch.
             n_base = len(base_dataset)
             batch_sampler = GroupedViewBatchSampler(
