@@ -295,8 +295,12 @@ class SplitManager:
             return json.load(f)
 
     def clear_splits(self):
-        """Clear all splits for this dataset."""
+        """Clear all splits for this dataset.
+
+        Uses ignore_errors=True so concurrent jobs sharing the same split
+        directory don't crash if another job already deleted a file.
+        """
         if self.dataset_dir.exists():
             import shutil
-            shutil.rmtree(self.dataset_dir)
+            shutil.rmtree(self.dataset_dir, ignore_errors=True)
             log.info(f"🗑️  Cleared all splits for {self.dataset_name}")
