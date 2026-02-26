@@ -16,6 +16,52 @@ from torch import nn
 from src.models.factory import create_model
 
 
+def extract_state_dict(checkpoint: Any) -> Dict[str, Any]:
+    """
+    Extract a model state_dict from a checkpoint, handling multiple formats.
+
+    Supports:
+        - PyTorch Lightning .ckpt files (keys: ``state_dict``, ``hyper_parameters``)
+        - Custom project .pt files (keys: ``model_state_dict`` or ``student_state_dict``)
+        - Raw state_dict (OrderedDict / plain dict of tensors)
+
+    For Lightning checkpoints the ``state_dict`` often contains a ``model.``
+    prefix on every key (e.g. ``model.layer1.weight``).  This function strips
+    that prefix so the returned dict can be loaded directly into the underlying
+    ``nn.Module``.
+
+    Args:
+        checkpoint: Object returned by ``torch.load()``.
+
+    Returns:
+        A plain state_dict (``str -> Tensor``).
+    """
+    # Already a raw state_dict (OrderedDict of tensors)
+    if isinstance(checkpoint, dict) and all(
+        isinstance(v, torch.Tensor) for v in checkpoint.values()
+    ):
+        return checkpoint
+
+    # Lightning .ckpt  – ``state_dict`` key with optional ``model.`` prefix
+    if isinstance(checkpoint, dict) and "state_dict" in checkpoint:
+        sd = checkpoint["state_dict"]
+        # Strip common Lightning prefixes (model., backbone., net.)
+        if any(k.startswith("model.") for k in sd):
+            sd = {k.removeprefix("model."): v for k, v in sd.items()}
+        return sd
+
+    # Project convention – distilled student checkpoint
+    if isinstance(checkpoint, dict) and "student_state_dict" in checkpoint:
+        return checkpoint["student_state_dict"]
+
+    # Project convention – probe / CV checkpoint
+    if isinstance(checkpoint, dict) and "model_state_dict" in checkpoint:
+        return checkpoint["model_state_dict"]
+
+    # Fallback: treat the whole object as a state_dict (original behaviour)
+    return checkpoint
+
+
 def load_checkpoint(
     checkpoint_path: str | Path,
     device: Optional[torch.device] = None,
@@ -24,8 +70,10 @@ def load_checkpoint(
     """
     Load a checkpoint file.
 
+    Supports ``.pt`` and ``.ckpt`` (PyTorch Lightning) formats.
+
     Args:
-        checkpoint_path: Path to the .pt checkpoint file
+        checkpoint_path: Path to the checkpoint file (``.pt`` or ``.ckpt``)
         device: Target device to load tensors to
         map_location: Alternative to device, passed to torch.load
 
@@ -43,9 +91,11 @@ def load_checkpoint(
     if map_location is None and device is not None:
         map_location = str(device)
 
-    checkpoint = torch.load(checkpoint_path, map_location=map_location)
+    checkpoint = torch.load(
+        checkpoint_path, map_location=map_location, weights_only=False,
+    )
 
-    if "seed" in checkpoint:
+    if isinstance(checkpoint, dict) and "seed" in checkpoint:
         import logging
         logger = logging.getLogger(__name__)
         logger.info(f"Checkpoint was trained with seed: {checkpoint['seed']}")
@@ -75,11 +125,16 @@ def load_model_from_checkpoint(
     checkpoint = load_checkpoint(checkpoint_path, device=device)
 
     # Recreate model from saved config
-    model_config = checkpoint["model_config"]
-    image_size = checkpoint["cfg"].data.image_size
+    model_config = checkpoint.get("model_config") or checkpoint.get("hyper_parameters", {})
+    cfg = checkpoint.get("cfg")
+    if cfg is not None:
+        image_size = cfg.data.image_size
+    else:
+        image_size = model_config.get("image_size", 224)
 
     model = create_model(model_config, resolution=image_size)
-    model.load_state_dict(checkpoint["model_state_dict"], strict=strict)
+    state_dict = extract_state_dict(checkpoint)
+    model.load_state_dict(state_dict, strict=strict)
     model.to(device)
     model.eval()
 
@@ -98,7 +153,7 @@ def find_best_checkpoint(checkpoint_dir: str | Path, metric_key: str = "val_acc"
         Path to the best checkpoint file
     """
     checkpoint_dir = Path(checkpoint_dir)
-    checkpoints = list(checkpoint_dir.glob("*.pt"))
+    checkpoints = list(checkpoint_dir.glob("*.pt")) + list(checkpoint_dir.glob("*.ckpt"))
 
     if not checkpoints:
         raise FileNotFoundError(f"No checkpoint files found in {checkpoint_dir}")
@@ -148,7 +203,9 @@ def load_all_fold_models(
         List of models, one per fold
     """
     checkpoint_dir = Path(checkpoint_dir)
-    checkpoints = sorted(checkpoint_dir.glob("*_fold*.pt"))
+    checkpoints = sorted(
+        list(checkpoint_dir.glob("*_fold*.pt")) + list(checkpoint_dir.glob("*_fold*.ckpt"))
+    )
 
     if not checkpoints:
         raise FileNotFoundError(f"No fold checkpoint files found in {checkpoint_dir}")

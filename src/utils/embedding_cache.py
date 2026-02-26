@@ -288,7 +288,7 @@ class EmbeddingCache:
                 f"Run extract_and_cache() first."
             )
 
-        data = torch.load(embedding_path, map_location="cpu")
+        data = torch.load(embedding_path, map_location="cpu", weights_only=True)
         embeddings = data["embeddings"]
         labels = data["labels"]
 

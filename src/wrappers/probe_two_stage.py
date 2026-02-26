@@ -51,6 +51,7 @@ from src.utils.training_utils import profile_model, calculate_inference_latency,
 from src.losses.classification import cross_entropy_loss, bce_with_logits_loss
 from src.models.factory import create_model, freeze_backbone
 from src.utils.embedding_cache import EmbeddingCache
+from src.utils.checkpoint_utils import extract_state_dict
 from src.utils.split_manager import SplitManager
 from src.data.embedding_dataset import EmbeddingDataset, SubsetEmbeddingDataset
 
@@ -403,7 +404,7 @@ class ProbeTwoStageWrapper:
             if os.path.exists(checkpoint_path):
                 log.info(f"Loading distilled checkpoint: {checkpoint_path}")
                 ckpt = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
-                state_dict = ckpt.get("student_state_dict", ckpt)
+                state_dict = extract_state_dict(ckpt)
                 model.load_state_dict(state_dict, strict=False)
                 log.info(f"  Loaded {len(state_dict)} parameter tensors")
             else:

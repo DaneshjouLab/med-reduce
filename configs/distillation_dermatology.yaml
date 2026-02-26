@@ -39,7 +39,7 @@ student:
 
 # Distillation settings
 distillation:
-  alpha: 0.5               # MSE vs cosine balance (1.0 = pure MSE, 0.0 = pure cosine)
+  alpha: 0.7               # MSE vs cosine balance (1.0 = pure MSE, 0.0 = pure cosine)
   teacher_resolution: 512   # Resolution for teacher embedding extraction
   teacher_cache_dir: ./cache/teacher_embeddings
   lp_embedding_cache_dir: /scratch/users/bikia/reduced-perception-derm-results/cache/embeddings  # LP baseline cache (reuse if available)

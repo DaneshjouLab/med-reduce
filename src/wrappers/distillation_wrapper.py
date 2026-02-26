@@ -500,18 +500,12 @@ class DistillationWrapper:
         student_emb_dim = get_embedding_dim(student, student_type)
         log.info(f"  Student: {self.student_info.get('name')} (emb_dim={student_emb_dim})")
 
-        # MLP projection head: maps student embeddings into teacher space.
+        # Linear-only projection head: maps student embeddings into teacher space.
         # Discarded after training — LP evaluates backbone embeddings directly.
-        # The hidden layer lets the backbone learn its own feature arrangement
-        # while the head handles translation to the teacher's geometry.
-        proj_hidden = int(getattr(self.cfg.distillation, "projection_hidden_dim", student_emb_dim))
-        projection = nn.Sequential(
-            nn.Linear(student_emb_dim, proj_hidden),
-            nn.BatchNorm1d(proj_hidden),
-            nn.ReLU(inplace=True),
-            nn.Linear(proj_hidden, self.teacher_embedding_dim),
-        ).to(self.device)
-        log.info(f"  Projection head: {student_emb_dim} -> {proj_hidden} -> {self.teacher_embedding_dim}")
+        # A linear projection can only rotate/scale, forcing the backbone to
+        # produce features whose structure already matches the teacher's geometry.
+        projection = nn.Linear(student_emb_dim, self.teacher_embedding_dim).to(self.device)
+        log.info(f"  Projection head (linear): {student_emb_dim} -> {self.teacher_embedding_dim}")
 
         # Loss
         loss_fn = embedding_distillation_loss(alpha=self.alpha)

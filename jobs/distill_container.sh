@@ -2,7 +2,7 @@
 #SBATCH --job-name=distill_3seeds
 #SBATCH --partition=roxanad
 #SBATCH --gres=gpu:1
-#SBATCH --time=64:00:00
+#SBATCH --time=30:00:00
 #SBATCH --mem=48G
 #SBATCH --cpus-per-task=8
 #SBATCH --output=logs/%x_%j.out
@@ -51,8 +51,8 @@ DOMAIN="${DOMAIN:?ERROR: DOMAIN is required. Set DOMAIN=dermatology|radiology|pa
 STUDENT="${STUDENT:-resnet18}"
 # Derive a short name for filenames (e.g. tiny_vit_21m_224 → tiny_vit, resnet18 → resnet18)
 STUDENT_NAME="${STUDENT_NAME:-$(echo "$STUDENT" | sed 's/_[0-9].*$//')}"
-SEEDS="${SEEDS:-42 123 456}"
-ALPHA="${ALPHA:-0.5}"
+SEEDS="${SEEDS:-42}"
+ALPHA="${ALPHA:-0.7}"
 EPOCHS="${EPOCHS:-100}"
 EXTRAS="${EXTRAS:-}"  # Extra Hydra overrides (e.g. EXTRAS="smoke_test=true")
 
@@ -163,7 +163,7 @@ fi
             fi
 
             echo \"CPU cores: \$(nproc)\"
-            echo \"Memory: \$(free -h | grep Mem | awk '{print \$3 \"/\" \$2}')\"
+            echo \"Memory: \$(free -h 2>/dev/null | grep Mem | awk '{print \$3 \"/\" \$2}' || cat /proc/meminfo 2>/dev/null | awk '/MemTotal/{t=\$2} /MemAvailable/{a=\$2} END{if(t) printf \"%.1fG/%.1fG\", (t-a)/1048576, t/1048576}' || echo 'N/A')\"
             echo '============================================================'
             echo ''
         done
