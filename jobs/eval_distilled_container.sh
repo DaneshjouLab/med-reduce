@@ -1,8 +1,8 @@
 #!/bin/bash
 #SBATCH --job-name=eval_distilled_3seeds
-#SBATCH --partition=roxanad
+#SBATCH --partition=gpu
 #SBATCH --gres=gpu:1
-#SBATCH --time=60:00:00
+#SBATCH --time=10:00:00
 #SBATCH --mem=48G
 #SBATCH --cpus-per-task=8
 #SBATCH --output=logs/%x_%j.out
@@ -24,6 +24,10 @@
 #   STUDENT=tiny_vit_21m_224 DOMAIN=dermatology sbatch jobs/eval_distilled_container.sh
 #   RESOLUTIONS="512 256" DOMAIN=dermatology sbatch jobs/eval_distilled_container.sh
 #   SEEDS="42" DOMAIN=dermatology sbatch jobs/eval_distilled_container.sh
+#
+# Direct checkpoint (flat path, same weights for all seeds):
+#   CHECKPOINT=/scratch/users/bikia/pipeline_output/ISIC2017_resnet/trained_model.ckpt \
+#     DOMAIN=dermatology sbatch jobs/eval_distilled_container.sh
 #
 # Pathology-specific:
 #   TASKS="luad_vs_lusc kras" DOMAIN=pathology sbatch jobs/eval_distilled_container.sh
@@ -54,6 +58,8 @@ STUDENT="${STUDENT:-resnet18}"
 STUDENT_NAME="${STUDENT_NAME:-${STUDENT}_distilled}"
 RESOLUTIONS="${RESOLUTIONS:-512 256 128 64}"
 SEEDS="${SEEDS:-42 123 456}"
+# Direct checkpoint path (flat, not per-seed). Overrides DISTILL_DIR when set.
+CHECKPOINT="${CHECKPOINT:-}"
 
 # Pathology-specific: TCGA tasks (ignored for other domains)
 TASKS="${TASKS:-luad_vs_lusc lgg_vs_gbm kras tp53 egfr}"
@@ -84,6 +90,11 @@ esac
 echo "INFO: Domain=$DOMAIN  Student=$STUDENT  Config=$CONFIG"
 echo "INFO: Resolutions=$RESOLUTIONS"
 echo "INFO: Seeds=$SEEDS"
+if [ -n "$CHECKPOINT" ]; then
+    echo "INFO: Checkpoint=$CHECKPOINT (direct path, shared across seeds)"
+else
+    echo "INFO: Distill dir=$DISTILL_DIR (per-seed: seed_*/distilled_student.pt)"
+fi
 if [ "$DOMAIN" = "pathology" ]; then
     echo "INFO: Tasks=$TASKS"
 fi
@@ -197,11 +208,20 @@ fi
     echo \"INFO: Start time: \$(date '+%Y-%m-%d %H:%M:%S')\"
     export HYDRA_FULL_ERROR=1
 
-    # Loop over seeds individually so each gets its own checkpoint path
+    # Resolve checkpoint path: direct CHECKPOINT or per-seed DISTILL_DIR
+    resolve_ckpt() {
+        local seed=\$1
+        if [ -n \"$CHECKPOINT\" ]; then
+            echo \"$CHECKPOINT\"
+        else
+            echo \"$DISTILL_DIR/seed_\${seed}/distilled_student.pt\"
+        fi
+    }
+
     if [ \"$DOMAIN\" = 'pathology' ]; then
         for TASK in $TASKS; do
             for SEED in $SEEDS; do
-                CKPT=\"$DISTILL_DIR/seed_\${SEED}/distilled_student.pt\"
+                CKPT=\$(resolve_ckpt \$SEED)
                 echo ''
                 echo '============================================================'
                 echo \"INFO: LP eval — task=\$TASK  seed=\$SEED  ckpt=\$CKPT\"
@@ -227,7 +247,7 @@ fi
         done
     else
         for SEED in $SEEDS; do
-            CKPT=\"$DISTILL_DIR/seed_\${SEED}/distilled_student.pt\"
+            CKPT=\$(resolve_ckpt \$SEED)
             echo ''
             echo '============================================================'
             echo \"INFO: LP eval — seed=\$SEED  ckpt=\$CKPT\"
