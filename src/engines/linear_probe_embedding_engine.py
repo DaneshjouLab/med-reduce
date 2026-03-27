@@ -202,6 +202,7 @@ def _run_validation_on_embeddings(
     val_loss = 0.0
     val_correct = 0
     val_total = 0
+    val_valid_labels = 0  # for multi-label: count of valid (non-uncertain) label entries
 
     all_labels = []
     all_probs = []
@@ -219,10 +220,13 @@ def _run_validation_on_embeddings(
             val_loss += float(loss.item()) * labels.size(0)
 
             if multi_label:
-                # Multi-label: sigmoid probabilities, exact-match accuracy
+                # Multi-label: sigmoid probabilities
                 probs = torch.sigmoid(logits.float())
                 preds = (probs > 0.5).float()
-                val_correct += (preds == labels).all(dim=1).sum().item()
+                # Per-label accuracy: only count valid (non-uncertain) entries
+                valid = (labels >= 0).float()
+                val_correct += ((preds == labels.clamp(min=0)).float() * valid).sum().item()
+                val_valid_labels += valid.sum().item()
             else:
                 # Single-label: softmax probabilities, argmax accuracy
                 probs = torch.softmax(logits.float(), dim=1)
@@ -234,7 +238,10 @@ def _run_validation_on_embeddings(
             all_probs.append(probs.cpu().numpy())
 
     val_loss = val_loss / max(val_total, 1)
-    val_acc = val_correct / max(val_total, 1)
+    if multi_label:
+        val_acc = val_correct / max(val_valid_labels, 1)  # per-label accuracy over valid entries
+    else:
+        val_acc = val_correct / max(val_total, 1)
 
     all_labels_list, all_probs_list = all_labels, all_probs
     all_labels = np.concatenate(all_labels_list)
@@ -245,12 +252,17 @@ def _run_validation_on_embeddings(
 
     if multi_label:
         # Multi-label AUROC: per-label, then macro-average
+        # Skip uncertain labels (value == -1) per label column
         n_labels = all_probs.shape[1]
         per_class_auroc = []
         per_class_auroc_dict = {}
         for i in range(n_labels):
             y_true_i = all_labels[:, i]
             y_score_i = all_probs[:, i]
+            # Mask out uncertain labels (-1)
+            valid_mask = y_true_i >= 0
+            y_true_i = y_true_i[valid_mask]
+            y_score_i = y_score_i[valid_mask]
             # Need both 0s and 1s for AUROC
             if len(np.unique(y_true_i)) < 2:
                 continue
@@ -264,13 +276,22 @@ def _run_validation_on_embeddings(
 
         val_auroc = float(np.mean(per_class_auroc)) if per_class_auroc else float('nan')
 
-        # Multi-label F1
-        try:
-            all_preds = (all_probs > 0.5).astype(int)
-            val_f1 = f1_score(all_labels, all_preds, average='macro')
-        except ValueError as e:
-            log.warning(f"Could not compute F1: {e}")
-            val_f1 = float('nan')
+        # Multi-label F1: per-label F1 on valid entries, then macro-average
+        per_class_f1 = []
+        for i in range(n_labels):
+            y_true_i = all_labels[:, i]
+            y_pred_i = (all_probs[:, i] > 0.5).astype(int)
+            valid_mask = y_true_i >= 0
+            y_true_i = y_true_i[valid_mask]
+            y_pred_i = y_pred_i[valid_mask]
+            if len(y_true_i) == 0 or len(np.unique(y_true_i)) < 1:
+                continue
+            try:
+                f1_i = f1_score(y_true_i, y_pred_i, average='binary', zero_division=0)
+                per_class_f1.append(f1_i)
+            except ValueError:
+                pass
+        val_f1 = float(np.mean(per_class_f1)) if per_class_f1 else float('nan')
 
     else:
         # Single-label AUROC and F1 (unchanged)

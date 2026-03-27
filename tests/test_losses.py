@@ -85,3 +85,37 @@ class TestBCEWithLogitsLoss:
         targets = torch.randint(0, 2, (4, 5)).float()
         loss = loss_fn(logits, targets)
         assert loss.item() > 0
+
+    def test_ignores_negative_one_labels(self):
+        """Labels of -1 (uncertain) are masked out and don't produce NaN."""
+        loss_fn = bce_with_logits_loss()
+        logits = torch.randn(4, 5)
+        targets = torch.zeros(4, 5)
+        targets[0, 0] = -1.0  # uncertain
+        targets[1, 2] = -1.0
+        targets[2, :] = -1.0  # entire row uncertain
+        loss = loss_fn(logits, targets)
+        assert not torch.isnan(loss), "Loss should not be NaN with -1 labels"
+        assert loss.item() > 0
+
+    def test_all_uncertain_returns_zero(self):
+        """All -1 labels should give zero loss (no valid entries)."""
+        loss_fn = bce_with_logits_loss()
+        logits = torch.randn(4, 5)
+        targets = torch.full((4, 5), -1.0)
+        loss = loss_fn(logits, targets)
+        assert loss.item() == 0.0
+
+    def test_reduction_sum(self):
+        loss_fn = bce_with_logits_loss(reduction="sum")
+        logits = torch.randn(4, 5)
+        targets = torch.randint(0, 2, (4, 5)).float()
+        loss = loss_fn(logits, targets)
+        assert loss.item() > 0
+
+    def test_reduction_none(self):
+        loss_fn = bce_with_logits_loss(reduction="none")
+        logits = torch.randn(4, 5)
+        targets = torch.randint(0, 2, (4, 5)).float()
+        loss = loss_fn(logits, targets)
+        assert loss.shape == (4, 5)

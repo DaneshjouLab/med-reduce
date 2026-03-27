@@ -210,10 +210,13 @@ class ProbeTwoStageWrapper:
         """
         if self.multi_label:
             # Multi-label: compute pos_weight per label = neg_count / pos_count
+            # Exclude uncertain labels (-1) from counting
             labels_np = train_labels.cpu().numpy()  # [N, C]
             n_samples, n_labels = labels_np.shape
-            pos_counts = labels_np.sum(axis=0)  # [C]
-            neg_counts = n_samples - pos_counts  # [C]
+            valid_mask = labels_np >= 0  # True where label is 0 or 1
+            pos_counts = np.where(valid_mask, labels_np, 0).sum(axis=0)  # [C]
+            valid_counts = valid_mask.sum(axis=0)  # [C] number of valid entries per label
+            neg_counts = valid_counts - pos_counts  # [C]
 
             pos_weight = np.ones(n_labels, dtype=np.float64)
             for i in range(n_labels):
@@ -229,8 +232,9 @@ class ProbeTwoStageWrapper:
             log.info(f"Number of labels: {n_labels}")
             for i in range(n_labels):
                 name = self.label_names[i] if self.label_names and i < len(self.label_names) else str(i)
-                pct = pos_counts[i] / n_samples * 100 if n_samples > 0 else 0
-                log.info(f"  {name}: {int(pos_counts[i])} pos ({pct:.1f}%) -> pos_weight: {pos_weight[i]:.4f}")
+                pct = pos_counts[i] / valid_counts[i] * 100 if valid_counts[i] > 0 else 0
+                n_uncertain = n_samples - int(valid_counts[i])
+                log.info(f"  {name}: {int(pos_counts[i])} pos ({pct:.1f}%), {n_uncertain} uncertain -> pos_weight: {pos_weight[i]:.4f}")
             log.info(f"{'='*60}\n")
 
             return pos_weight_tensor

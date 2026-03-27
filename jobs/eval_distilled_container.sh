@@ -64,6 +64,8 @@ CHECKPOINT="${CHECKPOINT:-}"
 # Set TUNE_HP=1 to run hyperparameter search with the distilled student
 # instead of reusing teacher (dinov3) hyperparameters.
 TUNE_HP="${TUNE_HP:-0}"
+# Override embedding extraction batch size (useful for large models at high resolutions)
+BATCH_SIZE="${BATCH_SIZE:-}"
 
 # Pathology-specific: TCGA tasks (ignored for other domains)
 TASKS="${TASKS:-luad_vs_lusc lgg_vs_gbm kras tp53 egfr}"
@@ -230,6 +232,13 @@ fi
         echo 'INFO: TUNE_HP=1 — will run hyperparameter search with the distilled student'
     fi
 
+    # Build batch size override if specified
+    BATCH_OVERRIDE=''
+    if [ -n \"$BATCH_SIZE\" ]; then
+        BATCH_OVERRIDE=\"data.batch_size=$BATCH_SIZE\"
+        echo \"INFO: Overriding batch_size=$BATCH_SIZE\"
+    fi
+
     if [ \"$DOMAIN\" = 'pathology' ]; then
         for TASK in $TASKS; do
             for SEED in $SEEDS; do
@@ -253,7 +262,8 @@ fi
                         model.type=timm \
                         model.config.num_labels=$NUM_LABELS \
                         +model.config.pretrained=false \
-                        +model.config.checkpoint=\$CKPT
+                        +model.config.checkpoint=\$CKPT \
+                        \$BATCH_OVERRIDE
 
                 echo \"INFO: Finished task=\$TASK seed=\$SEED\"
             done
@@ -279,7 +289,8 @@ fi
                     model.type=timm \
                     model.config.num_labels=$NUM_LABELS \
                     +model.config.pretrained=false \
-                    +model.config.checkpoint=\$CKPT
+                    +model.config.checkpoint=\$CKPT \
+                    \$BATCH_OVERRIDE
 
             echo \"INFO: Finished seed=\$SEED\"
         done
