@@ -216,3 +216,4 @@ config.yaml
 
 results/**
 figures/**
+!figures/*.png
