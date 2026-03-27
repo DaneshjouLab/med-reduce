@@ -55,7 +55,7 @@
 # Configuration
 # =============================================================================
 DOMAIN="${DOMAIN:?ERROR: DOMAIN is required. Set DOMAIN=dermatology|radiology|pathology}"
-STUDENT="${STUDENT:-resnet18}"
+STUDENT="${STUDENT:-resnet50}"
 STUDENT_NAME="${STUDENT_NAME:-${STUDENT}_distilled}"
 RESOLUTIONS="${RESOLUTIONS:-512 256 128 64}"
 SEEDS="${SEEDS:-42 123 456}"
