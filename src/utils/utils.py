@@ -15,9 +15,8 @@ try:
     import pynvml
     pynvml.nvmlInit()
     PYNVML_AVAILABLE = True
-except ImportError:
+except Exception:
     PYNVML_AVAILABLE = False
-    print("pynvml not installed, GPU memory monitoring disabled.")
 
 def env_path(key: str, default: str) -> str:
     """Get environment variable or default value."""
