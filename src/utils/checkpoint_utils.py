@@ -42,12 +42,14 @@ def extract_state_dict(checkpoint: Any) -> Dict[str, Any]:
     ):
         return checkpoint
 
-    # Lightning .ckpt  – ``state_dict`` key with optional ``model.`` prefix
+    # Lightning .ckpt  – ``state_dict`` key with optional prefix
     if isinstance(checkpoint, dict) and "state_dict" in checkpoint:
         sd = checkpoint["state_dict"]
-        # Strip common Lightning prefixes (model., backbone., net.)
-        if any(k.startswith("model.") for k in sd):
-            sd = {k.removeprefix("model."): v for k, v in sd.items()}
+        # Strip all known prefixes iteratively until keys are clean
+        for prefix in ["model.backbone.model.", "backbone.model.", "model.", "backbone."]:
+            if any(k.startswith(prefix) for k in sd):
+                sd = {k.removeprefix(prefix): v for k, v in sd.items()}
+                break
         return sd
 
     # Project convention – distilled student checkpoint

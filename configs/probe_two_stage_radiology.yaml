@@ -104,7 +104,7 @@ train:
       weight_decay: [0, 1e-4, 1e-3]
       batch_size: [32, 64]
 
-    load_from_file: "/scratch/users/bikia/reduced-perception-rad-results/runs/probe_two_stage/hyperparam_search/best_hyperparameters.json"
+    load_from_file: null  # Auto-resolved from run_dir/seed_{seed}/hyperparam_search/{dataset}_{model}/
 
 loss:
   label_smoothing: 0.0

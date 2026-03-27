@@ -103,6 +103,17 @@ class EmbeddingCache:
                 embeddings = outputs.last_hidden_state[:, 0, :]
             return embeddings
 
+        # timm models: use forward_features to get pre-classifier embeddings
+        if hasattr(model, 'forward_features'):
+            feats = model.forward_features(images)
+            if feats.dim() == 4:
+                # CNN-style: [B, D, H, W] -> global average pool
+                return feats.mean(dim=[2, 3])
+            elif feats.dim() == 3:
+                # Transformer-style: [B, tokens, D] -> global average pool
+                return feats.mean(dim=1)
+            return feats
+
         # Try base_model for other HuggingFace models
         if hasattr(model, 'base_model'):
             outputs = model.base_model(pixel_values=images)

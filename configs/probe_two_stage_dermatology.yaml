@@ -96,7 +96,7 @@ train:
       # Uncomment for segmentation tasks:
       # decoder_dropout: [0.0, 0.1, 0.3]
 
-    load_from_file: "/scratch/users/bikia/reduced-perception-derm-results/runs/probe_two_stage/hyperparam_search/best_hyperparameters.json"
+    load_from_file: null  # Auto-resolved from run_dir/seed_{seed}/hyperparam_search/{dataset}_{model}/
 
 loss:
   label_smoothing: 0.0

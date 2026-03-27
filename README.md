@@ -1,9 +1,10 @@
-# REDUCE: Resolution-Aware Evaluation of Deep Understanding and Computational Efficiency
+# Med-REDUCE: Resolution-Aware Evaluation of Deep Understanding and Computational Efficiency
 
-**REDUCE** is a research framework for studying accuracy-efficiency trade-offs in medical vision models under controlled perceptual degradation (systematic input resolution reduction). It supports three experimental pipelines -- baseline linear probing, embedding distillation, and distilled-student evaluation -- enabling consistent, multi-resolution comparison with comprehensive metric tracking.
+![Coverage](https://img.shields.io/badge/coverage-87%25-brightgreen)
 
-<!-- TODO: Add pipeline figure -->
-![Pipeline Overview](figures/modeling_workflow.pdf)
+**Med-REDUCE** is a research framework for studying accuracy-efficiency trade-offs in medical vision models under controlled perceptual degradation (systematic input resolution reduction). It supports three experimental pipelines -- baseline linear probing, embedding distillation, and distilled-student evaluation -- enabling consistent, multi-resolution comparison with comprehensive metric tracking.
+
+![Pipeline Overview](figures/modeling_workflow.png)
 
 The design emphasizes:
 - **On-the-fly input transformations** for clean experimental control (downsample at load time, never store degraded copies)

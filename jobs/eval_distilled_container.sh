@@ -24,6 +24,7 @@
 #   STUDENT=tiny_vit_21m_224 DOMAIN=dermatology sbatch jobs/eval_distilled_container.sh
 #   RESOLUTIONS="512 256" DOMAIN=dermatology sbatch jobs/eval_distilled_container.sh
 #   SEEDS="42" DOMAIN=dermatology sbatch jobs/eval_distilled_container.sh
+#   TUNE_HP=1 DOMAIN=dermatology sbatch jobs/eval_distilled_container.sh  # re-tune HPs with distilled student
 #
 # Direct checkpoint (flat path, same weights for all seeds):
 #   CHECKPOINT=/scratch/users/bikia/pipeline_output/ISIC2017_resnet/trained_model.ckpt \
@@ -60,6 +61,9 @@ RESOLUTIONS="${RESOLUTIONS:-512 256 128 64}"
 SEEDS="${SEEDS:-42 123 456}"
 # Direct checkpoint path (flat, not per-seed). Overrides DISTILL_DIR when set.
 CHECKPOINT="${CHECKPOINT:-}"
+# Set TUNE_HP=1 to run hyperparameter search with the distilled student
+# instead of reusing teacher (dinov3) hyperparameters.
+TUNE_HP="${TUNE_HP:-0}"
 
 # Pathology-specific: TCGA tasks (ignored for other domains)
 TASKS="${TASKS:-luad_vs_lusc lgg_vs_gbm kras tp53 egfr}"
@@ -90,6 +94,7 @@ esac
 echo "INFO: Domain=$DOMAIN  Student=$STUDENT  Config=$CONFIG"
 echo "INFO: Resolutions=$RESOLUTIONS"
 echo "INFO: Seeds=$SEEDS"
+echo "INFO: TUNE_HP=$TUNE_HP (1=re-tune HPs with distilled student, 0=reuse teacher HPs)"
 if [ -n "$CHECKPOINT" ]; then
     echo "INFO: Checkpoint=$CHECKPOINT (direct path, shared across seeds)"
 else
@@ -218,6 +223,13 @@ fi
         fi
     }
 
+    # Build --tune-hyperparams flag if requested
+    TUNE_FLAG=''
+    if [ \"$TUNE_HP\" = '1' ]; then
+        TUNE_FLAG='--tune-hyperparams'
+        echo 'INFO: TUNE_HP=1 — will run hyperparameter search with the distilled student'
+    fi
+
     if [ \"$DOMAIN\" = 'pathology' ]; then
         for TASK in $TASKS; do
             for SEED in $SEEDS; do
@@ -233,14 +245,15 @@ fi
                     --config $CONFIG \
                     --resolutions $RESOLUTIONS \
                     --seeds \$SEED \
+                    \$TUNE_FLAG \
                     --extra-overrides \
                         datamodule.task=\$TASK \
                         model.name=$STUDENT_NAME \
                         model.model_id=$STUDENT \
                         model.type=timm \
                         model.config.num_labels=$NUM_LABELS \
-                        model.config.pretrained=false \
-                        model.config.checkpoint=\$CKPT
+                        +model.config.pretrained=false \
+                        +model.config.checkpoint=\$CKPT
 
                 echo \"INFO: Finished task=\$TASK seed=\$SEED\"
             done
@@ -259,13 +272,14 @@ fi
                 --config $CONFIG \
                 --resolutions $RESOLUTIONS \
                 --seeds \$SEED \
+                \$TUNE_FLAG \
                 --extra-overrides \
                     model.name=$STUDENT_NAME \
                     model.model_id=$STUDENT \
                     model.type=timm \
                     model.config.num_labels=$NUM_LABELS \
-                    model.config.pretrained=false \
-                    model.config.checkpoint=\$CKPT
+                    +model.config.pretrained=false \
+                    +model.config.checkpoint=\$CKPT
 
             echo \"INFO: Finished seed=\$SEED\"
         done

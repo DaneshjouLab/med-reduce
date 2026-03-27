@@ -10,7 +10,7 @@ from omegaconf import OmegaConf
 
 
 # Model configurations
-MODELS = ["vit", "dinov2", "dinov3", "resnet18", "tiny_vit_21m_224"]
+MODELS = ["vit", "dinov2", "dinov3", "resnet18", "resnet50", "tiny_vit_21m_224"]
 MODEL_CONFIGS = {
     "vit": {
         "model.name": "vit",
@@ -31,6 +31,12 @@ MODEL_CONFIGS = {
     "resnet18": {
         "model.name": "resnet18",
         "model.model_id": "resnet18",
+        "model.type": "timm",
+        "+model.config.pretrained": "false",
+    },
+    "resnet50": {
+        "model.name": "resnet50",
+        "model.model_id": "resnet50",
         "model.type": "timm",
         "+model.config.pretrained": "false",
     },
@@ -99,6 +105,20 @@ def _resolve_dataset_name(config, extra_overrides=None):
         return str(dataset_name).replace("/", "_")
 
     return "unknown"
+
+
+def _resolve_model_name(model_key: str, extra_overrides=None) -> str:
+    """
+    Resolve the model name, respecting model.name overrides from extra_overrides.
+    This ensures HP paths use the actual model name (e.g., resnet18_distilled)
+    rather than the --model key (e.g., dinov3).
+    """
+    model_name = MODEL_CONFIGS[model_key].get("model.name", model_key)
+    if extra_overrides:
+        for ov in extra_overrides:
+            if ov.startswith("model.name="):
+                model_name = ov.split("=", 1)[1]
+    return model_name
 
 
 def run_hyperparameter_tuning(
@@ -221,14 +241,47 @@ def run_final_probing(
                         run_dir = ov.split("=", 1)[1]
             # Resolve dataset_name and model_name for task-specific subdir
             dataset_name = _resolve_dataset_name(config, extra_overrides)
-            model_name = MODEL_CONFIGS[model_key].get("model.name", model_key)
+            model_name = _resolve_model_name(model_key, extra_overrides)
             hp_subdir = f"{dataset_name}_{model_name}"
             hyperparam_file = f"{run_dir}/seed_{seed}/hyperparam_search/{hp_subdir}/best_hyperparameters.json"
 
         # Resolve hyperparam_file relative to project root
         hyperparam_file = str((project_root / hyperparam_file).resolve())
 
-    # Check if hyperparameter file exists
+    # Check if hyperparameter file exists; try fallbacks:
+    #   1. Same seed, teacher model name (e.g., images_dinov3 instead of images_resnet18_distilled)
+    #   2. Seed 42 (HP tuning seed), same model name
+    #   3. Seed 42, teacher model name
+    if not Path(hyperparam_file).exists():
+        resolved_model = _resolve_model_name(model_key, extra_overrides)
+        fallback_model = MODEL_CONFIGS[model_key].get("model.name", model_key)
+        candidates = []
+
+        # Fallback 1: same seed, teacher model
+        if fallback_model != resolved_model:
+            candidates.append(
+                hyperparam_file.replace(f"_{resolved_model}/", f"_{fallback_model}/")
+            )
+
+        # Fallback 2: seed 42, student model
+        candidates.append(
+            hyperparam_file.replace(f"/seed_{seed}/", "/seed_42/")
+        )
+
+        # Fallback 3: seed 42, teacher model
+        if fallback_model != resolved_model:
+            candidates.append(
+                hyperparam_file.replace(f"/seed_{seed}/", "/seed_42/").replace(
+                    f"_{resolved_model}/", f"_{fallback_model}/"
+                )
+            )
+
+        for candidate in candidates:
+            if Path(candidate).exists():
+                print(f"ℹ️  Using fallback HP file: {candidate}")
+                hyperparam_file = candidate
+                break
+
     if not Path(hyperparam_file).exists():
         print(f"⚠️  Hyperparameter file not found: {hyperparam_file}")
         print(f"   Run hyperparameter tuning first with --tune-hyperparams")
@@ -395,7 +448,7 @@ def main():
                     if ov.startswith("runtime.run_dir="):
                         run_dir = ov.split("=", 1)[1]
             # Resolve dataset_name and model_name for hyperparam subdir
-            model_name = MODEL_CONFIGS[args.model].get("model.name", args.model)
+            model_name = _resolve_model_name(args.model, args.extra_overrides)
             dataset_name = _resolve_dataset_name(config, args.extra_overrides)
             hp_subdir = f"{dataset_name}_{model_name}"
             hyperparam_file = str((project_root / f"{run_dir}/seed_{first_seed}/hyperparam_search/{hp_subdir}/best_hyperparameters.json").resolve())
