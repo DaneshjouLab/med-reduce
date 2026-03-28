@@ -24,7 +24,7 @@ teacher:
   model_id: "facebook/dinov3-vits16-pretrain-lvd1689m"
   type: "dinov3"
   config:
-    num_labels: 13
+    num_labels: 8
     hidden_size: 384
 
 # Student model (trained end-to-end)
@@ -33,7 +33,7 @@ student:
   model_id: "resnet18"
   type: "timm"
   config:
-    num_labels: 13
+    num_labels: 8
     pretrained: true
 
 # Distillation settings
@@ -63,14 +63,9 @@ datamodule:
     "Enlarged Cardiomediastinum",
     "Cardiomegaly",
     "Lung Opacity",
-    "Lung Lesion",
     "Edema",
-    "Consolidation",
-    "Pneumonia",
-    "Atelectasis",
     "Pneumothorax",
     "Pleural Effusion",
-    "Pleural Other",
     "Fracture",
     "Support Devices",
   ]

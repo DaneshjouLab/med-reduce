@@ -79,7 +79,7 @@ case "$DOMAIN" in
         ;;
     radiology)
         CONFIG="probe_two_stage_radiology"
-        NUM_LABELS=13
+        NUM_LABELS=8
         DISTILL_DIR="${DISTILL_DIR:-/scratch/users/$USER/reduced-perception-rad-results/runs/distillation}"
         ;;
     pathology)
