@@ -217,3 +217,4 @@ config.yaml
 results/**
 figures/**
 !figures/*.png
+ReducedPerception_Paper/**

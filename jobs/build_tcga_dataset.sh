@@ -143,7 +143,11 @@ mkdir -p logs
             echo \"Time elapsed:   \${ELAPSED_H}h \${ELAPSED_M}m\"
             echo \"Time remaining: \${REMAINING_H}h \${REMAINING_M}m\"
             echo \"Disk usage (data dir): \$(du -sh /tcga_data 2>/dev/null | cut -f1)\"
-            echo \"CPU/Memory: \$(free -h | grep Mem | awk '{print \$3 \"/\" \$2}')\"
+            if command -v free &> /dev/null; then
+                echo \"CPU/Memory: \$(free -h | grep Mem | awk '{print \$3 \"/\" \$2}')\"
+            elif [ -f /proc/meminfo ]; then
+                echo \"CPU/Memory: \$(awk '/MemTotal/{t=\$2} /MemAvailable/{a=\$2} END{printf \"%.0fM / %.0fM\", (t-a)/1024, t/1024}' /proc/meminfo)\"
+            fi
             echo '============================================================'
         done
     }

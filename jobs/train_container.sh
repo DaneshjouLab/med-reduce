@@ -2,7 +2,7 @@
 #SBATCH --job-name=probe_3seeds
 #SBATCH --partition=gpu
 #SBATCH --gres=gpu:1
-#SBATCH --time=10:00:00
+#SBATCH --time=24:00:00
 #SBATCH --mem=48G
 #SBATCH --cpus-per-task=8
 #SBATCH --output=logs/%x_%j.out
@@ -178,7 +178,11 @@ fi
             echo ''
             echo 'CPU/Memory:'
             echo \"  CPU cores: \$(nproc)\"
-            echo \"  Memory: \$(free -h | grep Mem | awk '{print \$3 \"/\" \$2}')\"
+            if command -v free &> /dev/null; then
+                echo \"  Memory: \$(free -h | grep Mem | awk '{print \$3 \"/\" \$2}')\"
+            elif [ -f /proc/meminfo ]; then
+                echo \"  Memory: \$(awk '/MemTotal/{t=\$2} /MemAvailable/{a=\$2} END{printf \"%.0fM / %.0fM\", (t-a)/1024, t/1024}' /proc/meminfo)\"
+            fi
             echo '============================================================'
             echo ''
         done

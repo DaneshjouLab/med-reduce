@@ -1,420 +1,714 @@
 #!/usr/bin/env python3
 """
-Aggregate results across multiple seeds and generate summary tables.
+Aggregate results across domains, models, seeds, and resolutions.
 
-Generates tables with mean ± SD for:
-- Accuracy metrics: Top-1 %, AUROC, Macro F1 %
-- Efficiency metrics: GFLOPs, Peak GPU Memory (MB), Inference Latency (ms)
+Scans the results/ directory tree to auto-discover all experiment outputs,
+computes mean +/- SD across seeds, and generates summary tables (Markdown,
+LaTeX, CSV, JSON) and a consolidated DataFrame for downstream visualization.
+
+Directory layout assumed
+------------------------
+results/
+  reduced-perception-{derm,path,rad}-results/
+    runs/probe_two_stage/
+      seed_{42,123,456}/
+        results_{dataset}_{model}_{resolution}px.json
 
 Usage:
+    # Auto-discover everything under results/
+    python -m src.evaluation.aggregate_results --results-root results/
+
+    # Restrict to specific domains / models
     python -m src.evaluation.aggregate_results \
-        --results-dir /path/to/runs/probe_two_stage \
-        --seeds 42 123 456 \
-        --resolutions 512 256 128 64 \
-        --model dinov3 \
-        --output results_table
+        --results-root results/ \
+        --domains dermatology radiology \
+        --models dinov3 resnet50_distilled
+
+    # Save tables
+    python -m src.evaluation.aggregate_results \
+        --results-root results/ \
+        --output results/summary
 """
 
-import os
-import json
+from __future__ import annotations
+
 import argparse
-from pathlib import Path
-from typing import Dict, List, Any, Optional, Tuple
+import json
+import re
 from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
+
 import numpy as np
+import pandas as pd
 
 from src.utils.logging_core import get_logger
 
 log = get_logger(__name__)
 
+# ---------------------------------------------------------------------------
+# Domain registry: maps directory-name fragment -> (domain_label, dataset_prefix)
+# ---------------------------------------------------------------------------
+DOMAIN_REGISTRY = {
+    "derm": ("dermatology", "images"),
+    "path": ("pathology", "tcga"),
+    "rad": ("radiology", "combined_train_valid_chexpert_v1.0"),
+}
 
+# Pathology tasks (order matters for display)
+PATHOLOGY_TASKS = [
+    "luad_vs_lusc",
+    "lgg_vs_gbm",
+    "kras",
+    "tp53",
+    "egfr",
+]
+
+PATHOLOGY_TASK_LABELS = {
+    "luad_vs_lusc": "LUAD vs LUSC",
+    "lgg_vs_gbm": "LGG vs GBM",
+    "kras": "KRAS",
+    "tp53": "TP53",
+    "egfr": "EGFR",
+}
+
+
+# ---------------------------------------------------------------------------
+# Data structures
+# ---------------------------------------------------------------------------
 @dataclass
 class ResolutionMetrics:
-    """Metrics for a single resolution across all seeds."""
+    """Metrics for a single (domain, task, model, resolution) across seeds."""
+    domain: str
+    task: str
+    model: str
     resolution: int
     seeds: List[int] = field(default_factory=list)
 
-    # Accuracy metrics (per seed)
-    top1_acc: List[float] = field(default_factory=list)
+    # Per-seed accuracy
     auroc: List[float] = field(default_factory=list)
+    top1_acc: List[float] = field(default_factory=list)
     macro_f1: List[float] = field(default_factory=list)
 
-    # Efficiency metrics (per seed)
+    # Per-seed efficiency
     gflops: List[float] = field(default_factory=list)
     peak_gpu_memory_mb: List[float] = field(default_factory=list)
     latency_ms: List[float] = field(default_factory=list)
 
-    # Hyperparameters (should be same across seeds)
+    # Hyperparameters (shared across seeds)
     lr: Optional[float] = None
     weight_decay: Optional[float] = None
     batch_size: Optional[int] = None
 
 
-def load_results_file(filepath: Path) -> Optional[Dict[str, Any]]:
-    """Load a single results JSON file."""
-    if not filepath.exists():
-        log.warning(f"Results file not found: {filepath}")
-        return None
-
+# ---------------------------------------------------------------------------
+# Core helpers
+# ---------------------------------------------------------------------------
+def load_json(path: Path) -> Optional[Dict[str, Any]]:
+    """Load a JSON file, returning None on failure."""
     try:
-        with open(filepath, "r") as f:
+        with open(path) as f:
             return json.load(f)
-    except json.JSONDecodeError as e:
-        log.error(f"Error parsing JSON from {filepath}: {e}")
+    except (json.JSONDecodeError, OSError) as exc:
+        log.warning("Failed to load %s: %s", path, exc)
         return None
 
 
+def _mean_std(values: List[float]) -> Tuple[float, float]:
+    if not values:
+        return float("nan"), float("nan")
+    a = np.array(values)
+    return float(np.mean(a)), float(np.std(a))
+
+
+def _fmt(mean: float, std: float, precision: int = 2) -> str:
+    if np.isnan(mean):
+        return "—"
+    return f"{mean:.{precision}f} ± {std:.{precision}f}"
+
+
+# ---------------------------------------------------------------------------
+# Auto-discovery
+# ---------------------------------------------------------------------------
+def _detect_domain(dir_name: str) -> Optional[Tuple[str, str]]:
+    """Return (domain_label, dataset_prefix) from a results directory name."""
+    for key, val in DOMAIN_REGISTRY.items():
+        if key in dir_name:
+            return val
+    return None
+
+
+def _parse_result_filename(
+    filename: str, dataset_prefix: str
+) -> Optional[Dict[str, str]]:
+    """
+    Parse a results filename into its components.
+
+    Examples
+    --------
+    results_images_dinov3_512px.json
+    results_tcga_kras_resnet50_distilled_128px.json
+    results_combined_train_valid_chexpert_v1.0_dinov3_64px.json
+    """
+    stem = filename.replace("results_", "").replace(".json", "")
+
+    # Strip dataset prefix
+    if stem.startswith(dataset_prefix + "_"):
+        stem = stem[len(dataset_prefix) + 1:]
+    elif stem.startswith(dataset_prefix):
+        stem = stem[len(dataset_prefix):]
+
+    # Extract resolution from the end: _<N>px
+    m = re.search(r"_(\d+)px$", stem)
+    if not m:
+        return None
+    resolution = m.group(1)
+    stem = stem[: m.start()]
+
+    # For pathology: next token is the task name
+    task = "default"
+    if dataset_prefix == "tcga":
+        # Try each known task name (longest first to handle lgg_vs_gbm before kras)
+        for t in sorted(PATHOLOGY_TASKS, key=len, reverse=True):
+            if stem.startswith(t + "_"):
+                task = t
+                stem = stem[len(t) + 1:]
+                break
+            elif stem == t:
+                # Edge case: task is the only remaining token
+                task = t
+                stem = ""
+                break
+
+    model = stem if stem else "unknown"
+    return {"task": task, "model": model, "resolution": resolution}
+
+
+def discover_results(
+    results_root: Path,
+    domains: Optional[List[str]] = None,
+    models: Optional[List[str]] = None,
+    seeds: Optional[List[int]] = None,
+    resolutions: Optional[List[int]] = None,
+) -> pd.DataFrame:
+    """
+    Walk *results_root* and build a DataFrame of all experiments.
+
+    Each row contains the raw metrics from one (domain, task, model,
+    resolution, seed) results JSON.
+    """
+    records: List[Dict[str, Any]] = []
+
+    for domain_dir in sorted(results_root.iterdir()):
+        if not domain_dir.is_dir():
+            continue
+        detected = _detect_domain(domain_dir.name)
+        if detected is None:
+            continue
+        domain_label, dataset_prefix = detected
+
+        if domains and domain_label not in domains:
+            continue
+
+        probe_dir = domain_dir / "runs" / "probe_two_stage"
+        if not probe_dir.is_dir():
+            log.warning("No probe_two_stage dir in %s", domain_dir)
+            continue
+
+        for seed_dir in sorted(probe_dir.iterdir()):
+            if not seed_dir.is_dir():
+                continue
+            m = re.match(r"seed_(\d+)", seed_dir.name)
+            if not m:
+                continue
+            seed = int(m.group(1))
+            if seeds and seed not in seeds:
+                continue
+
+            for json_file in sorted(seed_dir.glob("results_*.json")):
+                # Skip backup files
+                if "_backup_" in json_file.name:
+                    continue
+
+                parsed = _parse_result_filename(json_file.name, dataset_prefix)
+                if parsed is None:
+                    continue
+
+                if models and parsed["model"] not in models:
+                    continue
+                res = int(parsed["resolution"])
+                if resolutions and res not in resolutions:
+                    continue
+
+                data = load_json(json_file)
+                if data is None:
+                    continue
+
+                acc = data.get("accuracy_metrics", {})
+                eff = data.get("efficiency_metrics", {})
+                hp = data.get("hyperparameters", {})
+
+                records.append(
+                    {
+                        "domain": domain_label,
+                        "task": parsed["task"],
+                        "model": parsed["model"],
+                        "resolution": res,
+                        "seed": seed,
+                        "auroc": acc.get("best_metric")
+                        or acc.get("final_val_auroc"),
+                        "top1_acc": acc.get("final_val_acc"),
+                        "macro_f1": acc.get("final_val_f1"),
+                        "per_class_auroc": acc.get("per_class_auroc"),
+                        "gflops": eff.get("encoder_gflops"),
+                        "peak_gpu_memory_mb": eff.get("peak_gpu_memory_mb"),
+                        "latency_ms": eff.get("encoder_latency_ms"),
+                        "lr": hp.get("lr"),
+                        "weight_decay": hp.get("weight_decay"),
+                        "batch_size": hp.get("batch_size"),
+                        "source_file": str(json_file),
+                    }
+                )
+
+    df = pd.DataFrame(records)
+    if df.empty:
+        log.warning("No results discovered under %s", results_root)
+    else:
+        log.info(
+            "Discovered %d result files across %d domain(s)",
+            len(df),
+            df["domain"].nunique(),
+        )
+    return df
+
+
+# ---------------------------------------------------------------------------
+# Aggregation (mean ± SD across seeds)
+# ---------------------------------------------------------------------------
+def aggregate(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Group by (domain, task, model, resolution) and compute mean ± SD.
+
+    Returns a DataFrame with one row per group and columns like
+    auroc_mean, auroc_std, top1_acc_mean, etc.
+    """
+    if df.empty:
+        return df
+
+    group_cols = ["domain", "task", "model", "resolution"]
+    metric_cols = [
+        "auroc",
+        "top1_acc",
+        "macro_f1",
+        "gflops",
+        "peak_gpu_memory_mb",
+        "latency_ms",
+    ]
+
+    agg_dict = {col: ["mean", "std", "count"] for col in metric_cols if col in df.columns}
+    agg_dict["seed"] = "count"
+
+    grouped = df.groupby(group_cols, dropna=False).agg(agg_dict)
+    grouped.columns = [
+        f"{col}_{stat}" if col != "seed" else "n_seeds"
+        for col, stat in grouped.columns
+    ]
+
+    # Drop duplicate count columns — keep only n_seeds
+    count_cols = [c for c in grouped.columns if c.endswith("_count") and c != "n_seeds"]
+    grouped.drop(columns=count_cols, inplace=True, errors="ignore")
+
+    grouped.reset_index(inplace=True)
+
+    # Sort: domain, task, model, resolution desc
+    grouped.sort_values(
+        ["domain", "task", "model", "resolution"],
+        ascending=[True, True, True, False],
+        inplace=True,
+    )
+
+    return grouped
+
+
+# ---------------------------------------------------------------------------
+# Table formatters
+# ---------------------------------------------------------------------------
+def _section_title(domain: str, task: str) -> str:
+    if task == "default":
+        return domain.capitalize()
+    label = PATHOLOGY_TASK_LABELS.get(task, task)
+    return f"{domain.capitalize()} — {label}"
+
+
+def to_markdown(agg: pd.DataFrame, title: str = "Cross-Domain Results Summary") -> str:
+    """Render aggregated results as a Markdown table."""
+    lines = [f"## {title}", ""]
+    header = (
+        "| Domain | Task | Model | Res | AUROC (%) | Top-1 (%) | "
+        "F1 (%) | GFLOPs | GPU (MB) | Latency (ms) | Seeds |"
+    )
+    sep = "|".join([""] + ["-" * 10] * 11 + [""])
+    lines += [header, sep]
+
+    for _, r in agg.iterrows():
+        task_label = PATHOLOGY_TASK_LABELS.get(r["task"], r["task"])
+        auroc = _fmt(r.get("auroc_mean", float("nan")),
+                     r.get("auroc_std", float("nan")))
+        acc = _fmt(r.get("top1_acc_mean", float("nan")),
+                   r.get("top1_acc_std", float("nan")))
+        f1 = _fmt(r.get("macro_f1_mean", float("nan")),
+                  r.get("macro_f1_std", float("nan")))
+        gf = _fmt(r.get("gflops_mean", float("nan")),
+                  r.get("gflops_std", float("nan")))
+        mem = _fmt(r.get("peak_gpu_memory_mb_mean", float("nan")),
+                   r.get("peak_gpu_memory_mb_std", float("nan")), precision=0)
+        lat = _fmt(r.get("latency_ms_mean", float("nan")),
+                   r.get("latency_ms_std", float("nan")))
+        n = int(r.get("n_seeds", 0))
+        lines.append(
+            f"| {r['domain']} | {task_label} | {r['model']} | "
+            f"{r['resolution']}px | {auroc} | {acc} | {f1} | "
+            f"{gf} | {mem} | {lat} | {n} |"
+        )
+
+    return "\n".join(lines)
+
+
+def to_latex(agg: pd.DataFrame, title: str = "Cross-Domain Results") -> str:
+    """Render aggregated results as a LaTeX longtable."""
+    lines = [
+        "\\begin{longtable}{llllccccccc}",
+        f"\\caption{{{title}}} \\\\",
+        "\\toprule",
+        "Domain & Task & Model & Res & AUROC (\\%) & Top-1 (\\%) & "
+        "F1 (\\%) & GFLOPs & GPU (MB) & Latency (ms) & Seeds \\\\",
+        "\\midrule",
+        "\\endfirsthead",
+        "\\toprule",
+        "Domain & Task & Model & Res & AUROC (\\%) & Top-1 (\\%) & "
+        "F1 (\\%) & GFLOPs & GPU (MB) & Latency (ms) & Seeds \\\\",
+        "\\midrule",
+        "\\endhead",
+        "\\bottomrule",
+        "\\endfoot",
+    ]
+
+    prev_domain = None
+    for _, r in agg.iterrows():
+        if r["domain"] != prev_domain and prev_domain is not None:
+            lines.append("\\midrule")
+        prev_domain = r["domain"]
+
+        task_label = PATHOLOGY_TASK_LABELS.get(r["task"], r["task"])
+        auroc = _fmt(r.get("auroc_mean", float("nan")),
+                     r.get("auroc_std", float("nan")))
+        acc = _fmt(r.get("top1_acc_mean", float("nan")),
+                   r.get("top1_acc_std", float("nan")))
+        f1 = _fmt(r.get("macro_f1_mean", float("nan")),
+                  r.get("macro_f1_std", float("nan")))
+        gf = _fmt(r.get("gflops_mean", float("nan")),
+                  r.get("gflops_std", float("nan")))
+        mem = _fmt(r.get("peak_gpu_memory_mb_mean", float("nan")),
+                   r.get("peak_gpu_memory_mb_std", float("nan")), precision=0)
+        lat = _fmt(r.get("latency_ms_mean", float("nan")),
+                   r.get("latency_ms_std", float("nan")))
+        n = int(r.get("n_seeds", 0))
+        lines.append(
+            f"{r['domain']} & {task_label} & {r['model']} & "
+            f"{r['resolution']} & {auroc} & {acc} & {f1} & "
+            f"{gf} & {mem} & {lat} & {n} \\\\"
+        )
+
+    lines.append("\\end{longtable}")
+    return "\n".join(lines)
+
+
+def to_csv(agg: pd.DataFrame) -> str:
+    """Render aggregated results as CSV."""
+    return agg.to_csv(index=False)
+
+
+# ---------------------------------------------------------------------------
+# Console printer
+# ---------------------------------------------------------------------------
+def print_table(agg: pd.DataFrame) -> None:
+    """Pretty-print the aggregated table to stdout."""
+    print("\n" + "=" * 120)
+    print("CROSS-DOMAIN RESULTS SUMMARY  (mean ± SD across seeds)")
+    print("=" * 120)
+
+    prev_domain = None
+    for _, r in agg.iterrows():
+        if r["domain"] != prev_domain:
+            if prev_domain is not None:
+                print("-" * 120)
+            prev_domain = r["domain"]
+            print(f"\n  {r['domain'].upper()}")
+            print(
+                f"  {'Task':<18} {'Model':<28} {'Res':<6} "
+                f"{'AUROC (%)':<16} {'Top-1 (%)':<16} {'F1 (%)':<16} "
+                f"{'GFLOPs':<14} {'GPU (MB)':<12} {'Lat (ms)':<14} {'#':<4}"
+            )
+            print("  " + "-" * 116)
+
+        task_label = PATHOLOGY_TASK_LABELS.get(r["task"], r["task"])
+        auroc = _fmt(r.get("auroc_mean", float("nan")),
+                     r.get("auroc_std", float("nan")))
+        acc = _fmt(r.get("top1_acc_mean", float("nan")),
+                   r.get("top1_acc_std", float("nan")))
+        f1 = _fmt(r.get("macro_f1_mean", float("nan")),
+                  r.get("macro_f1_std", float("nan")))
+        gf = _fmt(r.get("gflops_mean", float("nan")),
+                  r.get("gflops_std", float("nan")))
+        mem = _fmt(r.get("peak_gpu_memory_mb_mean", float("nan")),
+                   r.get("peak_gpu_memory_mb_std", float("nan")), precision=0)
+        lat = _fmt(r.get("latency_ms_mean", float("nan")),
+                   r.get("latency_ms_std", float("nan")))
+        n = int(r.get("n_seeds", 0))
+        print(
+            f"  {task_label:<18} {r['model']:<28} {r['resolution']:<6} "
+            f"{auroc:<16} {acc:<16} {f1:<16} "
+            f"{gf:<14} {mem:<12} {lat:<14} {n:<4}"
+        )
+
+    print("=" * 120 + "\n")
+
+
+# ---------------------------------------------------------------------------
+# File savers
+# ---------------------------------------------------------------------------
+def save_tables(
+    agg: pd.DataFrame,
+    output_stem: str,
+    title: str = "Cross-Domain Results",
+) -> None:
+    """Write Markdown, LaTeX, CSV, and JSON to *output_stem*.{ext}."""
+    out = Path(output_stem)
+    out.parent.mkdir(parents=True, exist_ok=True)
+
+    md_path = out.with_suffix(".md")
+    md_path.write_text(to_markdown(agg, title))
+    log.info("Saved Markdown → %s", md_path)
+
+    tex_path = out.with_suffix(".tex")
+    tex_path.write_text(to_latex(agg, title))
+    log.info("Saved LaTeX   → %s", tex_path)
+
+    csv_path = out.with_suffix(".csv")
+    csv_path.write_text(to_csv(agg))
+    log.info("Saved CSV     → %s", csv_path)
+
+    json_path = out.with_suffix(".json")
+    # Convert to JSON-safe dict (handle NaN)
+    json_records = json.loads(agg.to_json(orient="records"))
+    json_path.write_text(json.dumps(json_records, indent=2))
+    log.info("Saved JSON    → %s", json_path)
+
+
+# ---------------------------------------------------------------------------
+# Legacy single-domain helpers (kept for backward compatibility)
+# ---------------------------------------------------------------------------
 def collect_results(
     results_dir: str,
     seeds: List[int],
     resolutions: List[int],
     model_name: str = "dinov3",
 ) -> Dict[int, ResolutionMetrics]:
-    """
-    Collect results from all seed directories for each resolution.
-
-    Expected directory structure:
-        results_dir/
-            seed_42/
-                results_{model}_{resolution}px.json
-            seed_123/
-                ...
-
-    Args:
-        results_dir: Base directory containing seed subdirectories
-        seeds: List of seed values to collect
-        resolutions: List of resolutions to collect
-        model_name: Model name used in results filename
-
-    Returns:
-        Dict mapping resolution -> ResolutionMetrics
-    """
+    """Collect results for a single domain directory (legacy API)."""
     results_dir = Path(results_dir)
     metrics_by_resolution: Dict[int, ResolutionMetrics] = {}
 
     for resolution in resolutions:
-        metrics = ResolutionMetrics(resolution=resolution)
+        metrics = ResolutionMetrics(
+            domain="unknown", task="default", model=model_name, resolution=resolution,
+        )
 
         for seed in seeds:
             seed_dir = results_dir / f"seed_{seed}"
-            results_file = seed_dir / f"results_{model_name}_{resolution}px.json"
+            # Try common filename patterns
+            for pattern in [
+                f"results_{model_name}_{resolution}px.json",
+                f"results_*_{model_name}_{resolution}px.json",
+            ]:
+                matches = list(seed_dir.glob(pattern))
+                if matches:
+                    break
 
-            data = load_results_file(results_file)
+            if not matches:
+                log.warning("No results for seed %d at %dpx", seed, resolution)
+                continue
+
+            data = load_json(matches[0])
             if data is None:
-                log.warning(f"Skipping seed {seed} for resolution {resolution}px (file not found)")
                 continue
 
             metrics.seeds.append(seed)
+            acc = data.get("accuracy_metrics", {})
+            eff = data.get("efficiency_metrics", {})
+            hp = data.get("hyperparameters", {})
 
-            # Extract accuracy metrics
-            acc_metrics = data.get("accuracy_metrics", {})
-            if acc_metrics.get("final_val_acc") is not None:
-                metrics.top1_acc.append(acc_metrics["final_val_acc"] * 100)  # Convert to %
-            if acc_metrics.get("final_val_auroc") is not None:
-                metrics.auroc.append(acc_metrics["final_val_auroc"] * 100)  # Convert to %
-            # Note: F1 is not currently saved in results - would need to add to training
-            if acc_metrics.get("final_val_f1") is not None:
-                metrics.macro_f1.append(acc_metrics["final_val_f1"] * 100)
-
-            # Extract efficiency metrics
-            eff_metrics = data.get("efficiency_metrics", {})
-            if eff_metrics.get("encoder_gflops") is not None:
-                metrics.gflops.append(eff_metrics["encoder_gflops"])
-            if eff_metrics.get("peak_gpu_memory_mb") is not None:
-                metrics.peak_gpu_memory_mb.append(eff_metrics["peak_gpu_memory_mb"])
-            if eff_metrics.get("encoder_latency_ms") is not None:
-                metrics.latency_ms.append(eff_metrics["encoder_latency_ms"])
-
-            # Extract hyperparameters (same for all seeds)
-            hyperparams = data.get("hyperparameters", {})
+            if acc.get("final_val_acc") is not None:
+                metrics.top1_acc.append(acc["final_val_acc"] * 100)
+            if acc.get("final_val_auroc") is not None:
+                metrics.auroc.append(acc["final_val_auroc"] * 100)
+            if acc.get("final_val_f1") is not None:
+                metrics.macro_f1.append(acc["final_val_f1"] * 100)
+            if eff.get("encoder_gflops") is not None:
+                metrics.gflops.append(eff["encoder_gflops"])
+            if eff.get("peak_gpu_memory_mb") is not None:
+                metrics.peak_gpu_memory_mb.append(eff["peak_gpu_memory_mb"])
+            if eff.get("encoder_latency_ms") is not None:
+                metrics.latency_ms.append(eff["encoder_latency_ms"])
             if metrics.lr is None:
-                metrics.lr = hyperparams.get("lr")
-                metrics.weight_decay = hyperparams.get("weight_decay")
-                metrics.batch_size = hyperparams.get("batch_size")
+                metrics.lr = hp.get("lr")
+                metrics.weight_decay = hp.get("weight_decay")
+                metrics.batch_size = hp.get("batch_size")
 
         if metrics.seeds:
             metrics_by_resolution[resolution] = metrics
-            log.info(f"Collected {len(metrics.seeds)} seeds for {resolution}px")
-        else:
-            log.warning(f"No results found for {resolution}px")
 
     return metrics_by_resolution
-
-
-def compute_mean_std(values: List[float]) -> Tuple[float, float]:
-    """Compute mean and standard deviation."""
-    if not values:
-        return float('nan'), float('nan')
-    arr = np.array(values)
-    return float(np.mean(arr)), float(np.std(arr))
-
-
-def format_mean_std(mean: float, std: float, precision: int = 2) -> str:
-    """Format mean ± std as string."""
-    if np.isnan(mean):
-        return "N/A"
-    return f"{mean:.{precision}f} ± {std:.{precision}f}"
 
 
 def generate_table(
     metrics_by_resolution: Dict[int, ResolutionMetrics],
     resolutions: List[int],
 ) -> Dict[str, Any]:
-    """
-    Generate summary statistics table.
-
-    Returns dict with:
-        - 'data': List of row dicts
-        - 'headers': List of column headers
-    """
+    """Generate legacy-format table dict from ResolutionMetrics."""
     headers = [
-        "Resolution",
-        "Top-1 Acc (%)",
-        "AUROC (%)",
-        "Macro F1 (%)",
-        "GFLOPs",
-        "Peak GPU (MB)",
-        "Latency (ms)",
-        "Seeds",
+        "Resolution", "Top-1 Acc (%)", "AUROC (%)", "Macro F1 (%)",
+        "GFLOPs", "Peak GPU (MB)", "Latency (ms)", "Seeds",
     ]
-
     rows = []
-    for resolution in sorted(resolutions, reverse=True):
-        metrics = metrics_by_resolution.get(resolution)
-        if metrics is None:
+    for res in sorted(resolutions, reverse=True):
+        m = metrics_by_resolution.get(res)
+        if m is None:
             continue
-
-        top1_mean, top1_std = compute_mean_std(metrics.top1_acc)
-        auroc_mean, auroc_std = compute_mean_std(metrics.auroc)
-        f1_mean, f1_std = compute_mean_std(metrics.macro_f1)
-        gflops_mean, gflops_std = compute_mean_std(metrics.gflops)
-        mem_mean, mem_std = compute_mean_std(metrics.peak_gpu_memory_mb)
-        lat_mean, lat_std = compute_mean_std(metrics.latency_ms)
-
-        row = {
-            "resolution": resolution,
-            "top1_acc": format_mean_std(top1_mean, top1_std),
-            "auroc": format_mean_std(auroc_mean, auroc_std),
-            "macro_f1": format_mean_std(f1_mean, f1_std),
-            "gflops": format_mean_std(gflops_mean, gflops_std),
-            "peak_gpu_mb": format_mean_std(mem_mean, mem_std, precision=0),
-            "latency_ms": format_mean_std(lat_mean, lat_std),
-            "n_seeds": len(metrics.seeds),
-            # Raw values for programmatic access
+        t_m, t_s = _mean_std(m.top1_acc)
+        a_m, a_s = _mean_std(m.auroc)
+        f_m, f_s = _mean_std(m.macro_f1)
+        g_m, g_s = _mean_std(m.gflops)
+        mem_m, mem_s = _mean_std(m.peak_gpu_memory_mb)
+        l_m, l_s = _mean_std(m.latency_ms)
+        rows.append({
+            "resolution": res,
+            "top1_acc": _fmt(t_m, t_s), "auroc": _fmt(a_m, a_s),
+            "macro_f1": _fmt(f_m, f_s), "gflops": _fmt(g_m, g_s),
+            "peak_gpu_mb": _fmt(mem_m, mem_s, 0), "latency_ms": _fmt(l_m, l_s),
+            "n_seeds": len(m.seeds),
             "_raw": {
-                "top1_acc": (top1_mean, top1_std),
-                "auroc": (auroc_mean, auroc_std),
-                "macro_f1": (f1_mean, f1_std),
-                "gflops": (gflops_mean, gflops_std),
-                "peak_gpu_mb": (mem_mean, mem_std),
-                "latency_ms": (lat_mean, lat_std),
-            }
-        }
-        rows.append(row)
-
+                "top1_acc": (t_m, t_s), "auroc": (a_m, a_s),
+                "macro_f1": (f_m, f_s), "gflops": (g_m, g_s),
+                "peak_gpu_mb": (mem_m, mem_s), "latency_ms": (l_m, l_s),
+            },
+        })
     return {"headers": headers, "data": rows}
 
 
-def to_markdown(table: Dict[str, Any], title: str = "Results Summary") -> str:
-    """Convert table to markdown format."""
-    lines = [
-        f"## {title}",
-        "",
-        "| Resolution | Top-1 Acc (%) | AUROC (%) | Macro F1 (%) | GFLOPs | Peak GPU (MB) | Latency (ms) | Seeds |",
-        "|------------|---------------|-----------|--------------|--------|---------------|--------------|-------|",
-    ]
-
-    for row in table["data"]:
-        lines.append(
-            f"| {row['resolution']}px | {row['top1_acc']} | {row['auroc']} | {row['macro_f1']} | "
-            f"{row['gflops']} | {row['peak_gpu_mb']} | {row['latency_ms']} | {row['n_seeds']} |"
-        )
-
-    return "\n".join(lines)
-
-
-def to_latex(table: Dict[str, Any], title: str = "Results Summary") -> str:
-    """Convert table to LaTeX format."""
-    lines = [
-        "\\begin{table}[htbp]",
-        "\\centering",
-        f"\\caption{{{title}}}",
-        "\\begin{tabular}{lccccccc}",
-        "\\toprule",
-        "Resolution & Top-1 (\\%) & AUROC (\\%) & F1 (\\%) & GFLOPs & GPU (MB) & Latency (ms) & Seeds \\\\",
-        "\\midrule",
-    ]
-
-    for row in table["data"]:
-        lines.append(
-            f"{row['resolution']}px & {row['top1_acc']} & {row['auroc']} & {row['macro_f1']} & "
-            f"{row['gflops']} & {row['peak_gpu_mb']} & {row['latency_ms']} & {row['n_seeds']} \\\\"
-        )
-
-    lines.extend([
-        "\\bottomrule",
-        "\\end{tabular}",
-        "\\end{table}",
-    ])
-
-    return "\n".join(lines)
-
-
-def to_csv(table: Dict[str, Any]) -> str:
-    """Convert table to CSV format."""
-    lines = ["resolution,top1_acc_mean,top1_acc_std,auroc_mean,auroc_std,f1_mean,f1_std,gflops_mean,gflops_std,peak_gpu_mb_mean,peak_gpu_mb_std,latency_ms_mean,latency_ms_std,n_seeds"]
-
-    for row in table["data"]:
-        raw = row["_raw"]
-        lines.append(
-            f"{row['resolution']},"
-            f"{raw['top1_acc'][0]:.4f},{raw['top1_acc'][1]:.4f},"
-            f"{raw['auroc'][0]:.4f},{raw['auroc'][1]:.4f},"
-            f"{raw['macro_f1'][0]:.4f},{raw['macro_f1'][1]:.4f},"
-            f"{raw['gflops'][0]:.4f},{raw['gflops'][1]:.4f},"
-            f"{raw['peak_gpu_mb'][0]:.1f},{raw['peak_gpu_mb'][1]:.1f},"
-            f"{raw['latency_ms'][0]:.4f},{raw['latency_ms'][1]:.4f},"
-            f"{row['n_seeds']}"
-        )
-
-    return "\n".join(lines)
-
-
-def save_tables(
-    table: Dict[str, Any],
-    output_path: str,
-    title: str = "Results Summary",
-) -> None:
-    """Save table in multiple formats."""
-    output_path = Path(output_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-
-    # Markdown
-    md_path = output_path.with_suffix(".md")
-    with open(md_path, "w") as f:
-        f.write(to_markdown(table, title))
-    log.info(f"Saved markdown table to {md_path}")
-
-    # LaTeX
-    tex_path = output_path.with_suffix(".tex")
-    with open(tex_path, "w") as f:
-        f.write(to_latex(table, title))
-    log.info(f"Saved LaTeX table to {tex_path}")
-
-    # CSV
-    csv_path = output_path.with_suffix(".csv")
-    with open(csv_path, "w") as f:
-        f.write(to_csv(table))
-    log.info(f"Saved CSV table to {csv_path}")
-
-    # JSON (full data)
-    json_path = output_path.with_suffix(".json")
-    with open(json_path, "w") as f:
-        # Remove _raw for cleaner JSON output
-        clean_data = []
-        for row in table["data"]:
-            clean_row = {k: v for k, v in row.items() if k != "_raw"}
-            clean_row["raw_values"] = row["_raw"]
-            clean_data.append(clean_row)
-        json.dump({"headers": table["headers"], "data": clean_data}, f, indent=2)
-    log.info(f"Saved JSON data to {json_path}")
-
-
-def print_table(table: Dict[str, Any]) -> None:
-    """Print table to console."""
-    print("\n" + "=" * 100)
-    print("RESULTS SUMMARY (mean ± SD across seeds)")
-    print("=" * 100)
-    print()
-    print(f"{'Resolution':<12} {'Top-1 (%)':<16} {'AUROC (%)':<16} {'Macro F1 (%)':<16} "
-          f"{'GFLOPs':<14} {'GPU (MB)':<14} {'Latency (ms)':<14} {'Seeds':<6}")
-    print("-" * 100)
-
-    for row in table["data"]:
-        print(f"{row['resolution']}px{'':<8} {row['top1_acc']:<16} {row['auroc']:<16} {row['macro_f1']:<16} "
-              f"{row['gflops']:<14} {row['peak_gpu_mb']:<14} {row['latency_ms']:<14} {row['n_seeds']:<6}")
-
-    print("=" * 100)
-    print()
-
-
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
 def main():
     parser = argparse.ArgumentParser(
-        description="Aggregate results across seeds and generate summary tables",
+        description="Aggregate results across domains, models, seeds, and resolutions.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-
     parser.add_argument(
-        "--results-dir",
-        type=str,
-        required=True,
-        help="Base directory containing seed subdirectories (e.g., runs/probe_two_stage)",
+        "--results-root", type=str, default="results/",
+        help="Root directory containing per-domain result folders (default: results/)",
     )
-
     parser.add_argument(
-        "--seeds",
-        type=int,
-        nargs="+",
-        default=[42, 123, 456],
-        help="Seeds to aggregate (default: 42 123 456)",
+        "--results-dir", type=str, default=None,
+        help="(Legacy) Single domain results dir (e.g. runs/probe_two_stage).",
     )
-
     parser.add_argument(
-        "--resolutions",
-        type=int,
-        nargs="+",
-        default=[512, 256, 128, 64],
-        help="Resolutions to include (default: 512 256 128 64)",
+        "--domains", type=str, nargs="*", default=None,
+        help="Restrict to these domains (e.g. dermatology radiology).",
     )
-
     parser.add_argument(
-        "--model",
-        type=str,
-        default="dinov3",
-        help="Model name (default: dinov3)",
+        "--models", type=str, nargs="*", default=None,
+        help="Restrict to these model names (e.g. dinov3 resnet50_distilled).",
     )
-
     parser.add_argument(
-        "--output",
-        type=str,
-        default=None,
-        help="Output path (without extension). If not provided, only prints to console.",
+        "--seeds", type=int, nargs="+", default=None,
+        help="Seeds to aggregate (default: all discovered).",
     )
-
     parser.add_argument(
-        "--title",
-        type=str,
-        default="Multi-Resolution Linear Probing Results",
-        help="Title for the table",
+        "--resolutions", type=int, nargs="+", default=None,
+        help="Resolutions to include (default: all discovered).",
+    )
+    parser.add_argument(
+        "--model", type=str, default="dinov3",
+        help="(Legacy) Model name for single-domain mode.",
+    )
+    parser.add_argument(
+        "--output", type=str, default=None,
+        help="Output path stem (without extension). Tables saved as .md/.tex/.csv/.json.",
+    )
+    parser.add_argument(
+        "--title", type=str, default="Cross-Domain Results",
+        help="Title for tables.",
     )
 
     args = parser.parse_args()
 
-    # Collect results
-    log.info(f"Collecting results from: {args.results_dir}")
-    log.info(f"Seeds: {args.seeds}")
-    log.info(f"Resolutions: {args.resolutions}")
-
-    metrics = collect_results(
-        results_dir=args.results_dir,
-        seeds=args.seeds,
-        resolutions=args.resolutions,
-        model_name=args.model,
-    )
-
-    if not metrics:
-        log.error("No results found!")
+    # Legacy single-domain mode
+    if args.results_dir:
+        seeds = args.seeds or [42, 123, 456]
+        resolutions = args.resolutions or [512, 256, 128, 64]
+        metrics = collect_results(
+            args.results_dir, seeds, resolutions, model_name=args.model,
+        )
+        if not metrics:
+            log.error("No results found!")
+            return
+        table = generate_table(metrics, resolutions)
+        # Print to console
+        print("\n" + "=" * 100)
+        print("RESULTS SUMMARY (mean ± SD across seeds)")
+        print("=" * 100)
+        for row in table["data"]:
+            print(
+                f"  {row['resolution']}px  AUROC={row['auroc']}  "
+                f"Acc={row['top1_acc']}  F1={row['macro_f1']}"
+            )
+        print("=" * 100 + "\n")
+        if args.output:
+            save_tables(
+                aggregate(discover_results(Path(args.results_dir).parent.parent.parent)),
+                args.output, args.title,
+            )
         return
 
-    # Generate table
-    table = generate_table(metrics, args.resolutions)
+    # Cross-domain auto-discovery mode
+    root = Path(args.results_root)
+    if not root.is_dir():
+        log.error("Results root not found: %s", root)
+        return
 
-    # Print to console
-    print_table(table)
+    raw_df = discover_results(
+        root,
+        domains=args.domains,
+        models=args.models,
+        seeds=args.seeds,
+        resolutions=args.resolutions,
+    )
+    if raw_df.empty:
+        return
 
-    # Save to files
+    agg_df = aggregate(raw_df)
+    print_table(agg_df)
+
     if args.output:
-        save_tables(table, args.output, title=args.title)
+        save_tables(agg_df, args.output, args.title)
+        # Also save the raw per-seed dataframe for downstream analysis
+        raw_csv = Path(args.output).with_name(
+            Path(args.output).stem + "_raw"
+        ).with_suffix(".csv")
+        raw_df.drop(columns=["source_file", "per_class_auroc"], errors="ignore").to_csv(
+            raw_csv, index=False,
+        )
+        log.info("Saved raw per-seed data → %s", raw_csv)
 
 
 if __name__ == "__main__":

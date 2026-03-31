@@ -190,7 +190,11 @@ fi
             fi
 
             echo \"CPU cores: \$(nproc)\"
-            echo \"Memory: \$(free -h | grep Mem | awk '{print \$3 \"/\" \$2}')\"
+            if command -v free &> /dev/null; then
+                echo \"Memory: \$(free -h | grep Mem | awk '{print \$3 \"/\" \$2}')\"
+            elif [ -f /proc/meminfo ]; then
+                echo \"Memory: \$(awk '/MemTotal/{t=\$2} /MemAvailable/{a=\$2} END{printf \"%.0fM / %.0fM\", (t-a)/1024, t/1024}' /proc/meminfo)\"
+            fi
             echo '============================================================'
             echo ''
         done

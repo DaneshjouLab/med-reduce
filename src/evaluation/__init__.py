@@ -6,21 +6,25 @@
 """Evaluation utilities for aggregating and reporting results."""
 
 from src.evaluation.aggregate_results import (
+    aggregate,
     collect_results,
+    discover_results,
     generate_table,
-    to_markdown,
-    to_latex,
-    to_csv,
-    save_tables,
     print_table,
+    save_tables,
+    to_csv,
+    to_latex,
+    to_markdown,
 )
 
 __all__ = [
+    "aggregate",
     "collect_results",
+    "discover_results",
     "generate_table",
-    "to_markdown",
-    "to_latex",
-    "to_csv",
-    "save_tables",
     "print_table",
+    "save_tables",
+    "to_csv",
+    "to_latex",
+    "to_markdown",
 ]
