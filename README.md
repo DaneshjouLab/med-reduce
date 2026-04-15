@@ -1,4 +1,4 @@
-# Med-REDUCE: Resolution-Aware Evaluation of Deep Understanding and Computational Efficiency
+# Med-REDUCE: Representation Transfer and Efficiency Under Resolution Constraints
 
 ![Coverage](https://img.shields.io/badge/coverage-87%25-brightgreen)
 
@@ -10,6 +10,8 @@ The design emphasizes:
 - **On-the-fly input transformations** for clean experimental control (downsample at load time, never store degraded copies)
 - **Reproducibility** via Hydra configs, persistent train/test splits, and saved seeds
 - **Fair comparison** across pipelines through shared splits, identical degradation, and consistent evaluation
+
+The distillation pipeline for Med-REDUCE can be found at https://github.com/Vicbi/med-reduce-distillation.
 
 ---
 
