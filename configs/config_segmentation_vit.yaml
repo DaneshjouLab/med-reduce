@@ -9,8 +9,8 @@ datamodule:
 
   # Directory-based loading (recommended for segmentation)
   # Provide image_dir and mask_dir pointing to your data
-  image_dir: /scratch/groups/roxanad/datasets/isic/challenges/2017/ISIC-2017_Training_Data/ISIC-2017_Training_Data  # Directory containing images (e.g., ISIC_0000000.jpg)
-  mask_dir: /scratch/groups/roxanad/datasets/isic/challenges/2017/ISIC-2017_Test_v2_Part1_GroundTruth/ISIC-2017_Test_v2_Part1_GroundTruth    # Directory containing masks (e.g., ISIC_0000000_segmentation.png)
+  image_dir: ${oc.env:MR_DATA_ROOT,/scratch/groups/roxanad/datasets}/isic/challenges/2017/ISIC-2017_Training_Data/ISIC-2017_Training_Data  # Directory containing images (e.g., ISIC_0000000.jpg)
+  mask_dir: ${oc.env:MR_DATA_ROOT,/scratch/groups/roxanad/datasets}/isic/challenges/2017/ISIC-2017_Test_v2_Part1_GroundTruth/ISIC-2017_Test_v2_Part1_GroundTruth    # Directory containing masks (e.g., ISIC_0000000_segmentation.png)
 
   # File matching parameters
   image_extension: .jpg              # Extension for image files
@@ -90,7 +90,7 @@ loss:
 
 # Logging configuration
 logging:
-  project: "reduced-perception"
+  project: "med-reduce"
   run_name: "vit_segmentation_run"
   wandb_enabled: true
   save_umap_embeddings: false

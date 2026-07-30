@@ -79,7 +79,7 @@ class MockViTModel(nn.Module):
             super().__init__()
             self.embed_dim = embed_dim
 
-        def forward(self, pixel_values):
+        def forward(self, pixel_values, **kwargs):  # accepts interpolate_pos_encoding
             B = pixel_values.shape[0]
             return SimpleNamespace(
                 pooler_output=torch.randn(B, self.embed_dim),

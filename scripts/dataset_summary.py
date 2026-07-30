@@ -11,17 +11,16 @@ from pathlib import Path
 
 RESULTS_ROOT = Path("results")
 
+# Splits now live in a single shared results/splits/ (teacher-agnostic), keyed by
+# the dataset identifier the pipeline uses.
 DATASETS = {
     "Dermatology": {
-        "dir": "reduced-perception-derm-results",
         "splits": {"ISIC (images)": "images"},
     },
     "Radiology": {
-        "dir": "reduced-perception-rad-results",
         "splits": {"CheXpert": "combined_train_valid_chexpert_v1.0"},
     },
     "Pathology": {
-        "dir": "reduced-perception-path-results",
         "splits": {
             "LUAD vs LUSC": "tcga_luad_vs_lusc",
             "LGG vs GBM": "tcga_lgg_vs_gbm",
@@ -39,7 +38,7 @@ def main():
     rows = []
 
     for domain, config in DATASETS.items():
-        domain_dir = RESULTS_ROOT / config["dir"] / "splits"
+        domain_dir = RESULTS_ROOT / "splits"
         for display_name, split_name in config["splits"].items():
             meta_path = domain_dir / split_name / SEED / "metadata.json"
             if not meta_path.exists():

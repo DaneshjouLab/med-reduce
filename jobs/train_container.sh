@@ -95,7 +95,7 @@ fi
 
 # Run the training inside the container
 "$TOOL" exec --nv \
-     -B "/scratch/users/$USER/reduced-perception:/workspace" \
+     -B "/scratch/users/$USER/med-reduce:/workspace" \
      -B "/scratch/users/$USER:/scratch_user" \
      -B "/scratch/users/$USER/pip_cache:/root/.cache/pip" \
      -B "/tmp:/tmp" \

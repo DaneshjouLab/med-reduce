@@ -9,7 +9,7 @@ LaTeX, CSV, JSON) and a consolidated DataFrame for downstream visualization.
 Directory layout assumed
 ------------------------
 results/
-  reduced-perception-{derm,path,rad}-results/
+  med-reduce-{derm,path,rad}-results/
     runs/probe_two_stage/
       seed_{42,123,456}/
         results_{dataset}_{model}_{resolution}px.json

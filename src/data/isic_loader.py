@@ -229,8 +229,8 @@ class ISICHFRawSplitLocal(Dataset):
     def __init__(
         self,
         *,
-        data_dir: str = "/scratch/groups/roxanad/datasets/isic/challenges/2017/ISIC-2017_Training_Data/ISIC-2017_Training_Data",
-        label_file: str = "/scratch/groups/roxanad/datasets/isic/challenges/2017/ISIC-2017_Training_Part3_GroundTruth.csv",
+        data_dir: str = os.environ.get("MR_DATA_ROOT", "/scratch/groups/roxanad/datasets") + "/isic/challenges/2017/ISIC-2017_Training_Data/ISIC-2017_Training_Data",
+        label_file: str = os.environ.get("MR_DATA_ROOT", "/scratch/groups/roxanad/datasets") + "/isic/challenges/2017/ISIC-2017_Training_Part3_GroundTruth.csv",
         image_id_column: str = "image_id",
         label_column: str | Sequence[str] = "label",
         image_extension: str = ".jpg",

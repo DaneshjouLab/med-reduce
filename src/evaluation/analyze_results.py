@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Cross-domain visualization suite for reduced-perception experiments.
+Cross-domain visualization suite for med-reduce experiments.
 
 Generates publication-quality figures from the results/ directory tree:
   1. AUROC vs resolution curves  (per domain, all models on one plot)

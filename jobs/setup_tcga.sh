@@ -20,7 +20,7 @@
 set -e
 
 SCRATCH_USER="/scratch/users/$USER"
-SCRATCH_GROUP="/scratch/groups/roxanad"
+SCRATCH_GROUP="${SCRATCH_GROUP:-/scratch/groups/roxanad}"
 TCGA_DATA_DIR="${SCRATCH_GROUP}/datasets/tcga"
 PROJECT_DIR="$SLURM_SUBMIT_DIR"
 

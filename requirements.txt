@@ -36,6 +36,7 @@ matplotlib
 matplotlib-inline
 nest_asyncio
 numpy
+open_clip_torch
 openai
 packaging
 pandas

@@ -23,21 +23,21 @@
 domain: "pathology"
 
 # Split configuration
-split_dir: /scratch/users/bikia/reduced-perception-path-results/splits
+split_dir: ${oc.env:MR_RESULTS_ROOT,/scratch/users/bikia/med-reduce-path-results}/splits
 
 # Embedding cache configuration
-embedding_cache_dir: /scratch/users/bikia/reduced-perception-path-results/cache/embeddings
+embedding_cache_dir: ${oc.env:MR_RESULTS_ROOT,/scratch/users/bikia/med-reduce-path-results}/cache/embeddings
 
 # Runtime configuration
 runtime:
-  run_dir: /scratch/users/bikia/reduced-perception-path-results/runs/probe_two_stage
+  run_dir: ${oc.env:MR_RESULTS_ROOT,/scratch/users/bikia/med-reduce-path-results}/runs/probe_two_stage
 
 datamodule:
   _target_: src.data.tcga_datamodule.TCGADataModule
   task: luad_vs_lusc
-  dataset_csv: /scratch/groups/roxanad/datasets/tcga/tables/dataset.csv
-  data_dir: /scratch/groups/roxanad/datasets/tcga/thumbnails
-  split_dir: /scratch/users/bikia/reduced-perception-path-results/splits
+  dataset_csv: ${oc.env:MR_DATA_ROOT,/scratch/groups/roxanad/datasets}/tcga/tables/dataset.csv
+  data_dir: ${oc.env:MR_DATA_ROOT,/scratch/groups/roxanad/datasets}/tcga/thumbnails
+  split_dir: ${oc.env:MR_RESULTS_ROOT,/scratch/users/bikia/med-reduce-path-results}/splits
   use_val_split: false
   train_ratio: 0.8
   force_recompute: false
@@ -91,7 +91,7 @@ loss:
   reduction: "mean"
 
 logging:
-  project: "reduced-perception"
+  project: "med-reduce"
   run_name: "dinov3_pathology_512px"
   wandb_enabled: true
   save_checkpoints: true

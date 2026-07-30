@@ -21,17 +21,21 @@ RESULTS_ROOT = Path("results")
 RESOLUTIONS = [512, 256, 128, 64]
 SEEDS = ["seed_42", "seed_123", "seed_456"]
 
+# Runs now live under results/<teacher>/<domain>/runs/. Set TEACHER to switch
+# between dinov3 and biomedclip result trees.
+TEACHER = "dinov3"
+
 DOMAINS = {
     "Dermatology": {
-        "dir": "reduced-perception-derm-results",
+        "dir": f"{TEACHER}/dermatology",
         "pattern": "results_images_dinov3_{res}px.json",
     },
     "Radiology": {
-        "dir": "reduced-perception-rad-results",
+        "dir": f"{TEACHER}/radiology",
         "pattern": "results_combined_train_valid_chexpert_v1.0_dinov3_{res}px.json",
     },
     "Pathology": {
-        "dir": "reduced-perception-path-results",
+        "dir": f"{TEACHER}/pathology",
         "tasks": ["luad_vs_lusc", "lgg_vs_gbm", "kras", "tp53", "egfr"],
         "pattern": "results_tcga_{task}_dinov3_{res}px.json",
     },

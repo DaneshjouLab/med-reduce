@@ -34,7 +34,7 @@ if [ ! -f "$SIF_STORE/$SIF_IMAGE" ]; then
 fi
 
 "$TOOL" exec --nv \
-     -B "/scratch/users/$USER/reduced-perception:/workspace" \
+     -B "/scratch/users/$USER/med-reduce:/workspace" \
      -B "/scratch/users/$USER:/scratch_user" \
      -B "/scratch/users/$USER/pip_cache:/root/.cache/pip" \
      -B "$CKPT_DIR:/checkpoints" \

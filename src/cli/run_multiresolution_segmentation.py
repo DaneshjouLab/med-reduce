@@ -30,6 +30,7 @@ Usage:
 """
 
 import argparse
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -60,8 +61,8 @@ DOMAIN_CONFIG = {
         "highest_resolution": 512,
         "default_resolutions": [512, 256, 128, 64],
         "config": "config_segmentation",
-        "image_dir": "/scratch/groups/roxanad/datasets/isic/challenges/2017/ISIC-2017_Training_Data/ISIC-2017_Training_Data",
-        "mask_dir": "/scratch/groups/roxanad/datasets/isic/challenges/2017/ISIC-2017_Training_Part1_GroundTruth/ISIC-2017_Training_Part1_GroundTruth",
+        "image_dir": os.environ.get("MR_DATA_ROOT", "/scratch/groups/roxanad/datasets") + "/isic/challenges/2017/ISIC-2017_Training_Data/ISIC-2017_Training_Data",
+        "mask_dir": os.environ.get("MR_DATA_ROOT", "/scratch/groups/roxanad/datasets") + "/isic/challenges/2017/ISIC-2017_Training_Part1_GroundTruth/ISIC-2017_Training_Part1_GroundTruth",
     },
 }
 

@@ -40,7 +40,7 @@ def merge_isic_ground_truth_part3(ground_truth_files, output_filename="merged_gr
         
     return final_gt_df
 
-ROOT_DIR = Path("/scratch/groups/roxanad/datasets/isic/challenges/2017") 
+ROOT_DIR = Path(os.environ.get("MR_DATA_ROOT", "/scratch/groups/roxanad/datasets")) / "isic/challenges/2017" 
 
 OUTPUT_DIR = ROOT_DIR / "merged_isic_2017_data"
 OUTPUT_IMAGE_DIR = OUTPUT_DIR / "images"

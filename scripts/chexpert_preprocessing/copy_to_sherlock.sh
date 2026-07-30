@@ -15,7 +15,7 @@
 #   2) /oak/stanford/groups/roxanad/CheXpert/chex/chexpert-v1.0/valid/
 #
 # Destination:
-#   /oak/stanford/groups/roxanad/bikia/processed_chexpert/
+#   $MR_CHEXPERT_DST  (default /oak/stanford/groups/roxanad/$USER/processed_chexpert/)
 #
 # Usage: sbatch copy_to_sherlock.sh
 
@@ -29,7 +29,7 @@ mkdir -p "$SCRIPT_DIR/logs"
 CSV="$SCRIPT_DIR/train_valid_combined.csv"
 SRC1="/oak/stanford/groups/roxanad/CheXpert/chex/chexpert-v1.0"
 SRC2="/oak/stanford/groups/roxanad/CheXpert/chex/chexpert-v1.0/valid"
-DST="/oak/stanford/groups/roxanad/bikia/processed_chexpert/combined_train_valid_chexpert_v1.0"
+DST="${MR_CHEXPERT_DST:-/oak/stanford/groups/roxanad/$USER/processed_chexpert}/combined_train_valid_chexpert_v1.0"
 LOGFILE="$SCRIPT_DIR/copy_to_sherlock.log"
 
 # Log to both stdout and logfile

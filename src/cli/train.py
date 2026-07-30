@@ -254,7 +254,7 @@ def _to_serializable(obj: Any) -> Any:
 # ---------------------------------------------------------------------------
 
 
-@hydra.main(config_path="../../configs", config_name="probe_two_stage", version_base=None)
+@hydra.main(config_path="../../configs", config_name="probe_two_stage_dermatology", version_base=None)
 def main(cfg: DictConfig):
     """Main training CLI entry point."""
     OmegaConf.set_struct(cfg, False)

@@ -6,7 +6,7 @@ from omegaconf import DictConfig, OmegaConf
 from pathlib import Path
 
 
-@hydra.main(config_path="../../configs", config_name="probe_two_stage", version_base=None)
+@hydra.main(config_path="../../configs", config_name="probe_two_stage_dermatology", version_base=None)
 def main(cfg: DictConfig):
     """Main entry point for two-stage linear probing."""
     OmegaConf.set_struct(cfg, False)

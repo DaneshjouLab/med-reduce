@@ -217,4 +217,16 @@ config.yaml
 results/**
 figures/**
 !figures/*.png
+
+# Keep-untracked sub-project (maintained as its own repo)
+med-reduce-distillation/
+
+# Model artifacts and run outputs (never commit; keep the code repo lean)
+/runs/
+/checkpoints/
+/wandb/
+/embeddings/
+*.pt
+*.ckpt
+*.pth
 ReducedPerception_Paper/**

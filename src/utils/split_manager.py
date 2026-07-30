@@ -165,6 +165,43 @@ class SplitManager:
 
         return splits
 
+    def save_splits(
+        self,
+        splits: Dict[str, np.ndarray],
+        dataset_size: int,
+        extra_metadata: Dict[str, Any] | None = None,
+    ) -> Dict[str, np.ndarray]:
+        """Persist already-computed split indices (train/test[/val]) + metadata.
+
+        Used when the split is produced externally (e.g. the global case-level
+        TCGA partition) rather than by ``create_splits``.
+        """
+        self.dataset_dir.mkdir(parents=True, exist_ok=True)
+        for split_name, split_indices in splits.items():
+            np.save(self._get_split_path(split_name), np.asarray(split_indices))
+            log.info(f"💾 Saved {split_name} indices to {self._get_split_path(split_name)}")
+
+        metadata = {
+            "dataset_name": self.dataset_name,
+            "dataset_size": dataset_size,
+            "seed": self.seed,
+            "split_sizes": {k: int(len(v)) for k, v in splits.items()},
+        }
+        if extra_metadata:
+            metadata.update(extra_metadata)
+        with open(self._get_metadata_path(), "w") as f:
+            json.dump(metadata, f, indent=2)
+        log.info(f"✓ Saved provided splits for {self.dataset_name}")
+        return splits
+
+    def read_metadata(self) -> Dict[str, Any]:
+        """Load the split metadata json (empty dict if absent)."""
+        p = self._get_metadata_path()
+        if not p.exists():
+            return {}
+        with open(p) as f:
+            return json.load(f)
+
     def load_splits(self) -> Dict[str, np.ndarray]:
         if not self.exists():
             raise FileNotFoundError(

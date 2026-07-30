@@ -2,7 +2,8 @@
 #SBATCH --job-name=eval_distilled_3seeds
 #SBATCH --partition=gpu
 #SBATCH --gres=gpu:1
-#SBATCH --time=10:00:00
+#SBATCH -C "GPU_MEM:32GB"
+#SBATCH --time=06:00:00
 #SBATCH --mem=48G
 #SBATCH --cpus-per-task=8
 #SBATCH --output=logs/%x_%j.out
@@ -11,7 +12,7 @@
 # =============================================================================
 # Pipeline C: LP evaluation of distilled student models
 #
-# Run this AFTER distill_container.sh has completed.
+# Run this AFTER distillation (med-reduce-distillation) has produced the checkpoints.
 # Uses the same splits and LP pipeline as the baseline (train_container.sh),
 # but swaps the frozen encoder from DINOv3 to the distilled student.
 #
@@ -27,7 +28,7 @@
 #   TUNE_HP=1 DOMAIN=dermatology sbatch jobs/eval_distilled_container.sh  # re-tune HPs with distilled student
 #
 # Direct checkpoint (flat path, same weights for all seeds):
-#   CHECKPOINT=/scratch/users/bikia/pipeline_output/ISIC2017_resnet/trained_model.ckpt \
+#   CHECKPOINT=${MR_RESULTS_ROOT:-$SCRATCH}/pipeline_output/ISIC2017_resnet/trained_model.ckpt \
 #     DOMAIN=dermatology sbatch jobs/eval_distilled_container.sh
 #
 # Pathology-specific:
@@ -66,6 +67,19 @@ CHECKPOINT="${CHECKPOINT:-}"
 TUNE_HP="${TUNE_HP:-0}"
 # Override embedding extraction batch size (useful for large models at high resolutions)
 BATCH_SIZE="${BATCH_SIZE:-}"
+# Extra Hydra overrides forwarded to run_multiresolution_probe, e.g.
+#   EXTRAS="runtime.run_dir=<dinov3 Phase-A probe dir> embedding_cache_dir=<per-student dir> ++datamodule.force_recompute_embeddings=false"
+# runtime.run_dir must point where the reused (dinov3) HP file lives, and
+# embedding_cache_dir to a per-student path so distilled embeddings don't collide.
+EXTRAS="${EXTRAS:-}"
+# Explicit hyperparameter file to reuse (bypasses the run_dir-based lookup + the
+# hardcoded-dinov3 fallback). Set this to the teacher's OWN best_hyperparameters.json
+# so each distilled student reuses its own teacher's HPs. When empty, falls back to
+# the run_dir/TUNE_HP behaviour. For pathology, pass one task at a time (TASKS=<task>)
+# with the matching tcga_<task>_<teacher> HP file.
+HP_FILE="${HP_FILE:-}"
+HP_FILE_FLAG=""
+[ -n "$HP_FILE" ] && HP_FILE_FLAG="--hyperparam-file $HP_FILE"
 
 # Pathology-specific: TCGA tasks (ignored for other domains)
 TASKS="${TASKS:-luad_vs_lusc lgg_vs_gbm kras tp53 egfr}"
@@ -80,12 +94,12 @@ case "$DOMAIN" in
     radiology)
         CONFIG="probe_two_stage_radiology"
         NUM_LABELS=8
-        DISTILL_DIR="${DISTILL_DIR:-/scratch/users/$USER/reduced-perception-rad-results/runs/distillation}"
+        DISTILL_DIR="${DISTILL_DIR:-/scratch/users/$USER/med-reduce-rad-results/runs/distillation}"
         ;;
     pathology)
         CONFIG="probe_two_stage_pathology"
         NUM_LABELS=2
-        DISTILL_DIR="${DISTILL_DIR:-/scratch/users/$USER/reduced-perception-path-results/runs/distillation}"
+        DISTILL_DIR="${DISTILL_DIR:-/scratch/users/$USER/med-reduce-path-results/runs/distillation}"
         ;;
     *)
         echo "ERROR: Unknown domain '$DOMAIN'. Must be one of: dermatology, radiology, pathology"
@@ -123,7 +137,7 @@ fi
 
 # Run inside the container
 "$TOOL" exec --nv \
-     -B "/scratch/users/$USER/reduced-perception:/workspace" \
+     -B "/scratch/users/$USER/med-reduce:/workspace" \
      -B "/scratch/users/$USER:/scratch_user" \
      -B "/scratch/users/$USER/pip_cache:/root/.cache/pip" \
      -B "/tmp:/tmp" \
@@ -258,7 +272,7 @@ fi
                     --config $CONFIG \
                     --resolutions $RESOLUTIONS \
                     --seeds \$SEED \
-                    \$TUNE_FLAG \
+                    \$TUNE_FLAG $HP_FILE_FLAG \
                     --extra-overrides \
                         datamodule.task=\$TASK \
                         model.name=$STUDENT_NAME \
@@ -267,7 +281,7 @@ fi
                         model.config.num_labels=$NUM_LABELS \
                         +model.config.pretrained=false \
                         +model.config.checkpoint=\$CKPT \
-                        \$BATCH_OVERRIDE
+                        \$BATCH_OVERRIDE $EXTRAS
 
                 echo \"INFO: Finished task=\$TASK seed=\$SEED\"
             done
@@ -286,7 +300,7 @@ fi
                 --config $CONFIG \
                 --resolutions $RESOLUTIONS \
                 --seeds \$SEED \
-                \$TUNE_FLAG \
+                \$TUNE_FLAG $HP_FILE_FLAG \
                 --extra-overrides \
                     model.name=$STUDENT_NAME \
                     model.model_id=$STUDENT \
@@ -294,7 +308,7 @@ fi
                     model.config.num_labels=$NUM_LABELS \
                     +model.config.pretrained=false \
                     +model.config.checkpoint=\$CKPT \
-                    \$BATCH_OVERRIDE
+                    \$BATCH_OVERRIDE $EXTRAS
 
             echo \"INFO: Finished seed=\$SEED\"
         done

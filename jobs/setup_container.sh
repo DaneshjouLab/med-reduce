@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=setup_env
-#SBATCH --partition=roxanad
+#SBATCH --partition=gpu
 #SBATCH --gres=gpu:1
 #SBATCH --time=01:00:00
 #SBATCH --mem=32G
@@ -41,7 +41,7 @@ echo "INFO: Using container: $SIF_STORE/$SIF_IMAGE"
 
 # Run setup inside container
 "$TOOL" exec --nv \
-    -B "/scratch/users/$USER/reduced-perception:/workspace" \
+    -B "/scratch/users/$USER/med-reduce:/workspace" \
     -B "/scratch/users/$USER:/scratch_user" \
     -B "/scratch/users/$USER/pip_cache:/root/.cache/pip" \
     -B "/tmp:/tmp" \
@@ -92,6 +92,39 @@ echo "INFO: Using container: $SIF_STORE/$SIF_IMAGE"
     echo 'INFO: Installing/reinstalling project from pyproject.toml...'
     pip install -e . --no-deps
     pip install -e .
+
+    # ==========================================================================
+    # Prefetch ALL model weights into the shared HF cache so GPU/compute nodes
+    # (often offline) can run without downloading. Covers every teacher used by
+    # the LP baseline + the timm students used by the distillation container
+    # (which reads this same cache). Each download is non-fatal on failure.
+    # ==========================================================================
+    echo ''
+    echo '=========================================='
+    echo 'PREFETCHING MODEL WEIGHTS'
+    echo '=========================================='
+    export HF_HOME=/scratch_user/huggingface
+    export TORCH_HOME=/scratch_user/torch
+    mkdir -p \$HF_HOME \$TORCH_HOME
+    python -c \"
+def _try(name, fn):
+    try:
+        fn(); print('  [ok] ' + name)
+    except Exception as e:
+        print('  [WARN] ' + name + ': ' + type(e).__name__ + ': ' + str(e)[:160])
+import transformers, timm
+# Teachers
+_try('dinov3 teacher (facebook/dinov3-vits16-pretrain-lvd1689m)',
+     lambda: transformers.AutoModel.from_pretrained('facebook/dinov3-vits16-pretrain-lvd1689m'))
+_try('vit teacher (google/vit-base-patch16-224)',
+     lambda: transformers.ViTModel.from_pretrained('google/vit-base-patch16-224'))
+_try('biomedclip teacher (open_clip hf-hub)',
+     lambda: __import__('open_clip').create_model_from_pretrained('hf-hub:microsoft/BiomedCLIP-PubMedBERT_256-vit_base_patch16_224'))
+# Distillation students (timm, pretrained)
+_try('resnet50.a1_in1k student', lambda: timm.create_model('resnet50.a1_in1k', pretrained=True, num_classes=0))
+_try('tiny_vit_21m_224.dist_in22k student', lambda: timm.create_model('tiny_vit_21m_224.dist_in22k', pretrained=True, num_classes=0))
+print('Prefetch done (any [WARN] above is non-fatal; DINOv3 needs a valid HF token).')
+\"
 
     # Verify installation
     echo ''

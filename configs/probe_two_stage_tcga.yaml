@@ -82,7 +82,7 @@ loss:
   reduction: "mean"
 
 logging:
-  project: "reduced-perception"
+  project: "med-reduce"
   run_name: "tcga_luad_vs_lusc_512px"
   wandb_enabled: true
   save_checkpoints: true

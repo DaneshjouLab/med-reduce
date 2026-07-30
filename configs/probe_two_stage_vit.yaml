@@ -10,30 +10,30 @@
 
 # Runtime configuration
 runtime:
-  run_dir: /scratch/groups/roxanad/users/sonnet/compressed_perception/runs/probe_two_stage_vit
+  run_dir: ${oc.env:MR_RESULTS_ROOT,/scratch/groups/roxanad/users/sonnet/compressed_perception}/runs/probe_two_stage_vit
 
 domain: "dermatology"  # Options (eventually): dermatology, radiology, pathology
 
 # Split configuration
-split_dir: /scratch/groups/roxanad/users/sonnet/compressed_perception/splits
+split_dir: ${oc.env:MR_RESULTS_ROOT,/scratch/groups/roxanad/users/sonnet/compressed_perception}/splits
 
 # Embedding cache configuration
-embedding_cache_dir: /scratch/groups/roxanad/users/sonnet/compressed_perception/cache/embeddings
+embedding_cache_dir: ${oc.env:MR_RESULTS_ROOT,/scratch/groups/roxanad/users/sonnet/compressed_perception}/cache/embeddings
 
 datamodule:
   _target_: src.data.tabular_datamodule_persistent.TabularDataModulePersistent
   dataset_name: null  # Set to null for local data
-  data_dir: /scratch/groups/roxanad/datasets/isic/challenges/2017/merged_isic_2017_data/images
+  data_dir: ${oc.env:MR_DATA_ROOT,/scratch/groups/roxanad/datasets}/isic/challenges/2017/merged_isic_2017_data/images
   num_workers: 8
   pin_memory: true
   persistent_workers: false
   prefetch_factor: 2
-  split_dir: /scratch/groups/roxanad/users/sonnet/compressed_perception/splits
+  split_dir: ${oc.env:MR_RESULTS_ROOT,/scratch/groups/roxanad/users/sonnet/compressed_perception}/splits
   use_val_split: false  # Use train/test splits, create val from train
   train_ratio: 0.8
 
   # Local dataset configuration
-  local_label_file: /scratch/groups/roxanad/datasets/isic/challenges/2017/merged_isic_2017_data/merged_ground_truth_part3.csv
+  local_label_file: ${oc.env:MR_DATA_ROOT,/scratch/groups/roxanad/datasets}/isic/challenges/2017/merged_isic_2017_data/merged_ground_truth_part3.csv
   local_image_id_column: image_id
   local_label_column:
     - melanoma
@@ -47,7 +47,8 @@ datamodule:
   force_recompute_embeddings: true
 
 data:
-  image_size: 512
+  image_size: 512          # degradation target R (swept per run)
+  native_resolution: 224   # ViT-B/16 fixed grid: feed 224, keep pretrained pos-emb
   batch_size: 256
 
 model:
@@ -88,7 +89,7 @@ train:
       weight_decay: [0, 1e-4, 1e-3]
       batch_size: [32, 64]
 
-    load_from_file: "/scratch/groups/roxanad/users/sonnet/compressed_perception/runs/probe_two_stage_vit/hyperparam_search/best_hyperparameters.json"
+    load_from_file: "${oc.env:MR_RESULTS_ROOT,/scratch/groups/roxanad/users/sonnet/compressed_perception}/runs/probe_two_stage_vit/hyperparam_search/best_hyperparameters.json"
 
 loss:
   label_smoothing: 0.0
@@ -96,7 +97,7 @@ loss:
   reduction: "mean"
 
 logging:
-  project: "reduced-perception"
+  project: "med-reduce"
   run_name: "vit_isic_512px"
   wandb_enabled: true
   save_checkpoints: true

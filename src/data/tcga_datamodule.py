@@ -124,6 +124,8 @@ class TCGADataModule(BaseDataModule):
         train_ratio: float = 0.8,
         force_recompute: bool = False,
         *,
+        global_case_split: bool = True,
+        case_col: str = "case_id",
         full_cfg: Any = None,
         num_workers: int = 8,
         batch_size: int = 64,
@@ -151,6 +153,21 @@ class TCGADataModule(BaseDataModule):
         # Require jpg_path present
         df = df[df["jpg_path"].notna()].copy()
         log.info(f"  After jpg_path filter: {len(df)}")
+
+        # Capture the FULL case universe (before task filtering) for the global,
+        # leakage-safe, cross-task case-level split. Computing it over the full
+        # universe makes the partition identical across all tasks + distillation.
+        self.global_case_split = bool(global_case_split)
+        self.case_col = case_col
+        if self.global_case_split:
+            if case_col not in df.columns:
+                raise ValueError(
+                    f"global_case_split=True requires a '{case_col}' column in "
+                    f"{dataset_csv}; available columns: {list(df.columns)[:20]}"
+                )
+            self._all_case_ids = df[case_col].astype(str).tolist()
+        else:
+            self._all_case_ids = None
 
         # Task-specific filter
         if self.task_cfg.get("require_maf"):
@@ -277,7 +294,44 @@ class TCGADataModule(BaseDataModule):
             self.split_manager.dataset_dir.mkdir(parents=True, exist_ok=True)
 
         # --- Create or load splits ------------------------------------------
-        if not self.split_manager.exists():
+        if self.global_case_split:
+            # Global, leakage-safe, case-level partition shared across ALL tasks
+            # (and the distillation). Regenerate if missing, forced, or if an old
+            # per-task (stratified) split is on disk (migrate to case-level).
+            meta = self.split_manager.read_metadata()
+            need_create = (
+                self.force_recompute
+                or not self.split_manager.exists()
+                or meta.get("split_type") != "global_case"
+            )
+            if need_create:
+                from src.data.tcga_split import global_train_case_ids, positional_split
+
+                train_cases = global_train_case_ids(
+                    self._all_case_ids, self.split_seed, self.train_ratio
+                )
+                train_idx, test_idx = positional_split(
+                    self.df[self.case_col].astype(str).values, train_cases
+                )
+                splits = {"train": train_idx, "test": test_idx}
+                self.split_manager.save_splits(
+                    splits,
+                    dataset_size=dataset_size,
+                    extra_metadata={
+                        "split_type": "global_case",
+                        "task": self.task,
+                        "case_col": self.case_col,
+                        "n_train_cases": len(train_cases),
+                    },
+                )
+                log.info(
+                    f"Global case-level split: {len(train_idx)} train / "
+                    f"{len(test_idx)} test slides ({len(train_cases)} train cases)"
+                )
+            else:
+                log.info("Loading existing global case-level splits...")
+                splits = self.split_manager.load_splits()
+        elif not self.split_manager.exists():
             log.info("Creating new persistent splits...")
             splits = self.split_manager.create_splits(
                 dataset_size=dataset_size,

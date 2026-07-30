@@ -123,56 +123,14 @@ This automatically:
 
 ### Pipeline B: Distillation (Train Student Models)
 
-Trains a student model (ResNet18 or TinyViT) to match DINOv3 embeddings on clean 512px images, while the student receives degraded inputs.
+Distillation lives in the separate **`med-reduce-distillation`** repository (the
+Lightning package `med_reduce_distillation`), not in this repo. It trains a
+student (ResNet-50 / TinyViT) to match a frozen teacher's embeddings on
+resolution-degraded views. See that repo's `jobs/RUN_EXPERIMENTS.md` (Phase B) for
+commands.
 
-```bash
-# Dermatology -- ResNet18 student
-for SEED in 42 123 456; do
-  python -m src.cli.run_distillation \
-      --config-name=distillation_dermatology \
-      train.seed=${SEED}
-done
-
-# Pathology -- ResNet18 student (per task)
-for TASK in luad_vs_lusc lgg_vs_gbm kras tp53 egfr; do
-  for SEED in 42 123 456; do
-    python -m src.cli.run_distillation \
-        --config-name=distillation_pathology \
-        train.seed=${SEED} \
-        datamodule.task=${TASK}
-  done
-done
-
-# Radiology -- ResNet18 student
-for SEED in 42 123 456; do
-  python -m src.cli.run_distillation \
-      --config-name=distillation_radiology \
-      train.seed=${SEED}
-done
-
-# TinyViT student (any domain -- override student config)
-for SEED in 42 123 456; do
-  python -m src.cli.run_distillation \
-      --config-name=distillation_dermatology \
-      train.seed=${SEED} \
-      student.name=tiny_vit \
-      student.model_id=tiny_vit_21m_224
-done
-```
-
-**What happens:**
-1. Teacher embeddings are cached at 512px (reused across seeds if same data)
-2. Student trains end-to-end on degraded images to match teacher embeddings
-3. Loss: `alpha * MSE + (1 - alpha) * (1 - cosine_similarity)`
-4. Best checkpoint saved per seed
-
-**Outputs:**
-```
-{run_dir}/
-  seed_42/distilled_{student}.pt
-  seed_123/distilled_{student}.pt
-  seed_456/distilled_{student}.pt
-```
+This repo's role in distillation is only **loading the resulting distilled
+checkpoint** for LP evaluation (Pipeline C below).
 
 ---
 
@@ -227,7 +185,7 @@ All three pipelines use the same `SplitManager` with the same `split_dir` and `s
 ## Repository Structure
 
 ```
-reduced-perception/
+med-reduce/
 │
 ├── configs/                                 # Hydra configuration files
 │   ├── probe_two_stage_dermatology.yaml     # LP config for dermatology
@@ -235,9 +193,6 @@ reduced-perception/
 │   ├── probe_two_stage_pathology.yaml       # LP config for pathology
 │   ├── probe_two_stage_vit.yaml             # LP with ViT backbone
 │   ├── probe_two_stage_tcga.yaml            # LP config for TCGA (legacy)
-│   ├── distillation_dermatology.yaml        # Distillation for dermatology
-│   ├── distillation_radiology.yaml          # Distillation for radiology
-│   ├── distillation_pathology.yaml          # Distillation for pathology
 │   ├── config_segmentation.yaml             # Segmentation task config
 │   ├── config_segmentation_vit.yaml         # Segmentation with ViT
 │   ├── tcga_dataset.yaml                    # TCGA dataset definition
@@ -249,12 +204,12 @@ reduced-perception/
 │
 ├── jobs/                                    # SLURM / container job scripts
 │   ├── train_container.sh                   # Pipeline A: baseline LP training
-│   ├── distill_container.sh                 # Pipeline B: distillation training
-│   ├── eval_distilled_container.sh          # Pipeline C: LP eval of distilled students
+│   ├── eval_distilled_container.sh          # Pipeline C: LP eval of distilled students (distillation itself: med-reduce-distillation)
 │   ├── setup_container.sh                   # One-time setup: venv + deps
 │   ├── slim_container.sh                    # Pull lightweight Python container
 │   ├── build_tcga_dataset.sh                # Build TCGA dataset from GDC
-│   └── setup_tcga.sh                        # TCGA-specific setup
+│   ├── setup_tcga.sh                        # TCGA-specific setup
+│   └── RUN_EXPERIMENTS.md                   # Full run guide (all teachers/pipelines)
 │
 ├── scripts/                                 # Analysis and utility scripts
 │   ├── summarize_lp_results.py              # Aggregate LP results (mean +/- SD)
@@ -268,10 +223,8 @@ reduced-perception/
 │   ├── cli/                                 # Command-line entry points
 │   │   ├── run_multiresolution_probe.py     # Multi-resolution LP sweep
 │   │   ├── run_probe_two_stage.py           # Two-stage probing runner
-│   │   ├── run_distillation.py              # Distillation pipeline runner
 │   │   ├── run_experiments.py               # Batch experiment launcher
 │   │   ├── run_multiresolution_segmentation.py  # Segmentation sweep
-│   │   ├── cache_teacher_embeddings.py      # Precompute teacher embeddings
 │   │   ├── build_tcga_dataset.py            # TCGA dataset builder
 │   │   └── train.py                         # General training entry point
 │   │
@@ -289,7 +242,7 @@ reduced-perception/
 │   ├── engines/                             # Training & evaluation engines
 │   │   ├── linear_probe_embedding_engine.py # LP on cached embeddings (+ per-label AUROC)
 │   │   ├── linear_probe_engine.py           # LP on frozen features
-│   │   ├── distillation_engine.py           # Distillation training loop
+│   │   ├── classification_metrics.py        # Shared AUROC / macro-F1 computation
 │   │   ├── segmentation_engine.py           # Segmentation training loop
 │   │   └── training_core.py                 # Shared training loop logic
 │   │
@@ -317,7 +270,7 @@ reduced-perception/
 │   ├── utils/                               # General utilities
 │   │   ├── split_manager.py                 # Persistent train/test split management
 │   │   ├── embedding_cache.py               # Embedding caching (per model/seed/resolution)
-│   │   ├── teacher_cache.py                 # Teacher embedding cache for distillation
+│   │   ├── teacher_cache.py                 # Teacher embedding cache (used by probe_cv / segmentation CV)
 │   │   ├── checkpoint_utils.py              # Checkpoint save/load helpers
 │   │   ├── reproducibility.py               # Seed setting, deterministic mode
 │   │   ├── logging_core.py                  # Logging configuration
@@ -329,7 +282,6 @@ reduced-perception/
 │   │
 │   └── wrappers/                            # High-level experiment orchestrators
 │       ├── probe_two_stage.py               # Two-stage LP pipeline (HP search + eval)
-│       ├── distillation_wrapper.py          # Distillation pipeline orchestrator
 │       ├── probe_cv.py                      # Cross-validation probing
 │       └── segmentation_cv.py               # Cross-validation segmentation
 │
@@ -384,7 +336,7 @@ DINOv3 is a gated model. To use it:
 2. **Create a token** at [HuggingFace Settings > Access Tokens](https://huggingface.co/settings/tokens) (Read permissions)
 3. **Save the token** on the cluster:
    ```bash
-   cd /scratch/users/$USER/reduced-perception
+   cd /scratch/users/$USER/med-reduce
    mkdir -p .huggingface
    echo "hf_your_token_here" > .huggingface/token
    chmod 600 .huggingface/token
@@ -406,13 +358,9 @@ DOMAIN=dermatology sbatch jobs/train_container.sh
 DOMAIN=pathology   sbatch jobs/train_container.sh
 DOMAIN=radiology   sbatch jobs/train_container.sh
 
-# Pipeline B: Distillation (can run in parallel with A)
-DOMAIN=dermatology sbatch jobs/distill_container.sh
-DOMAIN=pathology   sbatch jobs/distill_container.sh
-DOMAIN=radiology   sbatch jobs/distill_container.sh
-
-# TinyViT student
-STUDENT=tiny_vit_21m_224 DOMAIN=dermatology sbatch jobs/distill_container.sh
+# Pipeline B: Distillation — run from the med-reduce-distillation repo
+#   (see med-reduce-distillation/scripts/run_pipeline_container.sh and
+#    jobs/RUN_EXPERIMENTS.md Phase B)
 
 # Pipeline C: LP eval of distilled students (after B completes)
 DOMAIN=dermatology sbatch jobs/eval_distilled_container.sh
@@ -432,6 +380,29 @@ DOMAIN=radiology   sbatch jobs/eval_distilled_container.sh
 | `TASKS` | all 5 TCGA tasks | Pathology tasks (pathology only) |
 | `EXTRAS` | (empty) | Extra Hydra overrides (e.g., `runtime.run_dir=...`) |
 | `CHECKPOINT_DIR` | (empty) | Dir with distilled checkpoints (Pipeline C) |
+
+### Path Configuration
+
+All dataset and output locations are parameterized through environment variables so the
+code runs on any machine without editing configs. Each variable falls back to the original
+cluster path when unset, so existing runs are unaffected; set them to point at your own
+storage. Configs read them via OmegaConf (`${oc.env:VAR,default}`); scripts read them directly.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MR_DATA_ROOT` | `/scratch/groups/roxanad/datasets` | Root of the read-only datasets (ISIC, CheXpert, TCGA) |
+| `MR_RESULTS_ROOT` | per-domain `/scratch/users/<user>/med-reduce-*-results` | Writable root for runs, splits, and the embedding cache |
+| `MR_RESULTS_CLEAN` | `results-med-reduce-clean` | Curated results tree read by the figure scripts (`scripts/plot_*.py`) |
+| `MR_PAPER_DIR` | `.` | Output directory for generated figures |
+| `MR_CHEXPERT_DST` | `/oak/.../$USER/processed_chexpert` | Destination for the CheXpert preprocessing copy step |
+| `SCRATCH_GROUP` | `/scratch/groups/roxanad` | Group scratch root used by the TCGA dataset-build jobs |
+
+Example (point everything at local storage):
+
+```bash
+export MR_DATA_ROOT=/data/med-reduce/datasets
+export MR_RESULTS_ROOT=/data/med-reduce/results
+```
 
 ### Training Budget
 

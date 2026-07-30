@@ -138,7 +138,10 @@ class TeacherEmbeddingCache:
                     batch_image_ids = None
 
                 # Get embeddings before classifier
-                if hasattr(model, 'backbone'):
+                if hasattr(model, 'visual') and hasattr(model, 'embed_dim'):
+                    # BiomedCLIP-style feature extractor: forward -> [B, D]
+                    emb = model(pixel_values)
+                elif hasattr(model, 'backbone'):
                     # DINOv3 wrapper
                     outputs = model.backbone(pixel_values=pixel_values)
                     emb = outputs.pooler_output

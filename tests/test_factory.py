@@ -327,6 +327,79 @@ class TestCreatePreprocessorHF:
         assert called["ok"]
 
 
+# ---------------------------------------------------------------------------
+# BiomedCLIP branch (alternative medical VLM teacher) — offline, no open_clip
+# ---------------------------------------------------------------------------
+
+class _MockBiomedCLIP(nn.Module):
+    """Stand-in for BiomedCLIPVisionEncoder that skips the open_clip download."""
+
+    def __init__(self, embed_dim=512, input_size=224):
+        super().__init__()
+        self.embed_dim = embed_dim
+        self.input_size = input_size
+        self.proj = nn.Linear(3 * input_size * input_size, embed_dim)
+
+    def forward(self, pixel_values, **kwargs):
+        import torch.nn.functional as F
+        x = pixel_values
+        if x.shape[-1] != self.input_size or x.shape[-2] != self.input_size:
+            x = F.interpolate(x, size=(self.input_size, self.input_size), mode="bicubic", align_corners=False)
+        return self.proj(x.flatten(1))
+
+
+class TestBiomedCLIP:
+    def test_extract_embeddings_returns_512(self):
+        """extract_embeddings for biomedclip returns [B, 512] via the wrapper forward."""
+        model = _MockBiomedCLIP(embed_dim=512)
+        emb = extract_embeddings(model, torch.randn(2, 3, 224, 224), "biomedclip")
+        assert emb.shape == (2, 512)
+
+    def test_extract_embeddings_resizes_non_224(self):
+        """A 512px input is internally resized to 224 and still yields [B, 512]."""
+        model = _MockBiomedCLIP(embed_dim=512)
+        emb = extract_embeddings(model, torch.randn(2, 3, 512, 512), "biomedclip")
+        assert emb.shape == (2, 512)
+
+    def test_get_embedding_dim(self):
+        model = _MockBiomedCLIP(embed_dim=512)
+        assert get_embedding_dim(model, "biomedclip") == 512
+
+    def test_get_embedding_dim_default(self):
+        """Falls back to 512 when embed_dim attribute is absent."""
+        assert get_embedding_dim(nn.Linear(1, 1), "biomedclip") == 512
+
+    def test_freeze_backbone_freezes_all(self):
+        model = _MockBiomedCLIP(embed_dim=512)
+        freeze_backbone(model, "biomedclip")
+        assert all(not p.requires_grad for p in model.parameters())
+
+    def test_create_preprocessor_returns_none(self):
+        assert create_preprocessor({"type": "biomedclip", "model_id": "hf-hub:x"}) is None
+
+    def test_create_model_dispatches(self, monkeypatch):
+        """create_model('biomedclip') constructs the wrapper with the given model_id."""
+        captured = {}
+
+        def mock_ctor(model_id, embed_dim, input_size):
+            captured["model_id"] = model_id
+            captured["embed_dim"] = embed_dim
+            captured["input_size"] = input_size
+            return _MockBiomedCLIP(embed_dim=embed_dim, input_size=input_size)
+
+        import src.models.factory as f
+        monkeypatch.setattr(f, "BiomedCLIPVisionEncoder", mock_ctor)
+        model = create_model({
+            "type": "biomedclip",
+            "model_id": "hf-hub:microsoft/BiomedCLIP-PubMedBERT_256-vit_base_patch16_224",
+            "config": {"hidden_size": 512, "input_size": 224, "num_labels": 3},
+        })
+        assert captured["model_id"].startswith("hf-hub:microsoft/BiomedCLIP")
+        assert captured["embed_dim"] == 512
+        assert captured["input_size"] == 224
+        assert isinstance(model, nn.Module)
+
+
 class TestSaveModelHF:
     def test_save_hf_model(self, tmp_path, monkeypatch):
         """Saves HF model via save_pretrained."""

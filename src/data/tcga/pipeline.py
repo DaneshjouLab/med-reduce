@@ -230,6 +230,14 @@ class TCGADatasetBuilder:
     def run_process_slides(self) -> pd.DataFrame:
         """Create JPG thumbnails from SVS whole-slide images."""
         df = self._load_slide_table()
+
+        # Refresh slide_local_path for the CURRENT data_dir. The stored table may
+        # carry stale absolute paths if the dataset was moved (e.g. archived to OAK
+        # and re-bound under a different data_dir); recompute from file_id/filename
+        # so process_slides finds the SVS wherever slides_dir now points.
+        if {"file_id", "filename"}.issubset(set(df.columns)):
+            df = TCGASlideETL().add_local_paths(df, self.tcga_config)
+
         slides_cfg = self.cfg.slides
         size = tuple(slides_cfg.get("thumbnail_size", [512, 512]))
         n_workers = slides_cfg.get("n_workers", 4)

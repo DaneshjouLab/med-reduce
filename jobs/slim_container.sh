@@ -90,7 +90,7 @@ Next steps:
 
    # Enter the container with proper bind mounts
    "$TOOL" shell --nv \
-     -B "/home/groups/roxanad/compressed-perception:/workspace" \
+     -B "${CODE_DIR}:/workspace" \
      -B "/scratch/users/$USER:/scratch_user" \
      -B "/scratch/users/$USER/pip_cache:/root/.cache/pip" \
      -B "/tmp:/tmp" \

@@ -39,8 +39,11 @@
 set -e
 
 SCRATCH_USER="/scratch/users/$USER"
-SCRATCH_GROUP="/scratch/groups/roxanad"
-TCGA_DATA_DIR="${SCRATCH_GROUP}/datasets/tcga"
+SCRATCH_GROUP="${SCRATCH_GROUP:-/scratch/groups/roxanad}"
+# Override to run the ETL in-place where the raw slides live (e.g. OAK), so
+# process_slides doesn't require copying the ~500GB slides/ onto scratch:
+#   TCGA_DATA_DIR=/oak/stanford/groups/roxanad/$USER/processed_tcga sbatch jobs/build_tcga_dataset.sh ...
+TCGA_DATA_DIR="${TCGA_DATA_DIR:-${SCRATCH_GROUP}/datasets/tcga}"
 PROJECT_DIR="$SLURM_SUBMIT_DIR"
 
 # Parse optional args passed via: sbatch jobs/build_tcga_dataset.sh [args]

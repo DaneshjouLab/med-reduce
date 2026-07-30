@@ -10,13 +10,17 @@ from omegaconf import OmegaConf
 
 
 # Model configurations
-MODELS = ["vit", "dinov2", "dinov3", "resnet18", "resnet50", "tiny_vit_21m_224"]
+MODELS = ["vit", "dinov2", "dinov3", "biomedclip", "resnet18", "resnet50", "tiny_vit_21m_224"]
 MODEL_CONFIGS = {
+    # Generic (non-DINO, non-medical) ViT-B/16 teacher. Fixed 224 grid, so
+    # native_resolution is pinned to 224 (uses pretrained positional embeddings)
+    # while the degradation target R (data.image_size) still sweeps the ladder.
     "vit": {
         "model.name": "vit",
         "model.model_id": "google/vit-base-patch16-224",
         "model.type": "vit",
-        "+model.dtype": "bfloat16"
+        "+model.dtype": "bfloat16",
+        "++data.native_resolution": "224",
     },
     "dinov2": {
         "model.name": "dinov2",
@@ -27,6 +31,17 @@ MODEL_CONFIGS = {
         "model.name": "dinov3",
         "model.model_id": "facebook/dinov3-vits16-pretrain-lvd1689m",
         "model.type": "dinov3",
+    },
+    # Alternative medical vision-language teacher (non-DINO). Its ViT-B/16 tower
+    # is fixed at 224px, so native_resolution is overridden to 224 while the
+    # degradation target R (data.image_size) still sweeps the resolution ladder.
+    "biomedclip": {
+        "model.name": "biomedclip",
+        "model.model_id": "hf-hub:microsoft/BiomedCLIP-PubMedBERT_256-vit_base_patch16_224",
+        "model.type": "biomedclip",
+        "++model.config.hidden_size": "512",
+        "++model.config.input_size": "224",
+        "++data.native_resolution": "224",
     },
     "resnet18": {
         "model.name": "resnet18",
@@ -124,7 +139,7 @@ def _resolve_model_name(model_key: str, extra_overrides=None) -> str:
 def run_hyperparameter_tuning(
     domain: str,
     model_key: str = "dinov3",
-    config_path: str = "configs/probe_two_stage.yaml",
+    config_path: str = "configs/probe_two_stage_dermatology.yaml",
     seed: int = 42,
     extra_overrides: List[str] = None,
 ):
@@ -191,7 +206,7 @@ def run_final_probing(
     domain: str,
     resolutions: List[int],
     model_key: str = "dinov3",
-    config_path: str = "configs/probe_two_stage.yaml",
+    config_path: str = "configs/probe_two_stage_dermatology.yaml",
     hyperparam_file: str = None,
     seed: int = 42,
     extra_overrides: List[str] = None,
@@ -387,7 +402,7 @@ def main():
     parser.add_argument(
         "--config",
         type=str,
-        default="configs/probe_two_stage",
+        default="configs/probe_two_stage_dermatology",
         help="Path to config file",
     )
 

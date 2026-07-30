@@ -30,13 +30,20 @@ def get_gpu_memory() -> int:
 def profile_model(model: torch.nn.Module, resolution: int) -> float:
     """
     Estimate model FLOPs in GFLOPs using thop; returns -1 on failure.
+
+    Profiles a CPU deepcopy of the model, NOT the live model. thop registers
+    forward hooks and ``total_ops``/``total_params`` buffers on every submodule
+    and does not reliably remove them; if run on the live encoder they linger and
+    fire during embedding extraction, crashing with a cuda/cpu device mismatch.
+    Copying isolates all of that and leaves the extraction model untouched.
     """
     try:
+        import copy
         from thop import profile  # type: ignore
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        dummy = torch.randn(1, 3, resolution, resolution, device=device)
-        model = model.to(device)
-        flops, _ = profile(model, inputs=(dummy,))
+        model_copy = copy.deepcopy(model).to("cpu").eval()
+        dummy = torch.randn(1, 3, resolution, resolution)
+        flops, _ = profile(model_copy, inputs=(dummy,))
+        del model_copy
         return float(flops) / 1e9
     except Exception as e:
         print(f"[profile_model] FLOP profiling failed: {e}")

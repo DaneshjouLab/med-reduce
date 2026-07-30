@@ -10,32 +10,32 @@
 
 # Runtime configuration
 runtime:
-  run_dir: /scratch/users/bikia/reduced-perception-derm-results/runs/probe_two_stage
+  run_dir: ${oc.env:MR_RESULTS_ROOT,/scratch/users/bikia/med-reduce-derm-results}/runs/probe_two_stage
 
 domain: "dermatology"  # Options: dermatology, radiology, pathology
 
 # Split configuration
-split_dir: /scratch/users/bikia/reduced-perception-derm-results/splits
+split_dir: ${oc.env:MR_RESULTS_ROOT,/scratch/users/bikia/med-reduce-derm-results}/splits
 
 # Embedding cache configuration
-embedding_cache_dir: /scratch/users/bikia/reduced-perception-derm-results/cache/embeddings
+embedding_cache_dir: ${oc.env:MR_RESULTS_ROOT,/scratch/users/bikia/med-reduce-derm-results}/cache/embeddings
 
 # Domain-specific dataset configuration
 
 datamodule:
   _target_: src.data.tabular_datamodule_persistent.TabularDataModulePersistent
   dataset_name: null  # Set to null for local data
-  data_dir: /scratch/groups/roxanad/datasets/isic/challenges/2017/merged_isic_2017_data/images  # <----- Where images live
+  data_dir: ${oc.env:MR_DATA_ROOT,/scratch/groups/roxanad/datasets}/isic/challenges/2017/merged_isic_2017_data/images  # <----- Where images live
   num_workers: 8
   pin_memory: true
   persistent_workers: false
   prefetch_factor: 2
-  split_dir: /scratch/users/bikia/reduced-perception-derm-results/splits
+  split_dir: ${oc.env:MR_RESULTS_ROOT,/scratch/users/bikia/med-reduce-derm-results}/splits
   use_val_split: false  # Use train/test splits, create val from train
   train_ratio: 0.8
 
   # Local dataset configuration (domain-specific)
-  local_label_file: /scratch/groups/roxanad/datasets/isic/challenges/2017/merged_isic_2017_data/merged_ground_truth_part3.csv # <----- Where labels live
+  local_label_file: ${oc.env:MR_DATA_ROOT,/scratch/groups/roxanad/datasets}/isic/challenges/2017/merged_isic_2017_data/merged_ground_truth_part3.csv # <----- Where labels live
   local_image_id_column: image_id # Update for radiology/pathology from labels.csv
   local_label_column: ["melanoma", "seborrheic_keratosis"]  # <------- Update for radiology/pathology
   local_image_extension: .jpg
@@ -104,7 +104,7 @@ loss:
   reduction: "mean"
 
 logging:
-  project: "reduced-perception" # <----- Update for your W&B project name
+  project: "med-reduce" # <----- Update for your W&B project name
   run_name: "dinov3_dermatology_512px"
   wandb_enabled: true
   save_checkpoints: true

@@ -79,6 +79,10 @@ class EmbeddingCache:
         Returns:
             Embeddings tensor of shape (batch_size, embedding_dim)
         """
+        # BiomedCLIP-style feature extractors: forward(pixel_values) -> [B, D]
+        if hasattr(model, 'visual') and hasattr(model, 'embed_dim'):
+            return model(images)
+
         # DINOv3 models have a 'backbone' attribute
         if hasattr(model, 'backbone'):
             outputs = model.backbone(pixel_values=images)
@@ -89,7 +93,9 @@ class EmbeddingCache:
 
         # HuggingFace ViT models have a 'vit' attribute
         if hasattr(model, 'vit'):
-            outputs = model.vit(pixel_values=images)
+            # interpolate_pos_encoding keeps pos-emb correct for any input size
+            # (no-op at the native 224 grid).
+            outputs = model.vit(pixel_values=images, interpolate_pos_encoding=True)
             embeddings = outputs.pooler_output
             if embeddings is None and hasattr(outputs, 'last_hidden_state'):
                 embeddings = outputs.last_hidden_state[:, 0, :]
@@ -210,6 +216,7 @@ class EmbeddingCache:
         model.eval()
         emb_chunks = []
         label_chunks = []
+        id_chunks = []
 
         try:
             from torch.amp import autocast
@@ -218,20 +225,34 @@ class EmbeddingCache:
 
         with torch.no_grad():
             for batch in tqdm(dataloader, desc=f"Extracting {split} embeddings"):
+                batch_ids = None
                 if isinstance(batch, (tuple, list)):
                     if len(batch) == 2:
                         images, labels = batch
                     else:
                         images = batch[0]
                         labels = batch[1] if len(batch) > 1 else torch.zeros(images.size(0))
+                        if len(batch) > 2:
+                            batch_ids = batch[2]
                 elif isinstance(batch, dict):
                     images = batch.get("pixel_values", batch.get("image"))
                     labels = batch.get("labels", batch.get("label"))
+                    batch_ids = batch.get("image_id", batch.get("image_ids"))
                 else:
                     images = batch
                     labels = torch.zeros(images.size(0))
 
                 images = images.to(self.device)
+
+                # Capture image_ids (in dataloader order) so the distillation
+                # pipeline can reuse these embeddings matched by ID. Store the
+                # filename STEM (basename, no extension) — the canonical id the
+                # distillation ImageOnlyDataset uses. No-op for ISIC/TCGA (ids have
+                # no extension); strips the ".jpg" CheXpert carries in its id.
+                if batch_ids is not None:
+                    id_chunks.extend(
+                        [os.path.splitext(os.path.basename(str(x)))[0] for x in batch_ids]
+                    )
 
                 with autocast(device_type=self.device.type, enabled=mixed_precision):
                     embeddings = self._extract_embeddings_from_model(model, images)
@@ -246,10 +267,18 @@ class EmbeddingCache:
         labels = torch.cat(label_chunks, dim=0)
         del emb_chunks, label_chunks  # free the chunk lists
 
-        torch.save(
-            {"embeddings": embeddings, "labels": labels},
-            embedding_path
-        )
+        # Persist image_ids only if the dataset provided one per sample; otherwise
+        # save the legacy (positional) format and warn that reuse-by-ID is off.
+        image_ids = id_chunks if len(id_chunks) == len(embeddings) else None
+        save_obj = {"embeddings": embeddings, "labels": labels}
+        if image_ids is not None:
+            save_obj["image_ids"] = image_ids
+        else:
+            log.warning(
+                f"No image_ids captured for {split} ({len(id_chunks)}/{len(embeddings)}); "
+                "distillation reuse-by-ID will not be available for this cache."
+            )
+        torch.save(save_obj, embedding_path)
 
         # Convert model_info to plain dict if it's a DictConfig (from Hydra/OmegaConf)
         try:
@@ -270,6 +299,7 @@ class EmbeddingCache:
             "num_samples": len(embeddings),
             "embedding_dim": embeddings.shape[1],
             "cache_key": self.get_cache_key(model_info, resolution),
+            "has_image_ids": image_ids is not None,
         }
 
         with open(metadata_path, "w") as f:

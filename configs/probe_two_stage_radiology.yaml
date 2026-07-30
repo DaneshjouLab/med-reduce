@@ -10,30 +10,30 @@
 
 # Runtime configuration
 runtime:
-  run_dir: /scratch/users/bikia/reduced-perception-rad-results/runs/probe_two_stage
+  run_dir: ${oc.env:MR_RESULTS_ROOT,/scratch/users/bikia/med-reduce-rad-results}/runs/probe_two_stage
 
 domain: "radiology"
 
 # Split configuration
-split_dir: /scratch/users/bikia/reduced-perception-rad-results/splits
+split_dir: ${oc.env:MR_RESULTS_ROOT,/scratch/users/bikia/med-reduce-rad-results}/splits
 
 # Embedding cache configuration
-embedding_cache_dir: /scratch/users/bikia/reduced-perception-rad-results/cache/embeddings
+embedding_cache_dir: ${oc.env:MR_RESULTS_ROOT,/scratch/users/bikia/med-reduce-rad-results}/cache/embeddings
 
 datamodule:
   _target_: src.data.tabular_datamodule_persistent.TabularDataModulePersistent
   dataset_name: null  # Set to null for local data
-  data_dir: /scratch/groups/roxanad/datasets/chexpert/combined_train_valid_chexpert_v1.0
+  data_dir: ${oc.env:MR_DATA_ROOT,/scratch/groups/roxanad/datasets}/chexpert/combined_train_valid_chexpert_v1.0
   num_workers: 8
   pin_memory: true
   persistent_workers: false
   prefetch_factor: 2
-  split_dir: /scratch/users/bikia/reduced-perception-rad-results/splits
+  split_dir: ${oc.env:MR_RESULTS_ROOT,/scratch/users/bikia/med-reduce-rad-results}/splits
   use_val_split: false  # Use train/test splits, create val from train
   train_ratio: 0.8
 
   # Local dataset configuration
-  local_label_file: /scratch/groups/roxanad/datasets/chexpert/explore_chexpert/train_valid_combined.csv
+  local_label_file: ${oc.env:MR_DATA_ROOT,/scratch/groups/roxanad/datasets}/chexpert/explore_chexpert/train_valid_combined.csv
   local_image_id_column: image_id
   local_label_column: [
     "Enlarged Cardiomediastinum",
@@ -107,7 +107,7 @@ loss:
   reduction: "mean"
 
 logging:
-  project: "reduced-perception"
+  project: "med-reduce"
   run_name: "dinov3_rad_512px"
   wandb_enabled: true
   save_checkpoints: true

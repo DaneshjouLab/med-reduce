@@ -32,6 +32,12 @@ except ImportError:
     HF_MODELS = {"vit", "dinov2", "dinov3"}
 
 from src.models.dinov3 import DINOv3ForImageClassification, DINOv3Config
+from src.models.biomedclip import (
+    BiomedCLIPVisionEncoder,
+    BIOMEDCLIP_HF_ID,
+    BIOMEDCLIP_EMBED_DIM,
+    BIOMEDCLIP_INPUT_SIZE,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -55,11 +61,16 @@ def create_model(model_info: Dict[str, Any], resolution: int = 224):
 
     # --- HuggingFace ViT ---
     if model_type == "vit":
+        # Build at the pretrained 224 grid so the pretrained positional
+        # embeddings are kept intact (do NOT pass image_size=resolution, which
+        # would reinitialize pos-emb at non-224 resolutions). ViT is fed 224
+        # inputs (native_resolution=224); the degradation ladder still applies
+        # via downsample→upsample. ignore_mismatched_sizes only reinitializes the
+        # classification head for the new num_labels.
         return ViTForImageClassification.from_pretrained(
             model_id,
             num_labels=config["num_labels"],
             ignore_mismatched_sizes=config.get("ignore_mismatched_sizes", True),
-            image_size=resolution,
         )
 
     # --- HuggingFace DINOv2 (AutoModel) ---
@@ -81,6 +92,14 @@ def create_model(model_info: Dict[str, Any], resolution: int = 224):
             use_safetensors=True
         )
         return DINOv3ForImageClassification(dinov3_config)
+
+    # --- BiomedCLIP vision tower (alternative medical VLM teacher) ---
+    if model_type == "biomedclip":
+        return BiomedCLIPVisionEncoder(
+            model_id=model_id if model_id else BIOMEDCLIP_HF_ID,
+            embed_dim=int(config.get("hidden_size", BIOMEDCLIP_EMBED_DIM)),
+            input_size=int(config.get("input_size", BIOMEDCLIP_INPUT_SIZE)),
+        )
 
     # --- timm ---
     if model_type == "timm":
@@ -134,6 +153,11 @@ def create_preprocessor(model_info: Dict[str, Any], resolution: int = 224):
     if model_type == "dinov3":
         return AutoImageProcessor.from_pretrained("facebook/dinov3-vits16-pretrain-lvd1689m")
 
+    if model_type == "biomedclip":
+        # BiomedCLIP is fed the same ImageNet-normalized tensors built by the
+        # datamodule (protocol consistency); no HF processor is used.
+        return None
+
     if model_type == "timm":
         # timm uses torchvision transforms; return None and build transforms in your datamodule
         return None
@@ -169,6 +193,10 @@ def freeze_backbone(model: nn.Module, model_type: str):
                 param.requires_grad = True
             else:
                 param.requires_grad = False
+    elif model_type == "biomedclip":
+        # Frozen feature-extractor teacher: no trainable head, freeze everything.
+        for param in model.parameters():
+            param.requires_grad = False
     else:
         raise ValueError(f"Unsupported model_type: {model_type}")
 
@@ -194,6 +222,9 @@ def get_embedding_dim(model: nn.Module, model_type: str) -> int:
 
     if model_type == "dinov2":
         return model.config.hidden_size
+
+    if model_type == "biomedclip":
+        return getattr(model, "embed_dim", 512)
 
     if model_type == "timm":
         # timm models expose num_features
@@ -231,12 +262,18 @@ def extract_embeddings(model: nn.Module, pixel_values: torch.Tensor, model_type:
         return outputs.hidden_states[-1][:, 0]
 
     if model_type == "vit":
-        outputs = model.vit(pixel_values=pixel_values)
+        # interpolate_pos_encoding is a no-op at 224 (native) and keeps us correct
+        # if ever fed a non-224 input.
+        outputs = model.vit(pixel_values=pixel_values, interpolate_pos_encoding=True)
         return outputs.last_hidden_state[:, 0]
 
     if model_type == "dinov2":
         outputs = model.dinov2(pixel_values=pixel_values)
         return outputs.last_hidden_state[:, 0]
+
+    if model_type == "biomedclip":
+        # Wrapper returns the pooled/projected image embedding [B, 512].
+        return model(pixel_values)
 
     if model_type == "timm":
         feats = model.forward_features(pixel_values)
