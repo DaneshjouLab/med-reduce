@@ -58,10 +58,11 @@ All pipelines use the same persistent train/test splits (managed by `SplitManage
 
 ```
 Pipeline A: Baseline LP
-  Frozen DINOv3 @ each resolution R -> cache embeddings -> linear probe -> AUROC
+  Frozen teacher (DINOv3 / ViT-B/16 / BiomedCLIP) @ each resolution R
+  -> cache embeddings -> linear probe -> AUROC
 
 Pipeline B: Distillation
-  Frozen DINOv3 @ 512px -> cache teacher embeddings -> train student (ResNet18/TinyViT)
+  Frozen teacher @ 512px -> cache teacher embeddings -> train student (ResNet-50/TinyViT)
   end-to-end on degraded images -> save distilled_student.pt
 
 Pipeline C: LP with Distilled Student
@@ -70,9 +71,22 @@ Pipeline C: LP with Distilled Student
 
 ---
 
-### Pipeline A: Baseline Linear Probing (DINOv3)
+### Pipeline A: Baseline Linear Probing (frozen teachers)
 
-Evaluates frozen DINOv3 embeddings at multiple resolutions via linear probing.
+Evaluates frozen teacher embeddings at multiple resolutions via linear probing. The teacher is chosen with `--model`: `dinov3` (default), `vit` (ViT-B/16), or `biomedclip`. The examples below use `dinov3`; swap the flag to run the other teachers on the same config, for example:
+
+```bash
+# Same command with the ViT-B/16 or BiomedCLIP teacher
+python -m src.cli.run_multiresolution_probe \
+    --domain dermatology --model vit \
+    --tune-hyperparams --resolutions 512 256 128 64 --seeds 42 123 456 \
+    --config configs/probe_two_stage_dermatology
+
+python -m src.cli.run_multiresolution_probe \
+    --domain dermatology --model biomedclip \
+    --tune-hyperparams --resolutions 512 256 128 64 --seeds 42 123 456 \
+    --config configs/probe_two_stage_dermatology
+```
 
 ```bash
 # Dermatology
@@ -316,13 +330,19 @@ For containerized or HPC runs, see [Running on HPC](#running-on-hpc-sherlock).
 
 ## Supported Models
 
-| Model Key | Architecture | Source | Notes |
-|-----------|-------------|--------|-------|
-| `dinov3` | DINOv3-ViT-S/16 | `facebook/dinov3-vits16-pretrain-lvd1689m` | Default teacher; gated model (requires HF token) |
-| `dinov2` | DINOv2-ViT-S/14 | `facebook/dinov2-small` | Alternative teacher |
-| `vit` | ViT-B/16 | `google/vit-base-patch16-224` | Baseline ViT |
-| `resnet18` | ResNet-18 | timm | Student model (no pretrained weights) |
-| `tiny_vit_21m_224` | TinyViT-21M | timm | Student model (no pretrained weights) |
+Med-REDUCE evaluates **three frozen teachers** spanning three pretraining paradigms, plus two distilled **students**. The teacher (or student) is selected with the `--model` key; the domain config is shared across all of them.
+
+| Model Key | Architecture | Source | Role |
+|-----------|-------------|--------|------|
+| `dinov3` | DINOv3 ViT-S/16 (21M) | `facebook/dinov3-vits16-pretrain-lvd1689m` | **Teacher** -- self-supervised (default). Gated: requires HF token |
+| `vit` | ViT-B/16 (86M) | `google/vit-base-patch16-224` | **Teacher** -- supervised ImageNet-21k. Fixed 224px grid |
+| `biomedclip` | BiomedCLIP ViT-B/16 (86M) | `hf-hub:microsoft/BiomedCLIP-PubMedBERT_256-vit_base_patch16_224` | **Teacher** -- medical vision-language. Fixed 224px grid; needs `open_clip` |
+| `dinov2` | DINOv2 ViT-S/14 | `facebook/dinov2-small` | Alternative teacher |
+| `resnet50` | ResNet-50 (25M) | timm | Distilled student |
+| `resnet18` | ResNet-18 | timm | Distilled student (smaller) |
+| `tiny_vit_21m_224` | TinyViT-21M | timm | Distilled student |
+
+Both 86M teachers (`vit`, `biomedclip`) use a fixed 224px positional-embedding grid, so their native resolution is pinned to 224 while the degradation target R still sweeps the 512/256/128/64 ladder. Only `dinov3` is a gated model; `vit` and `biomedclip` are openly downloadable (BiomedCLIP additionally requires the `open_clip` package).
 
 ---
 
