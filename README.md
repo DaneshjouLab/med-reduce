@@ -20,10 +20,18 @@ The distillation pipeline for Med-REDUCE can be found at https://github.com/Vicb
 | Domain | Dataset | Classes | Train | Test |
 |--------|---------|---------|-------|------|
 | Dermatology | [ISIC 2017](https://arxiv.org/pdf/1710.05006) | 3 (nevus, melanoma, seborrheic keratosis) | 2,200 | 550 |
-| Radiology | [CheXpert](https://arxiv.org/pdf/1901.07031) | 14 findings (multi-label) | 51,787 | 12,947 |
+| Radiology | [CheXpert](https://arxiv.org/pdf/1901.07031) | 8 findings (multi-label, curated) | 51,787 | 12,947 |
 | Pathology | [TCGA](https://gdc.cancer.gov/about-data) | Binary per task (5 tasks) | 2,542-2,900 | 636-725 |
 
 **Pathology tasks:** LUAD vs LUSC, LGG vs GBM, KRAS, TP53, EGFR
+
+**Cohort locations:** the three cohorts live under `$MR_DATA_ROOT` (default `/scratch/groups/roxanad/datasets`; see [Path Configuration](#path-configuration)). Set `MR_DATA_ROOT` to relocate all three:
+
+| Cohort | Images / data | Labels |
+|--------|---------------|--------|
+| Dermatology (ISIC 2017) | `$MR_DATA_ROOT/isic/challenges/2017/merged_isic_2017_data/images` | `.../merged_isic_2017_data/merged_ground_truth_part3.csv` |
+| Pathology (TCGA) | `$MR_DATA_ROOT/tcga/thumbnails` | `$MR_DATA_ROOT/tcga/tables/dataset.csv` |
+| Radiology (CheXpert) | `$MR_DATA_ROOT/chexpert/combined_train_valid_chexpert_v1.0` | `.../chexpert/explore_chexpert/train_valid_combined.csv` |
 
 **Custom datasets:** Prepare an images folder and a labels CSV with `[image_id, label]` columns, then point the config at your `data_dir`, `local_label_file`, `local_label_column`, and `num_labels`.
 
